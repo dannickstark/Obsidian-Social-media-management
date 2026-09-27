@@ -93,4 +93,33 @@ describe("SocialIndex", () => {
     await change;
     expect(index.revision).toBe(before + 1);
   });
+
+  it("keeps a change that lands while build() is still reading (final review F3)", async () => {
+    const app = createApp();
+    const path = "Social/Posts/Solo.md";
+    const file = await writeNote(app, path, { type: "social-post", platform: "x", title: "Old" });
+    await settle();
+    // Hold the first body read (the one build() makes) until the change has been indexed.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const cachedRead = app.vault.cachedRead.bind(app.vault);
+    let first = true;
+    app.vault.cachedRead = async (f) => {
+      const content = await cachedRead(f);
+      if (first) {
+        first = false;
+        await gate;
+      }
+      return content;
+    };
+    index = new SocialIndex(app, 0);
+    index.start();
+    const built = index.build();
+    await writeNote(app, path, { type: "social-post", platform: "x", title: "New" });
+    await settle(5);
+    expect(index.getVariant(path)?.displayTitle).toBe("New");
+    release();
+    await built;
+    expect(index.getVariant(file.path)?.displayTitle).toBe("New");
+  });
 });

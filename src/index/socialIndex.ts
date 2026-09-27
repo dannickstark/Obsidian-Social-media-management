@@ -61,8 +61,16 @@ export class SocialIndex {
     this.campaignMap.clear();
     this.variantMap.clear();
     this.invalidMap.clear();
-    const entries = await Promise.all(this.app.vault.getMarkdownFiles().map((f) => this.read(f)));
-    for (const entry of entries) if (entry) this.store(entry);
+    // Claim a sequence token per path before reading: a reindex that runs while build() awaits its
+    // reads takes a newer token, and its (newer) result must not be overwritten by ours.
+    const files = this.app.vault.getMarkdownFiles();
+    const tokens = files.map((f) => this.claim(f.path));
+    const entries = await Promise.all(files.map((f) => this.read(f)));
+    files.forEach((file, i) => {
+      const entry = entries[i];
+      if (this.sequence.get(file.path) !== tokens[i]) return;
+      if (entry) this.store(entry);
+    });
     this.relinkCampaigns();
     for (const path of [...this.campaignMap.keys(), ...this.variantMap.keys()]) this.pendingChanged.add(path);
     this.flush();
@@ -197,9 +205,14 @@ export class SocialIndex {
   }
 
   /** Re-read one file; stale reads (superseded by a newer event for the same path) are discarded. */
+  private claim(path: string): number {
+    const token = (this.sequence.get(path) ?? 0) + 1;
+    this.sequence.set(path, token);
+    return token;
+  }
+
   private async reindex(file: TFile): Promise<{ before: SocialKind | null; after: SocialKind | null } | null> {
-    const token = (this.sequence.get(file.path) ?? 0) + 1;
-    this.sequence.set(file.path, token);
+    const token = this.claim(file.path);
     const before = this.kindAt(file.path);
     const entry = await this.read(file);
     if (this.sequence.get(file.path) !== token) return null;

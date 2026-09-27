@@ -37,8 +37,8 @@ export default class OsmmPlugin extends Plugin {
     this.addSettingTab(new OsmmSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(async () => {
-      await this.index.build();
       this.index.start();
+      await this.index.build();
     });
   }
 
