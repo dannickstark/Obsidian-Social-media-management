@@ -4,6 +4,7 @@ import {
   IllegalTransitionError,
   canTransition,
   deliveryTime,
+  inheritedStatus,
   rollupStatus,
   transition,
 } from "../../src/model/stateMachine";
@@ -85,8 +86,38 @@ describe("rollupStatus", () => {
     expect(rollupStatus(v(statuses, stored))).toBe(expected);
   });
 
-  it("treats channels without a delivery as draft", () => {
+  it("treats channels without a delivery as draft when the stored status is draft", () => {
     expect(rollupStatus({ status: "draft", channels: ["li/a", "li/b"], deliveries: { "li/a": { status: "published" } } })).toBe("partial");
+  });
+
+  it("lets channels without a delivery inherit the stored planned status (final review F1)", () => {
+    const channels = ["li/a", "li/b"];
+    expect(rollupStatus({ status: "scheduled", scheduledAt: 1, channels, deliveries: { "li/a": { status: "scheduled" } } })).toBe("scheduled");
+    expect(rollupStatus({ status: "ready", channels, deliveries: { "li/a": { status: "ready" } } })).toBe("ready");
+    expect(rollupStatus({ status: "scheduled", channels, deliveries: { "li/a": { status: "ready" } } })).toBe("draft");
+  });
+
+  it("returns the stored status when only unlisted channels have records", () => {
+    expect(rollupStatus({ status: "scheduled", channels: ["li/a"], deliveries: { "li/z": { status: "published" } } })).toBe("scheduled");
+  });
+});
+
+describe("inheritedStatus", () => {
+  it.each([
+    ["idea", undefined, "draft"],
+    ["draft", 1, "draft"],
+    ["ready", 1, "ready"],
+    ["ready", undefined, "ready"],
+    ["scheduled", 1, "scheduled"],
+    ["scheduled", undefined, "draft"],
+    ["partial", 1, "scheduled"],
+    ["overdue", 1, "scheduled"],
+    ["attention", 1, "scheduled"],
+    ["published", 1, "scheduled"],
+    ["skipped", 1, "scheduled"],
+    ["skipped", undefined, "draft"],
+  ])("stored %s (scheduledAt %s) → %s", (status, scheduledAt, expected) => {
+    expect(inheritedStatus({ status: status as never, scheduledAt })).toBe(expected);
   });
 });
 

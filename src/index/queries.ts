@@ -1,4 +1,4 @@
-import { deliveryTime } from "../model/stateMachine";
+import { deliveryTime, inheritedStatus } from "../model/stateMachine";
 import type { DeliveryStatus } from "../model/types";
 import type { Platform } from "../model/platforms";
 import type { IndexedVariant } from "./socialIndex";
@@ -40,28 +40,27 @@ function storedStatusToRow(status: IndexedVariant["status"]): RowStatus {
   }
 }
 
-/** Fallback status for a channel without a delivery record (only used when some delivery records exist). */
-function fallbackStatus(status: IndexedVariant["status"]): RowStatus {
-  if (status === "idea" || status === "ready" || status === "scheduled") return status;
-  return "draft";
+/** Status of a channel without a delivery record, when some listed channels do have records. */
+function missingChannelStatus(v: IndexedVariant): RowStatus {
+  return v.status === "idea" ? "idea" : inheritedStatus(v);
 }
 
 export function expandRows(variants: readonly IndexedVariant[], defaultStagger: number): PostRow[] {
   const rows: PostRow[] = [];
   for (const v of variants) {
-    const hasAnyDeliveries = Object.keys(v.deliveries).length > 0;
-    const statusResolver = hasAnyDeliveries ? fallbackStatus : storedStatusToRow;
-
     if (v.channels.length === 0) {
       rows.push({ key: `${v.path}#`, variant: v, channelId: null, status: storedStatusToRow(v.status), at: v.scheduledAt });
       continue;
     }
+    // Without records for listed channels, the stored status is authoritative.
+    const hasRecords = v.channels.some((c) => v.deliveries[c] !== undefined);
+    const missing = hasRecords ? missingChannelStatus(v) : storedStatusToRow(v.status);
     for (const id of v.channels) {
       rows.push({
         key: `${v.path}#${id}`,
         variant: v,
         channelId: id,
-        status: v.deliveries[id]?.status ?? statusResolver(v.status),
+        status: v.deliveries[id]?.status ?? missing,
         at: deliveryTime(v, id, defaultStagger),
       });
     }

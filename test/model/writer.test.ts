@@ -2,11 +2,20 @@ import { describe, expect, it } from "vitest";
 import { parseYaml, getFrontMatterInfo } from "obsidian";
 import { SafeWriter } from "../../src/model/writer";
 import { IllegalTransitionError } from "../../src/model/stateMachine";
+import { parseVariant } from "../../src/model/frontmatter";
+import { expandRows } from "../../src/index/queries";
+import type { IndexedVariant } from "../../src/index/socialIndex";
 import { createApp, writeNote } from "../helpers";
 import type { App, TFile } from "obsidian";
 
 async function fmOf(app: App, file: TFile): Promise<Record<string, unknown>> {
   return parseYaml(getFrontMatterInfo(await app.vault.read(file)).frontmatter);
+}
+
+async function rowStatuses(app: App, file: TFile): Promise<Record<string, string>> {
+  const parsed = parseVariant(await fmOf(app, file), file.path).value!;
+  const indexed: IndexedVariant = { ...parsed, file, issues: [], excerpt: "", displayTitle: file.basename };
+  return Object.fromEntries(expandRows([indexed], 15).map((r) => [r.channelId ?? "", r.status]));
 }
 
 const post = { type: "social-post", platform: "linkedin", channels: ["li/me", "li/acme-studio"], status: "draft" };
@@ -81,5 +90,44 @@ describe("SafeWriter", () => {
     const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "draft" } } });
     await new SafeWriter(app).updateDeliveries(file, { "li/me": null });
     expect((await fmOf(app, file)).deliveries).toBeUndefined();
+  });
+
+  it("keeps the planned status of channels without a record while one channel publishes (final review F1)", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "p.md", {
+      type: "social-post",
+      platform: "linkedin",
+      channels: ["li/me", "li/acme", "li/lab"],
+      status: "scheduled",
+      scheduled_at: "2026-10-08T17:30:00+02:00",
+    });
+    const writer = new SafeWriter(app);
+    await writer.transitionDelivery(file, "li/me", "scheduled");
+    expect((await fmOf(app, file)).status).toBe("scheduled");
+    await writer.transitionDelivery(file, "li/me", "publishing");
+    await writer.transitionDelivery(file, "li/me", "published");
+    expect(await rowStatuses(app, file)).toEqual({ "li/me": "published", "li/acme": "scheduled", "li/lab": "scheduled" });
+  });
+
+  it("keeps the uncovered channel of the spec §2.2 example scheduled after an unrelated patch (final review F1)", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "p.md", {
+      type: "social-post",
+      campaign: "[[Event X]]",
+      platform: "linkedin",
+      channels: ["li/me", "li/acme-studio", "li/maker-lab"],
+      mode: "auto",
+      status: "scheduled",
+      scheduled_at: "2026-10-08T17:30:00+02:00",
+      stagger_minutes: 15,
+      reminders: [60, 10],
+      deliveries: {
+        "li/me": { status: "published", at: "2026-10-08T17:30:00+02:00", url: "https://www.linkedin.com/feed/update/1", remote_id: "1" },
+        "li/acme-studio": { status: "awaiting_you", at: "2026-10-08T17:45:00+02:00" },
+      },
+    });
+    expect((await rowStatuses(app, file))["li/maker-lab"]).toBe("scheduled");
+    await new SafeWriter(app).patchVariant(file, { reminders: [30] });
+    expect((await rowStatuses(app, file))["li/maker-lab"]).toBe("scheduled");
   });
 });

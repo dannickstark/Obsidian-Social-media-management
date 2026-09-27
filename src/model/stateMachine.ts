@@ -41,10 +41,29 @@ export function transition(
 
 const PENDING = new Set<DeliveryStatus>(["scheduled", "handed_over", "publishing", "awaiting_you"]);
 
-export function rollupStatus(v: Pick<Variant, "status" | "channels" | "deliveries">): VariantStatus {
-  // No delivery records yet: nothing to roll up, keep what the user wrote.
+/** Status that a listed channel WITHOUT a delivery record takes, derived from the stored variant status. */
+export function inheritedStatus(v: Pick<Variant, "status" | "scheduledAt">): DeliveryStatus {
+  switch (v.status) {
+    case "idea":
+    case "draft":
+      return "draft";
+    case "ready":
+      return "ready";
+    case "scheduled":
+    case "partial":
+    case "overdue":
+    case "attention":
+    case "published":
+    case "skipped":
+      return v.scheduledAt !== undefined ? "scheduled" : "draft";
+  }
+}
+
+export function rollupStatus(v: Pick<Variant, "status" | "scheduledAt" | "channels" | "deliveries">): VariantStatus {
+  // No delivery records for listed channels yet: nothing to roll up, keep what the user wrote.
   if (!v.channels.some((c) => v.deliveries[c] !== undefined)) return v.status;
-  const statuses = v.channels.map((c) => v.deliveries[c]?.status ?? "draft");
+  const missing = inheritedStatus(v);
+  const statuses = v.channels.map((c) => v.deliveries[c]?.status ?? missing);
   if (statuses.some((s) => s === "failed" || s === "check_needed")) return "attention";
   if (statuses.some((s) => s === "overdue")) return "overdue";
   const published = statuses.filter((s) => s === "published").length;

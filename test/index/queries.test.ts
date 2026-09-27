@@ -106,18 +106,39 @@ describe("status handling for posts without delivery records", () => {
     expect(rows.find((r) => r.key === "par.md#x/main")?.status).toBe("scheduled");
   });
 
-  it("falls back to draft for channels without records when some deliveries exist", () => {
+  it("partially-delivered variant: uncovered channel row inherits scheduled when scheduledAt is set", () => {
+    const partial = v({
+      path: "mixed.md",
+      platform: "x",
+      status: "partial",
+      scheduledAt: NOW,
+      channels: ["x/one", "x/two"],
+      deliveries: { "x/one": { status: "published" } },
+    });
+    const rows = expandRows([partial], 10);
+    expect(rows.find((r) => r.key === "mixed.md#x/one")?.status).toBe("published");
+    expect(rows.find((r) => r.key === "mixed.md#x/two")?.status).toBe("scheduled");
+  });
+
+  it("partially-delivered variant: uncovered channel row is draft without scheduledAt", () => {
     const partial = v({
       path: "mixed.md",
       platform: "x",
       status: "partial",
       channels: ["x/one", "x/two"],
       deliveries: { "x/one": { status: "published" } },
-      // x/two has no delivery record
     });
-    const rows = expandRows([partial], 10);
-    expect(rows.find((r) => r.key === "mixed.md#x/one")?.status).toBe("published");
-    expect(rows.find((r) => r.key === "mixed.md#x/two")?.status).toBe("draft");
+    expect(expandRows([partial], 10).find((r) => r.key === "mixed.md#x/two")?.status).toBe("draft");
+  });
+
+  it("keeps idea rows for idea variants with some records", () => {
+    const idea = v({ path: "i.md", platform: "x", status: "idea", channels: ["x/one", "x/two"], deliveries: { "x/one": { status: "draft" } } });
+    expect(expandRows([idea], 10).find((r) => r.key === "i.md#x/two")?.status).toBe("idea");
+  });
+
+  it("ignores records for unlisted channels when deciding whether the stored status is authoritative", () => {
+    const skipped = v({ path: "s.md", platform: "x", status: "skipped", channels: ["x/one"], deliveries: { "x/gone": { status: "published" } } });
+    expect(expandRows([skipped], 10)[0]?.status).toBe("skipped");
   });
 });
 
