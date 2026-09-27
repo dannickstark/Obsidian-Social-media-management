@@ -113,7 +113,32 @@ export class NoteFactory {
     const info = getFrontMatterInfo(content);
     const body = info.exists ? content.slice(info.contentStart) : content;
     const forkPath = this.uniquePath(parentPath(file.path), safeFileName(`${file.basename} – ${channelName}`));
-    return this.app.vault.create(forkPath, render(forkFm, body));
+    try {
+      return await this.app.vault.create(forkPath, render(forkFm, body));
+    } catch (err) {
+      // The channel was already removed from the original above; if the fork note can't be
+      // created, restore the channel (at its original position) and its raw delivery entry on
+      // the original rather than losing it.
+      await this.writer.run(file, (orig) => {
+        const originalChannels = Array.isArray(snapshot.channels) ? (snapshot.channels as string[]) : [];
+        const position = originalChannels.indexOf(channelId);
+        const channels = Array.isArray(orig.channels) ? [...(orig.channels as string[])] : [];
+        if (!channels.includes(channelId)) {
+          const insertAt = position >= 0 && position <= channels.length ? position : channels.length;
+          channels.splice(insertAt, 0, channelId);
+        }
+        orig.channels = channels;
+        const rawDeliveries = isRecord(snapshot.deliveries) ? snapshot.deliveries : undefined;
+        if (rawDeliveries && channelId in rawDeliveries) {
+          const raw = isRecord(orig.deliveries) ? { ...orig.deliveries } : {};
+          raw[channelId] = rawDeliveries[channelId];
+          orig.deliveries = raw;
+        }
+        const restored = parseVariant(orig, file.path).value;
+        if (restored) orig.status = rollupStatus(restored);
+      });
+      throw err;
+    }
   }
 
   private root(): string {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getFrontMatterInfo, parseYaml, type App, type TFile } from "obsidian";
 import { NoteFactory, safeFileName } from "../../src/model/factory";
 import { SafeWriter } from "../../src/model/writer";
@@ -116,6 +116,27 @@ describe("NoteFactory", () => {
     const orig = await fmOf(app, file);
     expect(orig.channels).toEqual(["li/me"]);
     expect(orig.deliveries).toBeUndefined();
+  });
+
+  it("restores the channel when a fork fails (M1a carry-over 0c)", async () => {
+    const { app, factory } = setup();
+    const file = await writeNote(
+      app,
+      "Social/Event X/Event X – LinkedIn.md",
+      {
+        type: "social-post",
+        platform: "linkedin",
+        channels: ["li/me", "li/acme-studio"],
+        status: "partial",
+        deliveries: { "li/me": { status: "published" }, "li/acme-studio": { status: "scheduled" } },
+      },
+      "Shared text\n",
+    );
+    const before = await fmOf(app, file);
+    const createSpy = vi.spyOn(app.vault, "create").mockRejectedValueOnce(new Error("disk full"));
+    await expect(factory.forkVariant(file, "li/acme-studio", "Acme Studio")).rejects.toThrow("disk full");
+    createSpy.mockRestore();
+    expect(await fmOf(app, file)).toEqual(before);
   });
 
   it("refuses to fork the only channel or an unknown one", async () => {
