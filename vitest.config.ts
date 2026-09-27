@@ -1,10 +1,12 @@
 import { defineConfig } from "vitest/config";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { svelteTesting } from "@testing-library/svelte/vite";
 import { fileURLToPath } from "node:url";
 
-// All date logic is tested in a zone with DST so offset bugs surface.
 process.env.TZ = "Europe/Berlin";
 
 export default defineConfig({
+  plugins: [svelte(), svelteTesting()],
   resolve: {
     alias: { obsidian: fileURLToPath(new URL("./test/fakes/obsidian.ts", import.meta.url)) },
   },

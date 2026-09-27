@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import sveltePlugin from "esbuild-svelte";
 import builtins from "builtin-modules";
 import { copyFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -34,7 +35,7 @@ const context = await esbuild.context({
   treeShaking: true,
   minify: prod,
   outfile: "main.js",
-  plugins: [finalize],
+  plugins: [sveltePlugin({ compilerOptions: { css: "external" } }), finalize],
 });
 
 if (prod) {
