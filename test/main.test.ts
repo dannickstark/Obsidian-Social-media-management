@@ -45,6 +45,15 @@ describe("OsmmPlugin", () => {
     plugin.unload();
   });
 
+  it("reloads settings synced from another device (final review F4)", async () => {
+    const { plugin } = await loaded();
+    const channel = { id: "li/me", platform: "linkedin", name: "Me", kind: "profile", avatarColor: "#c9c3b8", method: "api" };
+    await plugin.saveData({ ...plugin.settings, channels: [channel] });
+    await plugin.onExternalSettingsChange();
+    expect(plugin.channels.list().map((c) => c.id)).toEqual(["li/me"]);
+    plugin.unload();
+  });
+
   it("stops the index on unload", async () => {
     const { app, plugin } = await loaded();
     plugin.unload();

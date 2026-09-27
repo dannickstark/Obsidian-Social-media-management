@@ -27,7 +27,7 @@ export default class OsmmPlugin extends Plugin {
     this.channels = new ChannelRegistry({
       read: () => this.settings,
       write: async (next) => {
-        this.settings = { ...this.settings, ...next };
+        this.settings = migrateSettings({ ...this.settings, ...next });
         await this.saveSettings();
       },
     });
@@ -40,6 +40,11 @@ export default class OsmmPlugin extends Plugin {
       this.index.start();
       await this.index.build();
     });
+  }
+
+  /** Called by Obsidian when data.json was changed on disk, e.g. synced from another device. */
+  override async onExternalSettingsChange(): Promise<void> {
+    this.settings = migrateSettings(await this.loadData());
   }
 
   async saveSettings(): Promise<void> {
