@@ -1,0 +1,12 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+node_modules/
+main.js
+main.css
+styles.css
+dev-vault/
+coverage/
+.DS_Store
+design/
+.ignore
