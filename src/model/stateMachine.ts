@@ -5,7 +5,7 @@ import type { Delivery, DeliveryStatus, Variant, VariantStatus } from "./types";
 export const TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatus[]>> = {
   draft: ["ready", "scheduled", "skipped"],
   ready: ["draft", "scheduled", "skipped"],
-  scheduled: ["draft", "ready", "handed_over", "publishing", "awaiting_you", "overdue", "skipped", "published"],
+  scheduled: ["draft", "ready", "handed_over", "publishing", "awaiting_you", "overdue", "skipped"],
   handed_over: ["published", "failed", "scheduled", "check_needed"],
   publishing: ["published", "failed", "check_needed"],
   awaiting_you: ["published", "skipped", "scheduled", "overdue"],

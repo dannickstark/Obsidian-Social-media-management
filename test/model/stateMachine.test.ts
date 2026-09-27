@@ -48,7 +48,7 @@ describe("delivery transitions (spec §5)", () => {
   });
 
   it("keeps existing fields and applies the patch", () => {
-    const d: Delivery = { status: "scheduled", at: 1000, attempts: 1 };
+    const d: Delivery = { status: "publishing", at: 1000, attempts: 1 };
     expect(transition(d, "published", { url: "https://x.com/1", remoteId: "1" })).toEqual({
       status: "published",
       at: 1000,
