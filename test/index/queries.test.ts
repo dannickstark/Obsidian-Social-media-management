@@ -80,6 +80,47 @@ describe("row queries", () => {
   });
 });
 
+describe("status handling for posts without delivery records", () => {
+  it("preserves published status for channel-less variant with no deliveries", () => {
+    const published = v({ path: "p.md", platform: "x", status: "published", campaignPath: "camp.md" });
+    const rows = expandRows([published], 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ channelId: null, status: "published" });
+    expect(campaignProgress([published], "camp.md")).toEqual({ published: 1, total: 1 });
+  });
+
+  it("applies stored status to all rows when variant has no delivery records", () => {
+    const skipped = v({ path: "skip.md", platform: "x", status: "skipped", channels: ["x/main", "x/alt"] });
+    const rows = expandRows([skipped], 10);
+    expect(rows.map((r) => ({ key: r.key, status: r.status }))).toEqual([
+      { key: "skip.md#x/main", status: "skipped" },
+      { key: "skip.md#x/alt", status: "skipped" },
+    ]);
+  });
+
+  it("maps attention→failed and partial→scheduled for variants without deliveries", () => {
+    const attention = v({ path: "att.md", platform: "x", status: "attention", channels: ["x/main"] });
+    const partial = v({ path: "par.md", platform: "x", status: "partial", channels: ["x/main"] });
+    const rows = expandRows([attention, partial], 10);
+    expect(rows.find((r) => r.key === "att.md#x/main")?.status).toBe("failed");
+    expect(rows.find((r) => r.key === "par.md#x/main")?.status).toBe("scheduled");
+  });
+
+  it("falls back to draft for channels without records when some deliveries exist", () => {
+    const partial = v({
+      path: "mixed.md",
+      platform: "x",
+      status: "partial",
+      channels: ["x/one", "x/two"],
+      deliveries: { "x/one": { status: "published" } },
+      // x/two has no delivery record
+    });
+    const rows = expandRows([partial], 10);
+    expect(rows.find((r) => r.key === "mixed.md#x/one")?.status).toBe("published");
+    expect(rows.find((r) => r.key === "mixed.md#x/two")?.status).toBe("draft");
+  });
+});
+
 describe("indexStore", () => {
   it("publishes a new snapshot on every index change", async () => {
     const app = createApp();

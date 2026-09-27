@@ -22,16 +22,38 @@ export interface RowFilter {
   statuses?: readonly RowStatus[];
 }
 
-function undeliveredStatus(v: IndexedVariant): RowStatus {
-  if (v.status === "idea" || v.status === "ready" || v.status === "scheduled") return v.status;
+/** Map stored variant status to row status when there are NO delivery records. */
+function storedStatusToRow(status: IndexedVariant["status"]): RowStatus {
+  switch (status) {
+    case "idea":
+    case "draft":
+    case "ready":
+    case "scheduled":
+    case "published":
+    case "overdue":
+    case "skipped":
+      return status;
+    case "partial":
+      return "scheduled";
+    case "attention":
+      return "failed";
+  }
+}
+
+/** Fallback status for a channel without a delivery record (only used when some delivery records exist). */
+function fallbackStatus(status: IndexedVariant["status"]): RowStatus {
+  if (status === "idea" || status === "ready" || status === "scheduled") return status;
   return "draft";
 }
 
 export function expandRows(variants: readonly IndexedVariant[], defaultStagger: number): PostRow[] {
   const rows: PostRow[] = [];
   for (const v of variants) {
+    const hasAnyDeliveries = Object.keys(v.deliveries).length > 0;
+    const statusResolver = hasAnyDeliveries ? fallbackStatus : storedStatusToRow;
+
     if (v.channels.length === 0) {
-      rows.push({ key: `${v.path}#`, variant: v, channelId: null, status: undeliveredStatus(v), at: v.scheduledAt });
+      rows.push({ key: `${v.path}#`, variant: v, channelId: null, status: storedStatusToRow(v.status), at: v.scheduledAt });
       continue;
     }
     for (const id of v.channels) {
@@ -39,7 +61,7 @@ export function expandRows(variants: readonly IndexedVariant[], defaultStagger: 
         key: `${v.path}#${id}`,
         variant: v,
         channelId: id,
-        status: v.deliveries[id]?.status ?? undeliveredStatus(v),
+        status: v.deliveries[id]?.status ?? statusResolver(v.status),
         at: deliveryTime(v, id, defaultStagger),
       });
     }
