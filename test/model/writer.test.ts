@@ -130,4 +130,25 @@ describe("SafeWriter", () => {
     await new SafeWriter(app).patchVariant(file, { reminders: [30] });
     expect((await rowStatuses(app, file))["li/maker-lab"]).toBe("scheduled");
   });
+
+  it("keeps other raw delivery entries verbatim when transitioning one channel (final review F2)", async () => {
+    const app = createApp();
+    const other = {
+      "li/me": { status: "Published", url: "https://x" },
+      "li/acme": { status: "scheduled", note: "posted by hand", at: "yesterday" },
+    };
+    const file = await writeNote(app, "p.md", { type: "social-post", platform: "linkedin", channels: ["li/me", "li/acme", "li/lab"], deliveries: other });
+    await new SafeWriter(app).transitionDelivery(file, "li/lab", "scheduled");
+    expect((await fmOf(app, file)).deliveries).toEqual({ ...other, "li/lab": { status: "scheduled" } });
+  });
+
+  it("keeps other raw delivery entries verbatim when updating deliveries (final review F2)", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "p.md", {
+      ...post,
+      deliveries: { "li/me": { status: "Published", note: "x" }, "li/acme-studio": { status: "draft" } },
+    });
+    await new SafeWriter(app).updateDeliveries(file, { "li/acme-studio": null, "li/new": { status: "ready" } });
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "Published", note: "x" }, "li/new": { status: "ready" } });
+  });
 });

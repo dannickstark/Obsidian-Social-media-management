@@ -1,5 +1,5 @@
 import type { App, TFile } from "obsidian";
-import { parseVariant, serializeDeliveries, variantFields, type VariantPatch } from "./frontmatter";
+import { isRecord, parseVariant, serializeDelivery, variantFields, type VariantPatch } from "./frontmatter";
 import { rollupStatus, transition } from "./stateMachine";
 import type { Delivery, DeliveryStatus, Variant } from "./types";
 
@@ -16,6 +16,27 @@ function requireVariant(fm: Frontmatter, path: string): Variant {
   const parsed = parseVariant(fm, path).value;
   if (!parsed) throw new Error(`${path} is not a valid social post`);
   return parsed;
+}
+
+/**
+ * Apply a per-channel delivery patch to the raw `deliveries` map, touching only the patched keys
+ * (other entries stay verbatim, even ones that do not parse), then roll up the status.
+ */
+function applyDeliveryPatch(fm: Frontmatter, v: Variant, patch: Record<string, Delivery | null>): void {
+  const raw: Frontmatter = isRecord(fm.deliveries) ? fm.deliveries : {};
+  const deliveries = { ...v.deliveries };
+  for (const [id, d] of Object.entries(patch)) {
+    if (d === null) {
+      delete raw[id];
+      delete deliveries[id];
+    } else {
+      raw[id] = serializeDelivery(d);
+      deliveries[id] = d;
+    }
+  }
+  if (Object.keys(raw).length > 0) fm.deliveries = raw;
+  else delete fm.deliveries;
+  fm.status = rollupStatus({ ...v, deliveries });
 }
 
 /**
@@ -58,15 +79,7 @@ export class SafeWriter {
   }
 
   updateDeliveries(file: TFile, patch: Record<string, Delivery | null>): Promise<void> {
-    return this.run(file, (fm) => {
-      const v = requireVariant(fm, file.path);
-      const deliveries = { ...v.deliveries };
-      for (const [id, d] of Object.entries(patch)) {
-        if (d === null) delete deliveries[id];
-        else deliveries[id] = d;
-      }
-      applyFields(fm, { deliveries: serializeDeliveries(deliveries), status: rollupStatus({ ...v, deliveries }) });
-    });
+    return this.run(file, (fm) => applyDeliveryPatch(fm, requireVariant(fm, file.path), patch));
   }
 
   transitionDelivery(
@@ -78,8 +91,7 @@ export class SafeWriter {
     return this.run(file, (fm) => {
       const v = requireVariant(fm, file.path);
       const next = transition(v.deliveries[channelId] ?? { status: "draft" }, to, patch);
-      const deliveries = { ...v.deliveries, [channelId]: next };
-      applyFields(fm, { deliveries: serializeDeliveries(deliveries), status: rollupStatus({ ...v, deliveries }) });
+      applyDeliveryPatch(fm, v, { [channelId]: next });
       return next;
     });
   }
