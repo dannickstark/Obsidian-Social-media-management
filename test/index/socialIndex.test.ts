@@ -143,4 +143,71 @@ describe("SocialIndex", () => {
     expect(index.variants()[0]).not.toBe(before);
     expect(index.variants()[0]?.campaignPath).toBeUndefined();
   });
+
+  it("never reuses a sequence token, so an older read cannot overwrite a newer one (M1a carry-over 0a)", async () => {
+    const app = createApp();
+    const path = "Social/Posts/Solo.md";
+    await writeNote(app, path, { type: "social-post", platform: "x", title: "V1" });
+    await settle();
+    // Failing sequence from the brief: build() claims 1 and is still reading → change B claims 2,
+    // finishes and deletes the token → change C claims a token and is still reading → build()
+    // finishes and must not treat itself as fresh just because its claimed number (1) got reused;
+    // C's newer result must win once it resolves.
+    let callCount = 0;
+    const gateResolvers: Record<number, () => void> = {};
+    const cachedRead = app.vault.cachedRead.bind(app.vault);
+    app.vault.cachedRead = async (f) => {
+      const content = await cachedRead(f);
+      const n = ++callCount;
+      if (n === 1 || n === 3) {
+        await new Promise<void>((resolve) => (gateResolvers[n] = resolve));
+      }
+      return content;
+    };
+    index = new SocialIndex(app, 0);
+    index.start();
+    const built = index.build();
+    await settle(5); // build() claims its token and blocks on read #1
+    await writeNote(app, path, { type: "social-post", platform: "x", title: "V2" });
+    await settle(5); // change B claims, reads (#2, unblocked), stores "V2" and deletes its token
+    await writeNote(app, path, { type: "social-post", platform: "x", title: "V3" });
+    await settle(5); // change C claims a token and blocks on read #3, still in flight
+    gateResolvers[1]?.(); // let build()'s stale read resolve first
+    await settle(5); // build() must not (mis)treat its stale claim as still current
+    gateResolvers[3]?.(); // now let C's newer read resolve
+    await built;
+    await settle(5);
+    expect(index.getVariant(path)?.displayTitle).toBe("V3");
+  });
+
+  it("keeps the token bound to its claimed path so a rename during build cannot leak it (M1a carry-over 0b)", async () => {
+    const app = createApp();
+    const path = "Social/Posts/Solo.md";
+    const file = await writeNote(app, path, { type: "social-post", platform: "x", title: "Old" });
+    await settle();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const cachedRead = app.vault.cachedRead.bind(app.vault);
+    let first = true;
+    app.vault.cachedRead = async (f) => {
+      const content = await cachedRead(f);
+      if (first) {
+        first = false;
+        await gate;
+      }
+      return content;
+    };
+    index = new SocialIndex(app, 0);
+    index.start();
+    const built = index.build();
+    await settle(5); // let build() claim its token under the old path and start its (blocked) read
+    await app.vault.rename(file, "Social/Posts/Renamed.md");
+    await settle(5); // let the rename's own reindex run and complete under the new path
+    release();
+    await built;
+    await settle(5);
+    expect(index.getVariant("Social/Posts/Renamed.md")?.displayTitle).toBe("Old");
+    expect(index.getVariant(path)).toBeUndefined();
+    expect((index as unknown as { sequence: Map<string, number> }).sequence.has(path)).toBe(false);
+  });
 });

@@ -44,6 +44,7 @@ export class SocialIndex {
   private readonly pendingChanged = new Set<string>();
   private readonly pendingRemoved = new Set<string>();
   private readonly sequence = new Map<string, number>();
+  private nextToken = 0;
   private refs: Array<{ source: { offref(ref: EventRef): void }; ref: EventRef }> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private version = 0;
@@ -64,12 +65,15 @@ export class SocialIndex {
     // Claim a sequence token per path before reading: a reindex that runs while build() awaits its
     // reads takes a newer token, and its (newer) result must not be overwritten by ours.
     const files = this.app.vault.getMarkdownFiles();
-    const tokens = files.map((f) => this.claim(f.path));
+    // Record the claimed path alongside its token: after the await, `file.path` may have changed
+    // through a rename, but the token was claimed (and must be checked/deleted) under the old path.
+    const claims = files.map((f) => ({ path: f.path, token: this.claim(f.path) }));
     const entries = await Promise.all(files.map((f) => this.read(f)));
-    files.forEach((file, i) => {
+    files.forEach((_file, i) => {
+      const { path, token } = claims[i]!;
       const entry = entries[i];
-      if (this.sequence.get(file.path) !== tokens[i]) return;
-      this.sequence.delete(file.path);
+      if (this.sequence.get(path) !== token) return;
+      this.sequence.delete(path);
       if (entry) this.store(entry);
     });
     this.relinkCampaigns();
@@ -205,9 +209,14 @@ export class SocialIndex {
     }
   }
 
-  /** Re-read one file; stale reads (superseded by a newer event for the same path) are discarded. */
+  /**
+   * Re-read one file; stale reads (superseded by a newer event for the same path) are discarded.
+   * Tokens come from one monotonic counter for the whole index, so a token value is never reused:
+   * once a completed read deletes its entry, a later claim for the same path cannot collide with
+   * an older, still in-flight claim that happens to be waiting on the same (stale) number.
+   */
   private claim(path: string): number {
-    const token = (this.sequence.get(path) ?? 0) + 1;
+    const token = ++this.nextToken;
     this.sequence.set(path, token);
     return token;
   }
@@ -239,6 +248,9 @@ export class SocialIndex {
     // synchronously within the same call stack; yield one microtask so that has happened
     // before we read the cache at the new path below.
     await Promise.resolve();
+    // Any token claimed under the old path (e.g. by a build() still awaiting its read) can never
+    // be resolved there again now that the file has moved; drop it so it cannot leak.
+    this.sequence.delete(oldPath);
     const before = this.kindAt(oldPath);
     if (before) {
       this.drop(oldPath);
