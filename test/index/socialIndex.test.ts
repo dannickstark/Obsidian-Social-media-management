@@ -122,4 +122,25 @@ describe("SocialIndex", () => {
     await built;
     expect(index.getVariant(file.path)?.displayTitle).toBe("New");
   });
+
+  it("forgets sequence tokens once reindexing settles (final review F5.5)", async () => {
+    const { app, index } = await vaultWithCampaign();
+    const change = nextChange(index);
+    await writeNote(app, "Social/Posts/Solo.md", { type: "social-post", platform: "x", title: "Solo" });
+    await writeNote(app, "Notes/Other.md", { tags: ["y"] });
+    await change;
+    await settle(5);
+    expect((index as unknown as { sequence: Map<string, number> }).sequence.size).toBe(0);
+  });
+
+  it("replaces relinked variants instead of mutating them (final review F5.5)", async () => {
+    const { app, index } = await vaultWithCampaign();
+    const before = index.variants()[0]!;
+    const change = nextChange(index);
+    await app.vault.rename(app.vault.getFileByPath("Social/Event X/Event X.md")!, "Social/Event X/Event X 2026.md");
+    await change;
+    expect(before.campaignPath).toBe("Social/Event X/Event X.md");
+    expect(index.variants()[0]).not.toBe(before);
+    expect(index.variants()[0]?.campaignPath).toBeUndefined();
+  });
 });

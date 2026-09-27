@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { App, Setting, type TextComponent, type DropdownComponent } from "./fakes/obsidian";
+import { App, Notice, Setting, type TextComponent, type DropdownComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
 import { nextChange, settle } from "./helpers";
 
@@ -61,6 +61,38 @@ describe("OsmmPlugin", () => {
     plugin.index.onChange(() => (fired = true));
     await app.vault.createFolder("Social");
     await app.vault.create("Social/p.md", "---\ntype: social-post\nplatform: x\n---\n");
+    await settle(80);
+    expect(fired).toBe(false);
+  });
+
+  it("shows a notice and stops loading when settings come from a newer schema (final review F5.4)", async () => {
+    const app = new App();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.saveData({ schemaVersion: 99 });
+    Notice.messages = [];
+    await expect(plugin.load()).resolves.toBeUndefined();
+    expect(Notice.messages).toEqual([expect.stringMatching(/newer version/)]);
+    expect(plugin.index).toBeUndefined();
+    plugin.unload();
+  });
+
+  it("does not build or start the index when unloaded before the layout is ready (final review F5.4)", async () => {
+    const app = new App();
+    await app.vault.createFolder("Social");
+    await app.vault.create("Social/p.md", "---\ntype: social-post\nplatform: x\n---\n");
+    await settle();
+    let ready: (() => unknown) | undefined;
+    app.workspace.onLayoutReady = (cb) => {
+      ready = cb;
+    };
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    plugin.unload();
+    await ready?.();
+    expect(plugin.index.variants()).toEqual([]);
+    let fired = false;
+    plugin.index.onChange(() => (fired = true));
+    await app.vault.create("Social/q.md", "---\ntype: social-post\nplatform: x\n---\n");
     await settle(80);
     expect(fired).toBe(false);
   });

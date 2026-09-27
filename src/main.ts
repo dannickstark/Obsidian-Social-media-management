@@ -1,4 +1,4 @@
-import { Plugin } from "obsidian";
+import { Notice, Plugin } from "obsidian";
 import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
 import { SocialIndex } from "./index/socialIndex";
@@ -17,9 +17,17 @@ export default class OsmmPlugin extends Plugin {
   factory!: NoteFactory;
   channels!: ChannelRegistry;
   index!: SocialIndex;
+  private unloaded = false;
 
   override async onload(): Promise<void> {
-    this.settings = migrateSettings(await this.loadData());
+    this.register(() => (this.unloaded = true));
+    try {
+      this.settings = migrateSettings(await this.loadData());
+    } catch (error) {
+      // e.g. settings saved by a newer schema: tell the user and stay inert rather than overwrite them.
+      new Notice(error instanceof Error ? error.message : String(error));
+      return;
+    }
     this.device = loadDeviceSettings(this.app);
     this.secrets = new Secrets(this.app);
     this.writer = new SafeWriter(this.app);
@@ -37,6 +45,7 @@ export default class OsmmPlugin extends Plugin {
     this.addSettingTab(new OsmmSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(async () => {
+      if (this.unloaded) return;
       this.index.start();
       await this.index.build();
     });

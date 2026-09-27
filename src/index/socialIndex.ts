@@ -69,6 +69,7 @@ export class SocialIndex {
     files.forEach((file, i) => {
       const entry = entries[i];
       if (this.sequence.get(file.path) !== tokens[i]) return;
+      this.sequence.delete(file.path);
       if (entry) this.store(entry);
     });
     this.relinkCampaigns();
@@ -198,7 +199,7 @@ export class SocialIndex {
     for (const v of this.variantMap.values()) {
       const next = this.resolveCampaign(v);
       if (next !== v.campaignPath) {
-        v.campaignPath = next;
+        this.variantMap.set(v.path, { ...v, campaignPath: next });
         this.pendingChanged.add(v.path);
       }
     }
@@ -216,6 +217,7 @@ export class SocialIndex {
     const before = this.kindAt(file.path);
     const entry = await this.read(file);
     if (this.sequence.get(file.path) !== token) return null;
+    this.sequence.delete(file.path);
     if (entry) this.store(entry);
     else this.drop(file.path);
     const after = entry ? (entry.kind === "invalid" ? entry.value.kind : entry.kind) : null;

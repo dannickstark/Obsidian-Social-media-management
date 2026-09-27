@@ -1,6 +1,6 @@
-import { getFrontMatterInfo, normalizePath, parseYaml, stringifyYaml, type App, type TFile } from "obsidian";
+import { getFrontMatterInfo, normalizePath, stringifyYaml, type App, type TFile } from "obsidian";
 import { formatDateTime } from "./dates";
-import { isRecord, parseVariant, serializeDelivery, serializeDeliveries } from "./frontmatter";
+import { isRecord, parseVariant, serializeDelivery } from "./frontmatter";
 import { PLATFORM_META, type Platform } from "./platforms";
 import { rollupStatus } from "./stateMachine";
 import type { SafeWriter } from "./writer";
@@ -15,7 +15,7 @@ export function safeFileName(name: string): string {
     .replace(/^\.+/, "")
     .trim()
     .slice(0, 120)
-    .trim();
+    .replace(/[.\s]+$/, "");
   return cleaned || "Untitled";
 }
 
@@ -82,38 +82,38 @@ export class NoteFactory {
   }
 
   async forkVariant(file: TFile, channelId: string, channelName: string): Promise<TFile> {
-    const content = await this.app.vault.read(file);
-    const info = getFrontMatterInfo(content);
-    const raw: unknown = info.exists ? parseYaml(info.frontmatter) : {};
-    const fm = isRecord(raw) ? raw : {};
-    const variant = parseVariant(fm, file.path).value;
-    if (!variant) throw new Error(`${file.path} is not a valid social post`);
-    if (!variant.channels.includes(channelId)) throw new Error(`${channelId} is not a channel of this post`);
-    if (variant.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
-
-    const delivery = variant.deliveries[channelId];
-    const forkFm: Record<string, unknown> = { ...fm, channels: [channelId] };
-    if (delivery) forkFm.deliveries = { [channelId]: serializeDelivery(delivery) };
-    else delete forkFm.deliveries;
-    forkFm.status = rollupStatus({ ...variant, channels: [channelId], deliveries: delivery ? { [channelId]: delivery } : {} });
-
-    const body = info.exists ? content.slice(info.contentStart) : content;
-    const forkPath = this.uniquePath(parentPath(file.path), safeFileName(`${file.basename} – ${channelName}`));
-    const created = await this.app.vault.create(forkPath, render(forkFm, body));
-
-    await this.writer.run(file, (orig) => {
+    // Snapshot and remove the channel in ONE queued write, so writes queued before the fork are
+    // included in the snapshot and none can land between reading and rewriting the original.
+    const { snapshot, variant } = await this.writer.run(file, (orig) => {
       const current = parseVariant(orig, file.path).value;
-      if (!current) return;
+      if (!current) throw new Error(`${file.path} is not a valid social post`);
+      if (!current.channels.includes(channelId)) throw new Error(`${channelId} is not a channel of this post`);
+      if (current.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
+      const copy = structuredClone(orig);
       const channels = current.channels.filter((c) => c !== channelId);
       const deliveries = { ...current.deliveries };
       delete deliveries[channelId];
       orig.channels = channels;
-      const serialized = serializeDeliveries(deliveries);
-      if (serialized) orig.deliveries = serialized;
+      // Only drop the forked channel's entry; other raw entries stay verbatim.
+      const raw = isRecord(orig.deliveries) ? { ...orig.deliveries } : {};
+      delete raw[channelId];
+      if (Object.keys(raw).length > 0) orig.deliveries = raw;
       else delete orig.deliveries;
       orig.status = rollupStatus({ ...current, channels, deliveries });
+      return { snapshot: copy, variant: current };
     });
-    return created;
+
+    const delivery = variant.deliveries[channelId];
+    const forkFm: Record<string, unknown> = { ...snapshot, channels: [channelId] };
+    if (delivery) forkFm.deliveries = { [channelId]: serializeDelivery(delivery) };
+    else delete forkFm.deliveries;
+    forkFm.status = rollupStatus({ ...variant, channels: [channelId], deliveries: delivery ? { [channelId]: delivery } : {} });
+
+    const content = await this.app.vault.read(file);
+    const info = getFrontMatterInfo(content);
+    const body = info.exists ? content.slice(info.contentStart) : content;
+    const forkPath = this.uniquePath(parentPath(file.path), safeFileName(`${file.basename} – ${channelName}`));
+    return this.app.vault.create(forkPath, render(forkFm, body));
   }
 
   private root(): string {

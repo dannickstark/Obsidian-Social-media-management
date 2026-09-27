@@ -10,8 +10,9 @@ async function fmOf(app: App, file: TFile): Promise<Record<string, unknown>> {
 
 function setup() {
   const app = createApp();
-  const factory = new NoteFactory(app, new SafeWriter(app), { rootFolder: () => "Social" });
-  return { app, factory };
+  const writer = new SafeWriter(app);
+  const factory = new NoteFactory(app, writer, { rootFolder: () => "Social" });
+  return { app, factory, writer };
 }
 
 describe("safeFileName (review focus 5)", () => {
@@ -20,6 +21,8 @@ describe("safeFileName (review focus 5)", () => {
     ["Q&A: what/why?", "Q&A what why"],
     ["#launch [beta] ^1", "launch beta 1"],
     ["...hidden", "hidden"],
+    ["Coming soon...", "Coming soon"],
+    ["Trailing . . ", "Trailing"],
     ["   ", "Untitled"],
     ["x".repeat(200), "x".repeat(120)],
   ])("%s → %s", (input, expected) => {
@@ -94,6 +97,25 @@ describe("NoteFactory", () => {
     expect(await fmOf(app, fork)).toMatchObject({ channels: ["li/acme-studio"], deliveries: { "li/acme-studio": { status: "scheduled" } }, status: "scheduled" });
     expect(await app.vault.read(fork)).toMatch(/Shared text\n$/);
     expect(await fmOf(app, file)).toMatchObject({ channels: ["li/me"], deliveries: { "li/me": { status: "published" } }, status: "published" });
+  });
+
+  it("does not lose a queued write when forking (final review F5.2)", async () => {
+    const { app, factory, writer } = setup();
+    const file = await writeNote(app, "Social/Posts/Launch.md", {
+      type: "social-post",
+      platform: "linkedin",
+      channels: ["li/me", "li/acme"],
+      status: "scheduled",
+      deliveries: { "li/acme": { status: "publishing" } },
+    });
+    const url = "https://www.linkedin.com/feed/update/2";
+    const queued = writer.transitionDelivery(file, "li/acme", "published", { url });
+    const fork = await factory.forkVariant(file, "li/acme", "Acme");
+    await queued;
+    expect(await fmOf(app, fork)).toMatchObject({ channels: ["li/acme"], deliveries: { "li/acme": { status: "published", url } }, status: "published" });
+    const orig = await fmOf(app, file);
+    expect(orig.channels).toEqual(["li/me"]);
+    expect(orig.deliveries).toBeUndefined();
   });
 
   it("refuses to fork the only channel or an unknown one", async () => {

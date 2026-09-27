@@ -46,6 +46,16 @@ describe("socialKind and linkTarget", () => {
 });
 
 describe("parseVariant", () => {
+  it("splits comma-separated channels, reminders and media (final review F5.3)", () => {
+    const v = parseVariant(
+      { type: "social-post", platform: "linkedin", channels: "li/me, li/acme", reminders: "60, 10", media: "[[a.png]], [[b, c.png]]" },
+      "p.md",
+    ).value;
+    expect(v?.channels).toEqual(["li/me", "li/acme"]);
+    expect(v?.reminders).toEqual([60, 10]);
+    expect(v?.media).toEqual(["a.png", "b, c.png"]);
+  });
+
   it("parses the spec example", () => {
     const { value, issues } = parseVariant(base, "Social/Event X/Event X – LinkedIn.md");
     expect(issues).toEqual([]);

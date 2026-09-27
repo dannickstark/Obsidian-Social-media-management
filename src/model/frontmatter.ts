@@ -47,6 +47,15 @@ function asList(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [value];
 }
 
+/** Like asList, but also splits a comma-separated string ("li/me, li/acme"); commas inside [[wikilinks]] are kept. */
+function splitList(value: unknown): unknown[] {
+  if (typeof value !== "string") return asList(value);
+  return value
+    .split(/,(?![^[]*\]\])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 function take<T>(
   schema: z.ZodType<T>,
   value: unknown,
@@ -137,7 +146,7 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
   if (!platform) return { value: null, issues };
 
   const channels: string[] = [];
-  for (const raw of asList(fm.channels)) {
+  for (const raw of splitList(fm.channels)) {
     const id = take(zChannelId, typeof raw === "string" ? raw.trim() : raw, "channels", issues, "warning");
     if (!id) continue;
     if (channelPlatform(id) !== platform) {
@@ -160,8 +169,8 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
     staggerMinutes: take(zMinutes, fm.stagger_minutes, "stagger_minutes", issues, "warning"),
     reminders: isBlank(fm.reminders)
       ? undefined
-      : take(zMinutesList, asList(fm.reminders), "reminders", issues, "warning"),
-    media: asList(fm.media)
+      : take(zMinutesList, splitList(fm.reminders), "reminders", issues, "warning"),
+    media: splitList(fm.media)
       .map(linkTarget)
       .filter((m): m is string => m !== undefined),
     deliveries: parseDeliveries(fm.deliveries, channels, issues),
