@@ -1,4 +1,5 @@
 import { App, stringifyYaml, type TFile } from "obsidian";
+import type { IndexChange, SocialIndex } from "../src/index/socialIndex";
 
 export function createApp(): App {
   return new App();
@@ -24,4 +25,13 @@ export async function writeNote(
     return existing;
   }
   return app.vault.create(path, content);
+}
+
+export function nextChange(index: SocialIndex): Promise<IndexChange> {
+  return new Promise((resolve) => {
+    const off = index.onChange((change) => {
+      off();
+      resolve(change);
+    });
+  });
 }
