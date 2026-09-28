@@ -32,7 +32,7 @@ async function fm(c: TestCtx, path = P): Promise<Record<string, unknown>> {
 
 async function setup(
   publish: NonNullable<PlatformAdapter["publish"]>,
-  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"]; lateWindowMs?: number } = {},
+  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"]; lateWindowMs?: number; lookupTimeoutMs?: number } = {},
 ) {
   const c = await makeCtx({ seed: true, notes: opts.notes ?? [note()] });
   await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("tg/event-x")!, secretId: "osmm-channel-tg-event-x" });
@@ -56,6 +56,7 @@ async function setup(
     },
     onFailure: (f) => failures.push(f),
     ...(opts.lateWindowMs !== undefined ? { lateWindowMs: () => opts.lateWindowMs! } : {}),
+    ...(opts.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: opts.lookupTimeoutMs } : {}),
   });
   return { c, orchestrator, delays, failures };
 }
@@ -192,6 +193,33 @@ describe("PublishOrchestrator", () => {
     const results = await Promise.all([orchestrator.run(P, "tg/event-x"), orchestrator.run(P, "tg/event-x")]);
     expect(calls).toBe(1);
     expect(results.map((r) => r.status).sort()).toEqual(["published", "refused"]);
+  });
+
+  it("reports a delivery as in flight from its claim until its result is written (fix round 2)", async () => {
+    let release: () => void = () => undefined;
+    const { c, orchestrator } = await setup(
+      () => new Promise((resolve) => (release = () => resolve({ remoteId: "1", url: "https://t.me/eventx/1" }))),
+    );
+    expect(orchestrator.isInFlight(P, "tg/event-x")).toBe(false);
+    const run = orchestrator.run(P, "tg/event-x");
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "publishing");
+    expect(orchestrator.isInFlight(P, "tg/event-x")).toBe(true);
+    release();
+    expect(await run).toEqual({ status: "published", url: "https://t.me/eventx/1" });
+    expect(orchestrator.isInFlight(P, "tg/event-x")).toBe(false);
+  });
+
+  it("treats a lookup that does not answer in time as can't tell (fix round 2)", async () => {
+    const { c, orchestrator } = await setup(
+      async () => {
+        throw new Error("net::ERR_TIMED_OUT");
+      },
+      { lookup: () => new Promise(() => undefined), lookupTimeoutMs: 20 },
+    );
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "check_needed" });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "check_needed");
+    expect(await orchestrator.lookup(P, "tg/event-x")).toBeNull();
+    expect(orchestrator.isInFlight(P, "tg/event-x")).toBe(false);
   });
 
   it("leaves check_needed alone when there is no lookup on the adapter", async () => {

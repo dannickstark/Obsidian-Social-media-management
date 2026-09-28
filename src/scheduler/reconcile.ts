@@ -15,10 +15,14 @@ export function reconcilePlan(
   now: number,
   defaultStagger: number,
   autoPostLateMs: number | null,
+  /** A `publishing` this device's own run still has in flight is live, not stuck: it is left to that run. */
+  inFlight: (path: string, channelId: string) => boolean = () => false,
 ): ReconcileAction[] {
   const actions: ReconcileAction[] = [];
   for (const v of variants) {
-    for (const id of v.channels) if (v.deliveries[id]?.status === "publishing") actions.push({ kind: "check_needed", path: v.path, channelId: id });
+    for (const id of v.channels) {
+      if (v.deliveries[id]?.status === "publishing" && !inFlight(v.path, id)) actions.push({ kind: "check_needed", path: v.path, channelId: id });
+    }
   }
   for (const item of dueItems(variants, now, defaultStagger)) {
     actions.push({ kind: decide(item, autoPostLateMs) === "dispatch" ? "dispatch" : "overdue", item });

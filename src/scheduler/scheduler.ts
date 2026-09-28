@@ -10,6 +10,8 @@ export interface SchedulerPort {
   markCheckNeeded(path: string, channelId: string): Promise<boolean>;
   /** Asks the platform whether an interrupted publish went out, where the adapter can tell. */
   resolveCheck(path: string, channelId: string): Promise<void>;
+  /** True while this device's own API run has the delivery in `publishing`; a reconcile leaves it alone. */
+  isInFlight?(path: string, channelId: string): boolean;
 }
 
 export interface SchedulerDeps {
@@ -119,11 +121,16 @@ export class Scheduler {
   /** Runs once at startup, before the loop (publisher only); ticks are no-ops until it has run. */
   async reconcile(): Promise<ReconcileSummary> {
     const generation = this.generation;
+    const marked: Array<{ path: string; channelId: string }> = [];
     try {
-      return await this.reconcileOnce(generation);
+      return await this.reconcileOnce(generation, marked);
     } finally {
       // Only the latest reconcile opens the gate; a superseded one leaves it to its successor.
       if (generation === this.generation) this.ready = true;
+      // Lookups ask the network and may hang: they run outside the gate, so ticks and reminders go on meanwhile.
+      for (const { path, channelId } of marked) {
+        this.deps.publish.resolveCheck(path, channelId).catch((e: unknown) => this.deps.warn(`Could not check ${path}: ${e instanceof Error ? e.message : String(e)}`));
+      }
     }
   }
 
@@ -137,17 +144,18 @@ export class Scheduler {
     return this.reconcile();
   }
 
-  private async reconcileOnce(generation: number): Promise<ReconcileSummary> {
+  private async reconcileOnce(generation: number, marked: Array<{ path: string; channelId: string }>): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { checkNeeded: 0, overdue: 0, dispatched: 0 };
     if (!this.deps.isPublisher()) return summary;
-    const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs());
+    const inFlight = (path: string, channelId: string) => this.deps.publish.isInFlight?.(path, channelId) ?? false;
+    const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs(), inFlight);
     for (const action of plan) {
       if (generation !== this.generation || !this.deps.isPublisher()) break;
       try {
         if (action.kind === "check_needed") {
           if (await this.deps.publish.markCheckNeeded(action.path, action.channelId)) {
             summary.checkNeeded++;
-            await this.deps.publish.resolveCheck(action.path, action.channelId);
+            marked.push({ path: action.path, channelId: action.channelId });
           }
           continue;
         }

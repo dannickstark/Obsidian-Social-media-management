@@ -17,6 +17,8 @@ import type { AttemptLog } from "./log";
 import { Semaphore } from "./semaphore";
 
 export const BACKOFF_MS: readonly number[] = [1 * MINUTE, 5 * MINUTE, 15 * MINUTE];
+/** A lookup that has not answered by then counts as "can't tell" (it runs during reconciles and holds a platform slot). */
+export const LOOKUP_TIMEOUT_MS = 30_000;
 
 export interface FailureInfo {
   path: string;
@@ -54,6 +56,8 @@ export interface OrchestratorDeps {
   lateWindowMs?(): number;
   /** For the delivery's due time (stagger included). Default 0. */
   defaultStaggerMinutes?(): number;
+  /** How long a lookup may take before it counts as "can't tell". Default: LOOKUP_TIMEOUT_MS. */
+  lookupTimeoutMs?: number;
 }
 
 /** A first claim may start from these; a retry only from the `failed` the orchestrator wrote itself. */
@@ -91,6 +95,8 @@ interface Prepared {
  */
 export class PublishOrchestrator {
   private readonly gates = new Map<Platform, Semaphore>();
+  /** Deliveries this orchestrator has claimed and not yet settled: their `publishing` is live, not stuck. */
+  private readonly inFlight = new Set<string>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -130,6 +136,11 @@ export class PublishOrchestrator {
     }
   }
 
+  /** True while this device's own run has the delivery in `publishing` (claimed, result not yet written). */
+  isInFlight(path: string, channelId: string): boolean {
+    return this.inFlight.has(inFlightKey(path, channelId));
+  }
+
   /** Asks the platform whether an interrupted publish went out (spec §5.1); null when it can't tell. */
   async lookup(path: string, channelId: string): Promise<RemoteState | null> {
     const v = this.deps.index.getVariant(path);
@@ -140,11 +151,19 @@ export class PublishOrchestrator {
     const content = await this.deps.content.load(v);
     const items = postItems(content.body, platformDef(v.platform));
     const secret = channel.secretId ? this.deps.secrets.get(channel.secretId) : null;
-    try {
-      return await adapter.lookup({ variant: v, channel, delivery, text: items.join("\n\n"), items, media: content.media, secret });
-    } catch {
-      return null;
-    }
+    return this.timedLookup(() => adapter.lookup!({ variant: v, channel, delivery, text: items.join("\n\n"), items, media: content.media, secret }));
+  }
+
+  /** Runs a lookup; an error, or no answer within the timeout, is "can't tell" (null). */
+  private timedLookup(lookup: () => Promise<RemoteState | null>): Promise<RemoteState | null> {
+    let handle: number | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      handle = window.setTimeout(() => resolve(null), this.deps.lookupTimeoutMs ?? LOOKUP_TIMEOUT_MS);
+    });
+    const answer = Promise.resolve()
+      .then(lookup)
+      .catch(() => null);
+    return Promise.race([answer, timeout]).finally(() => window.clearTimeout(handle));
   }
 
   private gate(platform: Platform): Semaphore {
@@ -159,6 +178,17 @@ export class PublishOrchestrator {
   private async attempt(p: Prepared, attempt: number): Promise<Attempt> {
     const claim = await this.claim(p.file, p.channelId, attempt === 1);
     if ("refuse" in claim) return { done: true, result: { status: "refused", reason: claim.refuse } };
+    // Only the run that won the claim marks it, so a refused concurrent run never clears the mark.
+    const key = inFlightKey(p.path, p.channelId);
+    this.inFlight.add(key);
+    try {
+      return await this.send(p, attempt, claim);
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+
+  private async send(p: Prepared, attempt: number, claim: { variant: Variant; delivery: Delivery }): Promise<Attempt> {
     const job: DeliveryJob = {
       variant: claim.variant,
       channel: p.channel,
@@ -219,7 +249,8 @@ export class PublishOrchestrator {
       void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
       return { done: true, result: changedUnderneath(parked) };
     }
-    const remote = p.adapter.lookup ? await p.adapter.lookup(job).catch(() => null) : null;
+    const lookup = p.adapter.lookup?.bind(p.adapter);
+    const remote = lookup ? await this.timedLookup(() => lookup(job)) : null;
     if (remote?.published) {
       const at = this.deps.now();
       // The only settle allowed to start from check_needed: the lookup found the post on the platform.
@@ -282,6 +313,10 @@ export class PublishOrchestrator {
     });
     return "refuse" in result ? { found } : true;
   }
+}
+
+function inFlightKey(path: string, channelId: string): string {
+  return `${path}\n${channelId}`;
 }
 
 const FROM_PUBLISHING: ReadonlySet<DeliveryStatus> = new Set(["publishing"]);

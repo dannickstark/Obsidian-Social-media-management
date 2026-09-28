@@ -198,6 +198,29 @@ describe("OsmmPlugin", () => {
     });
   });
 
+  it("still starts the loop and the banner when the startup reconcile throws (fix round 2)", async () => {
+    const app = new App();
+    let ready: (() => Promise<void>) | undefined;
+    app.workspace.onLayoutReady = (cb) => {
+      ready = cb as () => Promise<void>;
+    };
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    vi.spyOn(plugin.scheduler, "reconcile").mockRejectedValueOnce(new Error("Startup check broke"));
+    const start = vi.spyOn(plugin.scheduler, "start");
+    const banner = vi.spyOn(plugin.uiContext().publish, "overdueBanner");
+    Notice.messages = [];
+    await ready!();
+    expect(Notice.messages).toContain("Startup check broke");
+    expect(start).toHaveBeenCalledOnce();
+    expect(banner).toHaveBeenCalledOnce();
+    // `started` is set: a later claim runs its own reconcile.
+    const became = vi.spyOn(plugin.scheduler, "becamePublisher");
+    await plugin.publisher.claim();
+    expect(became).toHaveBeenCalledOnce();
+    plugin.unload();
+  });
+
   it("does not build or start the index when unloaded before the layout is ready (final review F5.4)", async () => {
     const app = new App();
     await app.vault.createFolder("Social");

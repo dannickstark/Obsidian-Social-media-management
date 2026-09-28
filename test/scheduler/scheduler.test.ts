@@ -373,3 +373,42 @@ describe("Scheduler when the role flips on, off and on again (Task 2 follow-up)"
     expect(dispatched.sort()).toEqual([key(A, T), key(B, T)]);
   });
 });
+
+describe("an in-flight background publish (fix round 2)", () => {
+  it("is left to its own run when a new reconcile starts, and settles published", async () => {
+    const c = await makeCtx({ notes: [note(A, T)], now: T });
+    await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("bs/you")!, method: "api" });
+    let release: () => void = () => undefined;
+    const publish = vi.fn(() => new Promise<{ remoteId: string; url: string }>((resolve) => (release = () => resolve({ remoteId: "1", url: "https://bsky.app/profile/you/post/1" }))));
+    const lookup = vi.fn(async () => ({ published: false }));
+    c.adapters.register({ platform: "bluesky", publish, lookup });
+    const seen = new Set<string>();
+    c.index.onChange(() => {
+      const status = c.index.getVariant(A)?.deliveries["bs/you"]?.status;
+      if (status) seen.add(status);
+    });
+    let publisher = true;
+    const scheduler = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => publisher,
+      autoPostLateMs: () => null,
+      publish: c.ctx.publish,
+      warn: () => undefined,
+    });
+    expect(await scheduler.reconcile()).toMatchObject({ dispatched: 1 });
+    await indexed(c.index, () => c.index.getVariant(A)?.deliveries["bs/you"]?.status === "publishing");
+    expect(c.ctx.publish.isInFlight(A, "bs/you")).toBe(true);
+    expect(await c.ctx.publish.markCheckNeeded(A, "bs/you")).toBe(false);
+    // The role flips off and on while the request is out: the new reconcile must not treat it as stuck.
+    publisher = false;
+    publisher = true;
+    expect(await scheduler.becamePublisher()).toEqual({ checkNeeded: 0, overdue: 0, dispatched: 0 });
+    release();
+    await indexed(c.index, () => c.index.getVariant(A)?.deliveries["bs/you"]?.status === "published");
+    expect(seen.has("check_needed")).toBe(false);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledOnce();
+  });
+});

@@ -5,7 +5,7 @@ import type { RemoteState } from "../../src/platforms/types";
 import { reconcilePlan } from "../../src/scheduler/reconcile";
 import { Scheduler } from "../../src/scheduler/scheduler";
 import { autoPostLateMs, migrateSettings } from "../../src/settings/settings";
-import { indexed } from "../helpers";
+import { indexed, settle } from "../helpers";
 import { makeCtx, type TestCtx } from "../ui/ctx";
 
 const T = Date.UTC(2026, 9, 12, 7); // Mon 12 Oct 2026, 09:00 Berlin
@@ -115,6 +115,28 @@ describe("startup reconciliation (review focus 2)", () => {
     c2.settings.update((s) => ({ ...s, autoPostLate: true, autoPostLateMinutes: 60 }));
     expect(await scheduler(c2).reconcile()).toEqual({ checkNeeded: 0, overdue: 0, dispatched: 1 });
     await indexed(c2.index, () => c2.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "awaiting_you");
+  });
+
+  it("does not hold the gate while a lookup hangs: the next tick and its reminders run (fix round 2)", async () => {
+    const lookup = vi.fn((): Promise<RemoteState | null> => new Promise(() => undefined));
+    const { c } = await withLookup(lookup);
+    const onTick = vi.fn();
+    const s = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => true,
+      autoPostLateMs: () => null,
+      publish: c.ctx.publish,
+      onTick,
+      warn: () => undefined,
+    });
+    const reconciled = await Promise.race([s.reconcile(), settle(200).then(() => "hung" as const)]);
+    expect(reconciled).toEqual({ checkNeeded: 1, overdue: 0, dispatched: 0 });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "check_needed");
+    await s.tick();
+    expect(onTick).toHaveBeenCalledOnce();
+    expect(lookup).toHaveBeenCalledOnce();
   });
 
   it("does nothing on a device that is not the publisher", async () => {

@@ -92,6 +92,11 @@ export class PublishActions {
     this.runApi(path, channelId).catch((e: unknown) => new Notice(`${this.channelName(channelId)}: ${e instanceof Error ? e.message : String(e)}`));
   }
 
+  /** This device's own API run has the delivery in `publishing` right now: it is live, not stuck. */
+  isInFlight(path: string, channelId: string): boolean {
+    return this.orchestrator.isInFlight(path, channelId);
+  }
+
   /** Whether "Check again" can ask the platform: the note's adapter has a lookup(). */
   canLookup(path: string): boolean {
     const v = this.deps.index.getVariant(path);
@@ -199,13 +204,16 @@ export class PublishActions {
     if (!("refuse" in result)) void this.deps.log.append({ at: this.deps.now(), path: item.path, channelId: item.channelId, result: "overdue" });
   }
 
-  /** Startup: Obsidian closed mid-publish. The delivery is never retried automatically (spec §5.1). */
+  /**
+   * Startup: Obsidian closed mid-publish. The delivery is never retried automatically (spec §5.1).
+   * A publish this device still has in flight is not stuck: it is left to its own run.
+   */
   async markCheckNeeded(path: string, channelId: string): Promise<boolean> {
     const v = this.deps.index.getVariant(path);
-    if (!v) return false;
+    if (!v || this.isInFlight(path, channelId)) return false;
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
-      if (d?.status !== "publishing") return { refuse: "The delivery changed." };
+      if (d?.status !== "publishing" || this.isInFlight(path, channelId)) return { refuse: "The delivery changed." };
       const error = "Obsidian closed while this was being published. Check the platform, then mark it as published or not.";
       return { deliveries: { [channelId]: transition(d, "check_needed", { error }) } };
     });

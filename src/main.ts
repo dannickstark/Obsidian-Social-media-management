@@ -167,15 +167,21 @@ export default class OsmmPlugin extends Plugin {
       this.index.start();
       await this.index.build();
       if (this.unloaded) return;
-      const startedAsPublisher = this.publisher.isPublisher();
-      const changes = this.roleChanges;
-      await this.scheduler.reconcile();
-      if (this.unloaded) return;
-      this.started = true;
-      // It finished as the publisher only if it held the role throughout. Otherwise (the role arrived, or was
-      // lost and regained, while it ran) run it again now as the publisher, before the loop starts.
-      const finishedAsPublisher = startedAsPublisher && this.roleChanges === changes;
-      if (this.publisher.isPublisher() && !finishedAsPublisher) await this.scheduler.becamePublisher();
+      try {
+        const startedAsPublisher = this.publisher.isPublisher();
+        const changes = this.roleChanges;
+        await this.scheduler.reconcile();
+        if (this.unloaded) return;
+        this.started = true;
+        // It finished as the publisher only if it held the role throughout. Otherwise (the role arrived, or was
+        // lost and regained, while it ran) run it again now as the publisher, before the loop starts.
+        const finishedAsPublisher = startedAsPublisher && this.roleChanges === changes;
+        if (this.publisher.isPublisher() && !finishedAsPublisher) await this.scheduler.becamePublisher();
+      } catch (e) {
+        // A broken startup check must not leave the planner without its loop, banner and reminders.
+        new Notice(e instanceof Error ? e.message : String(e), 0);
+        this.started = true;
+      }
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
       this.scheduler.start();
