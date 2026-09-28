@@ -15,6 +15,15 @@ export interface ComposerSession {
   dispose(): void;
 }
 
+/** An open Markdown view showing `path`, if any: its editor buffer can be newer than the file on disk. */
+export function openMarkdownView(app: App, path: string): MarkdownView | null {
+  for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+    const view = leaf.view;
+    if (view instanceof MarkdownView && view.file?.path === path) return view;
+  }
+  return null;
+}
+
 /**
  * The body the composer previews: read when the note changes (from an open editor on that note if there is
  * one, otherwise from the vault), and taken from the editor buffer (debounced) while the user types, so the
@@ -27,19 +36,10 @@ export function composerSession(app: App, index: SocialIndex, debounceMs = 100):
   let timer: ReturnType<typeof setTimeout> | null = null;
   let token = 0;
 
-  /** The editor of an open Markdown view showing `p`: its buffer can be newer than the file on disk. */
-  const openEditor = (p: string): Editor | null => {
-    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
-      const view = leaf.view;
-      if (view instanceof MarkdownView && view.file?.path === p) return view.editor;
-    }
-    return null;
-  };
-
   const load = async (): Promise<void> => {
     const mine = ++token;
     const p = current;
-    const editor = p ? openEditor(p) : null;
+    const editor = p ? (openMarkdownView(app, p)?.editor ?? null) : null;
     let text = "";
     if (editor) text = bodyOf(editor.getValue());
     else {

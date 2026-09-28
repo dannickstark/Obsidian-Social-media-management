@@ -1,6 +1,7 @@
-import { MarkdownView, Notice, type App } from "obsidian";
+import { Notice, type App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
+import { openMarkdownView } from "../composer/session";
 import type { LoadedContent } from "../composer/content";
 import type { SocialIndex } from "../index/socialIndex";
 import type { Channel, Variant } from "../model/types";
@@ -90,17 +91,26 @@ export class PublishActions {
 
   /** The user starts the assisted flow: the delivery now waits for them. */
   async startAssisted(path: string, channelId: string): Promise<boolean> {
+    return (await this.claimAssisted(path, channelId)) === null;
+  }
+
+  /**
+   * The claim behind `startAssisted`, on fresh frontmatter: null when the delivery now waits for the user,
+   * otherwise why it can't be posted (published, skipped, publishing, check needed, handed over, unreadable).
+   */
+  private async claimAssisted(path: string, channelId: string): Promise<string | null> {
     const v = this.deps.index.getVariant(path);
-    if (!v) return false;
+    const name = this.channelName(channelId);
+    if (!v) return "That note is no longer available.";
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = effectiveDelivery(fresh, channelId);
-      const next = d ? toAwaiting(d) : null;
-      if (!d || !next) return { refuse: `${this.channelName(channelId)} can't be posted now.` };
+      const next = d && d.status !== "skipped" ? toAwaiting(d) : null;
+      if (!d || !next) return { refuse: `${name} can't be posted now${d ? ` (it is ${d.status.replace(/_/g, " ")})` : ""}.` };
       return next === d ? {} : { deliveries: { [channelId]: next } };
     });
-    if ("refuse" in result) return false;
+    if ("refuse" in result) return result.refuse;
     void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "awaiting_you" });
-    return true;
+    return null;
   }
 
   /** Close the loop of an assisted post: published, with the live URL when there is one. */
@@ -216,15 +226,6 @@ export class PublishActions {
     return this.deps.clipboard.copy(item);
   }
 
-  /** An open editor for `path`, if any: its buffer can be newer than the file on disk. */
-  private openEditorFor(path: string): MarkdownView | null {
-    for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
-      const view = leaf.view;
-      if (view instanceof MarkdownView && view.file?.path === path) return view;
-    }
-    return null;
-  }
-
   /**
    * Ruling P3: before copying, opening or posting, flush an open editor for `path` to disk so what's
    * loaded next is the exact text on screen (the composer itself already tracks the live session body).
@@ -232,7 +233,7 @@ export class PublishActions {
   private async freshContent(path: string): Promise<{ v: Variant; content: LoadedContent } | null> {
     const v = this.deps.index.getVariant(path);
     if (!v) return null;
-    const editor = this.openEditorFor(path);
+    const editor = openMarkdownView(this.deps.app, path);
     if (editor) await editor.save();
     const content = await this.deps.composer.content.load(v);
     return { v, content };
@@ -255,7 +256,11 @@ export class PublishActions {
     return fresh;
   }
 
-  private async freshTarget(path: string, channelId: string): Promise<AssistedTarget | null> {
+  /**
+   * The assisted target built from the flushed, re-validated text (ruling P3). The assisted modal uses it
+   * for every clipboard item after the first, so a reply or image never comes from the text loaded at mount.
+   */
+  async freshTarget(path: string, channelId: string): Promise<AssistedTarget | null> {
     const channel = this.deps.channels.get(channelId);
     if (!channel || !this.deps.index.getVariant(path)) {
       new Notice("That note or channel is no longer available.");
@@ -267,19 +272,25 @@ export class PublishActions {
   }
 
   /**
-   * Step 2: copy the first clipboard item, open the pre-filled page and mark the delivery as waiting for the
-   * user. Returns what was actually copied (the fresh item, after the P3 flush/re-validate), not the caller's
-   * possibly-stale guess — null when nothing was copied (refused, or no clipboard item to copy).
+   * Step 2: mark the delivery as waiting for the user, then copy the first clipboard item and open the
+   * pre-filled page. The claim runs first, on fresh frontmatter: a delivery that is no longer postable
+   * (published or skipped meanwhile, e.g. from a second flow, publishing, check needed, handed over) is
+   * refused with a Notice and nothing is copied or opened. Returns the fresh target (after the P3
+   * flush/re-validate) and what was actually copied from it; null when refused.
    */
-  async openTarget(path: string, channelId: string): Promise<{ result: CopyResult; label: string } | null> {
+  async openTarget(path: string, channelId: string): Promise<{ target: AssistedTarget; copied: { result: CopyResult; label: string } | null } | null> {
     const fresh = await this.freshTarget(path, channelId);
     if (!fresh) return null;
+    const refused = await this.claimAssisted(path, channelId);
+    if (refused) {
+      new Notice(refused);
+      return null;
+    }
     const first = fresh.clipboard[0];
     const result = first ? await this.copyItem(first) : null;
     const url = isMobile() && fresh.mobileUrl ? fresh.mobileUrl : fresh.url;
     if (url) window.open(url);
-    await this.startAssisted(path, channelId);
-    return first && result ? { result, label: first.label } : null;
+    return { target: fresh, copied: first && result ? { result, label: first.label } : null };
   }
 
   /**

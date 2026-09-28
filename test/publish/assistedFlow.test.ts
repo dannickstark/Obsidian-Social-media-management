@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { MarkdownView, Modal, Notice, WorkspaceLeaf } from "../fakes/obsidian";
 import { browser } from "../fakes/browser";
 import ActionsBar from "../../src/composer/ActionsBar.svelte";
@@ -153,5 +153,85 @@ describe("openTarget", () => {
     expect(browser.clipboard).toEqual([]);
     expect(browser.opened).toEqual([]);
     expect(c.log.entries.some((e) => e.channelId === "bs/you" && e.result === "awaiting_you")).toBe(false);
+  });
+});
+
+describe("Assisted flow never re-posts (final review Important 1)", () => {
+  it("a second flow on the same channel copies and opens nothing once the first marked it published", async () => {
+    const c = await makeCtx({ seed: true });
+    const a = render(AssistedFlow, { props: { path: BS, channelIds: ["bs/you"], close: vi.fn() }, context: osmmContext(c.ctx) });
+    const b = render(AssistedFlow, { props: { path: BS, channelIds: ["bs/you"], close: vi.fn() }, context: osmmContext(c.ctx) });
+    const inA = within(a.container);
+    const inB = within(b.container);
+    await vi.waitFor(() => expect(inA.getByRole("button", { name: "Next" }).hasAttribute("disabled")).toBe(false));
+    await vi.waitFor(() => expect(inB.getByRole("button", { name: "Next" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(inA.getByRole("button", { name: "Next" }));
+    await fireEvent.click(inB.getByRole("button", { name: "Next" }));
+
+    await fireEvent.click(inA.getByRole("button", { name: /Open Bluesky|Copy the text/ }));
+    await indexed(c.index, () => c.index.getVariant(BS)!.deliveries["bs/you"]?.status === "awaiting_you");
+    await fireEvent.click(inA.getByRole("button", { name: "I've posted it" }));
+    await fireEvent.click(inA.getByRole("button", { name: "Published, no link" }));
+    await indexed(c.index, () => c.index.getVariant(BS)!.deliveries["bs/you"]?.status === "published");
+
+    browser.clipboard.length = 0;
+    browser.opened.length = 0;
+    const before = Notice.messages.length;
+    await fireEvent.click(inB.getByRole("button", { name: /Open Bluesky|Copy the text/ }));
+    await vi.waitFor(() => expect(Notice.messages.length).toBeGreaterThan(before));
+    expect(browser.clipboard).toEqual([]);
+    expect(browser.opened).toEqual([]);
+    expect(c.index.getVariant(BS)!.deliveries["bs/you"]?.status).toBe("published");
+  });
+
+  it("openTarget refuses a published delivery before copying or opening", async () => {
+    const c = await makeCtx({ seed: true });
+    await c.writer.updateVariant(c.app.vault.getFileByPath(BS)! as never, () => ({ deliveries: { "bs/you": { status: "published" } } }));
+    await indexed(c.index, () => c.index.getVariant(BS)!.deliveries["bs/you"]?.status === "published");
+    expect(await c.ctx.publish.openTarget(BS, "bs/you")).toBeNull();
+    expect(browser.clipboard).toEqual([]);
+    expect(browser.opened).toEqual([]);
+    expect(Notice.messages.at(-1)).toContain("can't be posted now");
+  });
+
+  it("skips a channel at step 2 when it is no longer in the queue", async () => {
+    const c = await makeCtx({ seed: true });
+    const close = vi.fn();
+    render(AssistedFlow, { props: { path: BS, channelIds: ["bs/you"], close }, context: osmmContext(c.ctx) });
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Next" }).hasAttribute("disabled")).toBe(false));
+    await c.writer.updateVariant(c.app.vault.getFileByPath(BS)! as never, () => ({ deliveries: { "bs/you": { status: "published" } } }));
+    await indexed(c.index, () => c.index.getVariant(BS)!.deliveries["bs/you"]?.status === "published");
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /Open Bluesky|Copy the text/ })).toBeNull();
+  });
+});
+
+describe("Assisted flow items come from the flushed text (final review Important 2)", () => {
+  it("Copy reply 2 copies the part from the editor buffer, not the stale file", async () => {
+    const c = await makeCtx({ seed: true });
+    const X = "Social/Event X/Event X – X.md";
+    const file = c.app.vault.getFileByPath(X)!;
+    const disk = await c.app.vault.cachedRead(file);
+    const leaf = new WorkspaceLeaf(c.app);
+    const md = new MarkdownView(leaf);
+    md.file = file;
+    render(AssistedFlow, { props: { path: X, channelIds: ["x/you"], close: vi.fn() }, context: osmmContext(c.ctx) });
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Next" }).hasAttribute("disabled")).toBe(false));
+    // The user edits the thread in the editor after the modal loaded the note.
+    md.editor = { getValue: () => disk.replace("One evening, twelve makers…", "Buffer reply, not yet saved.") };
+    leaf.view = md;
+    leaf.viewType = "markdown";
+    c.app.workspace.leaves.push(leaf);
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Copy reply 2" }));
+    await vi.waitFor(() => expect(browser.clipboard).toEqual([{ kind: "text", text: "Buffer reply, not yet saved." }]));
+  });
+
+  it("openTarget returns the fresh target it copied from", async () => {
+    const c = await makeCtx({ seed: true });
+    const result = await c.ctx.publish.openTarget(BS, "bs/you");
+    expect(result?.target.clipboard[0]?.label).toBe(result?.copied?.label);
+    expect(result?.copied?.result).not.toBe("failed");
   });
 });

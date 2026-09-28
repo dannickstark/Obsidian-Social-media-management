@@ -2,13 +2,14 @@
   import { untrack } from "svelte";
   import type { LoadedContent } from "../composer/content";
   import { PLATFORM_META } from "../model/platforms";
-  import type { ClipItem } from "../platforms/types";
+  import type { AssistedTarget } from "../platforms/types";
   import Preview from "../previews/Preview.svelte";
   import { useOsmm } from "../ui/context";
+  import { assistedQueue } from "./assistedFlow";
   import { isMobile } from "./clipboard";
 
   let { path, channelIds, startStep = 1, close }: { path: string; channelIds: string[]; startStep?: 1 | 3; close: () => void } = $props();
-  const { snapshot, channels, composer, publish } = useOsmm();
+  const { snapshot, settings, channels, composer, publish } = useOsmm();
 
   let pos = $state(0);
   let step = $state<1 | 2 | 3>(untrack(() => startStep));
@@ -17,6 +18,8 @@
   let liveUrl = $state("");
   let reason = $state("");
   let error = $state("");
+  /** The target built from the flushed text by the last Open or Copy (P3); null until then. */
+  let fresh = $state<AssistedTarget | null>(null);
 
   const variant = $derived($snapshot.variants.find((v) => v.path === path));
   const channelId = $derived(channelIds[pos]);
@@ -31,7 +34,8 @@
     void composer.content.load(v).then((c) => (content = c));
   });
 
-  const target = $derived(variant && channel && content ? publish.target(variant, channel, content) : null);
+  const loaded = $derived(variant && channel && content ? publish.target(variant, channel, content) : null);
+  const target = $derived(fresh ?? loaded);
   const model = $derived(variant && content ? composer.preview(variant, content, channel) : null);
   const blocking = $derived(variant && content ? composer.check(variant, content).filter((i) => i.level === "error") : []);
   const opens = $derived(!!target && (!!target.url || (isMobile() && !!target.mobileUrl)));
@@ -41,20 +45,36 @@
     reason = "";
     error = "";
     copied = [];
+    fresh = null;
     if (pos + 1 < channelIds.length) {
       pos += 1;
       step = 1;
     } else close();
   }
 
-  async function open(): Promise<void> {
-    if (!channelId) return;
-    const copiedItem = await publish.openTarget(path, channelId);
-    if (copiedItem && copiedItem.result !== "failed") copied = [copiedItem.label];
+  /** Before step 2, a channel posted or skipped meanwhile (another flow, the tray) is skipped, not offered again. */
+  function toStep2(): void {
+    const v = $snapshot.variants.find((x) => x.path === path);
+    if (!channelId || !v || !assistedQueue(v, $settings.defaultStaggerMinutes, [channelId]).length) nextChannel();
+    else step = 2;
   }
 
-  async function copy(item: ClipItem): Promise<void> {
-    if ((await publish.copyItem(item)) !== "failed") copied = [...copied, item.label];
+  async function open(): Promise<void> {
+    if (!channelId) return;
+    const opened = await publish.openTarget(path, channelId);
+    if (!opened) return;
+    fresh = opened.target;
+    if (opened.copied && opened.copied.result !== "failed") copied = [opened.copied.label];
+  }
+
+  /** Items 2..n: rebuilt from the flushed text at click time (P3), never from the text loaded at mount. */
+  async function copy(i: number): Promise<void> {
+    if (!channelId) return;
+    const next = await publish.freshTarget(path, channelId);
+    if (!next) return;
+    fresh = next;
+    const item = next.clipboard[i];
+    if (item && (await publish.copyItem(item)) !== "failed") copied = [...copied, item.label];
   }
 
   async function mark(withLink: boolean): Promise<void> {
@@ -85,7 +105,7 @@
       </ul>
     {/if}
     <div class="modal-button-container">
-      <button type="button" class="mod-cta" disabled={!model} onclick={() => (step = 2)}>Next</button>
+      <button type="button" class="mod-cta" disabled={!model} onclick={toStep2}>Next</button>
       <button type="button" onclick={close}>Close</button>
     </div>
   {:else if step === 2 && target}
@@ -95,8 +115,8 @@
     </div>
     {#if target.clipboard.length > 1}
       <ul class="osmm-clip-list">
-        {#each target.clipboard.slice(1) as item (item.label)}
-          <li><button type="button" onclick={() => void copy(item)}>Copy {item.label.toLowerCase()}</button></li>
+        {#each target.clipboard.slice(1) as item, i (item.label)}
+          <li><button type="button" onclick={() => void copy(i + 1)}>Copy {item.label.toLowerCase()}</button></li>
         {/each}
       </ul>
     {/if}
