@@ -3,6 +3,7 @@ import { HOUR, MINUTE } from "../../model/dates";
 import { fireTime, REMINDER_WINDOW_MS, reminderSlots, type ReminderItem } from "../reminders";
 import type { Booking, BookingLedger } from "./bookings";
 import { NtfyError, type CancelOutcome, type NtfyClient, type NtfyMessage } from "./client";
+import { settlesWithin } from "../../util/time";
 
 /** ntfy.sh keeps delayed pushes at most 3 days (spec §4.4); 10 minutes of margin for clock skew. */
 export const BOOKING_WINDOW_MS = 72 * HOUR - 10 * MINUTE;
@@ -14,6 +15,8 @@ export const RETRY_MS = 5 * MINUTE;
 export const FORGET_HOLD_MS = 60_000;
 /** Turning phone reminders off must not hang on a stuck run (Task 9 ruling). */
 export const WITHDRAW_WAIT_MS = 10_000;
+/** A sync run still going after this is abandoned by the next sync, which starts afresh (final review 2). */
+export const STALLED_RUN_MS = 60_000;
 
 export interface BookerDeps {
   rows(): PostRow[];
@@ -46,6 +49,8 @@ const rowKeyOf = (key: string) => key.replace(/@\d+:\d+$/, "");
  */
 export class NtfyBooker {
   private running: Promise<SyncResult> | null = null;
+  /** When the sync run in `running` started; null while `running` is a withdraw (never abandoned by a sync). */
+  private runStarted: number | null = null;
   private pausedUntil = 0;
   private warned = false;
   /** Bumped by forget(): a run started before it must not send or record anything more (M3 P13). */
@@ -59,10 +64,22 @@ export class NtfyBooker {
 
   constructor(private readonly deps: BookerDeps) {}
 
-  /** Single-flight: a call during a run (or a withdraw) gets that run's result. Never rejects. */
+  /**
+   * Single-flight: a call during a run (or a withdraw) gets that run's result, unless the run has been going for
+   * over 60 s: it is then abandoned (it sends nothing more) and a fresh run starts. Never rejects.
+   */
   sync(): Promise<SyncResult> {
     if (this.halted) return Promise.resolve(emptyResult());
-    return (this.running ??= this.track(this.run()));
+    const now = this.deps.now();
+    if (this.running && this.runStarted !== null && now - this.runStarted > STALLED_RUN_MS) {
+      this.abandoned++;
+      this.running = null;
+    }
+    if (!this.running) {
+      this.runStarted = now;
+      this.running = this.track(this.run());
+    }
+    return this.running;
   }
 
   /**
@@ -76,8 +93,9 @@ export class NtfyBooker {
     const task = (async () => {
       if (prior && !(await settlesWithin(prior, WITHDRAW_WAIT_MS))) this.abandoned++;
       const gen = this.generation;
-      const forgotten = () => gen !== this.generation;
-      const halted = () => forgotten() || this.halted;
+      // Nothing is recorded after forget() cleared the ledger, or after stop() (the plugin instance is gone).
+      const forgotten = () => gen !== this.generation || this.halted;
+      const halted = forgotten;
       const result = emptyResult();
       try {
         if (await this.cancelAll(result, { left: Number.POSITIVE_INFINITY }, halted, forgotten)) this.warned = false;
@@ -86,6 +104,7 @@ export class NtfyBooker {
       }
       return result;
     })();
+    this.runStarted = null;
     this.running = this.track(task);
     return this.running;
   }
@@ -126,8 +145,11 @@ export class NtfyBooker {
     const epoch = this.abandoned;
     /** Checked before every request or write. */
     const stopped = () => gen !== this.generation || epoch !== this.abandoned || this.deps.now() < this.pausedUntil;
-    /** Checked after every request: the server's answer is recorded unless forget() cleared the ledger (M3 P13). */
-    const forgotten = () => gen !== this.generation;
+    /**
+     * Checked after every request: the server's answer is recorded unless forget() cleared the ledger (M3 P13) or
+     * stop() ended this plugin instance (final review 8).
+     */
+    const forgotten = () => gen !== this.generation || this.halted;
     const result = emptyResult();
     /** Requests left in this run: cancels and bookings alike. */
     const budget = { left: MAX_BOOKINGS_PER_RUN };
@@ -206,7 +228,7 @@ export class NtfyBooker {
           const message = await this.deps.compose(item);
           if (stopped() || !this.active()) return result;
           const sent = await this.deps.client.publish({ ...message, at: fireTime(item) });
-          // Recorded even after a pause, an abandon or a role change, so it can be cancelled later; not after forget().
+          // Recorded even after a pause, an abandon or a role change, so it can be cancelled later; not after forget() or stop().
           if (forgotten()) return result;
           this.deps.ledger.put({ key: item.key, rowKey: rowKeyOf(item.key), minutes: item.minutes, messageId: sent.id, fireAt: fireTime(item), version });
           result.booked.push(item.key);
@@ -267,11 +289,4 @@ export class NtfyBooker {
     const reason = e instanceof NtfyError ? e.message : "a reminder could not be prepared.";
     this.deps.warn(`Phone reminders: ${reason} Trying again in ${Math.round((this.pausedUntil - now) / MINUTE)} min.`);
   }
-}
-
-/** True when `task` settles within `ms`; never rejects. */
-export function settlesWithin(task: Promise<unknown>, ms: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), ms)));
-  return Promise.race([task.then(() => true, () => true), timeout]).finally(() => clearTimeout(timer));
 }

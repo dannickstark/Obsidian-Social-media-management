@@ -12,6 +12,7 @@ import { platformDef, type AdapterRegistry } from "../platforms/registry";
 import { postItems } from "../platforms/text";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, RemoteState } from "../platforms/types";
 import { GRACE_MS } from "../scheduler/due";
+import { withTimeout } from "../util/time";
 import { effectiveDelivery } from "./eligibility";
 import type { AttemptLog } from "./log";
 import { Semaphore } from "./semaphore";
@@ -66,6 +67,11 @@ export interface OrchestratorDeps {
   defaultStaggerMinutes?(): number;
   /** How long a lookup may take before it counts as "can't tell". Default: LOOKUP_TIMEOUT_MS. */
   lookupTimeoutMs?: number;
+  /**
+   * Final review 4: a run started on the publisher device retries only while this device still holds the role
+   * (spec §4.3). A Post now started on another device retries as before. Default: never checked.
+   */
+  isPublisher?(): boolean;
 }
 
 /** A first claim may start from these; a retry only from the `failed` the orchestrator wrote itself. */
@@ -137,10 +143,14 @@ export class PublishOrchestrator {
       secret: secretId ? this.deps.secrets.get(secretId) : null,
       redact: (text) => (secretId ? this.deps.secrets.redact(text, [secretId]) : text),
     };
+    const startedAsPublisher = this.deps.isPublisher?.() ?? false;
+    const roleLost = () => startedAsPublisher && !this.deps.isPublisher!();
     for (let attempt = 1; ; attempt++) {
       const outcome = await this.gate(job.platform).run(() => this.attempt(job, attempt));
       if (outcome.done) return outcome.result;
-      await this.deps.delay(outcome.wait);
+      if (!roleLost()) await this.deps.delay(outcome.wait);
+      // The delivery stays `failed` with its "retrying in" note, as after an unload; the new publisher doesn't retry it.
+      if (roleLost()) return { status: "refused", reason: "This device is no longer the publisher, so the retry was not sent." };
     }
   }
 
@@ -173,14 +183,10 @@ export class PublishOrchestrator {
 
   /** Runs a lookup; an error, or no answer within the timeout, is "can't tell" (null). */
   private timedLookup(lookup: () => Promise<RemoteState | null>): Promise<RemoteState | null> {
-    let handle: number | undefined;
-    const timeout = new Promise<null>((resolve) => {
-      handle = window.setTimeout(() => resolve(null), this.deps.lookupTimeoutMs ?? LOOKUP_TIMEOUT_MS);
-    });
     const answer = Promise.resolve()
       .then(lookup)
       .catch(() => null);
-    return Promise.race([answer, timeout]).finally(() => window.clearTimeout(handle));
+    return withTimeout(answer, this.deps.lookupTimeoutMs ?? LOOKUP_TIMEOUT_MS, null);
   }
 
   private gate(platform: Platform): Semaphore {

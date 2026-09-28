@@ -2,11 +2,12 @@ import { normalizePath, Notice, PluginSettingTab, Setting, type App } from "obsi
 import type OsmmPlugin from "../main";
 import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
 import { ClipboardService } from "../publish/clipboard";
-import { settlesWithin, WITHDRAW_WAIT_MS } from "../reminders/ntfy/booker";
+import { WITHDRAW_WAIT_MS } from "../reminders/ntfy/booker";
 import { testMessage } from "../reminders/ntfy/client";
 import { DEFAULT_NTFY_SERVER, normalizeServer, randomTopic, TOPIC_RE } from "../reminders/ntfy/config";
 import { SecretIds } from "../secrets/secrets";
 import { confirmDialog } from "../ui/dialogs";
+import { settlesWithin } from "../util/time";
 import { mountSvelte, type Mounted } from "../ui/mount";
 import { osmmContext } from "../ui/context";
 import ChannelsSection from "./ChannelsSection.svelte";

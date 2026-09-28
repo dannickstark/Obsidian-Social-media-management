@@ -32,7 +32,7 @@ async function fm(c: TestCtx, path = P): Promise<Record<string, unknown>> {
 
 async function setup(
   publish: NonNullable<PlatformAdapter["publish"]>,
-  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"]; lateWindowMs?: number; lookupTimeoutMs?: number } = {},
+  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"]; lateWindowMs?: number; lookupTimeoutMs?: number; isPublisher?: () => boolean } = {},
 ) {
   const c = await makeCtx({ seed: true, notes: opts.notes ?? [note()] });
   await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("tg/event-x")!, secretId: "osmm-channel-tg-event-x" });
@@ -57,6 +57,7 @@ async function setup(
     onFailure: (f) => failures.push(f),
     ...(opts.lateWindowMs !== undefined ? { lateWindowMs: () => opts.lateWindowMs! } : {}),
     ...(opts.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: opts.lookupTimeoutMs } : {}),
+    ...(opts.isPublisher ? { isPublisher: opts.isPublisher } : {}),
   });
   return { c, orchestrator, delays, failures };
 }
@@ -287,6 +288,33 @@ describe("PublishOrchestrator", () => {
     );
     expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "refused", reason: "It is skipped." });
     expect(calls).toBe(1);
+  });
+
+  it("stops retrying once this device is no longer the publisher (final review 4)", async () => {
+    let calls = 0;
+    let publisher = true;
+    const { orchestrator, delays, failures } = await setup(
+      async () => {
+        calls++;
+        throw http(503);
+      },
+      { isPublisher: () => publisher, onDelay: async () => void (publisher = false) },
+    );
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "refused", reason: "This device is no longer the publisher, so the retry was not sent." });
+    expect([calls, delays, failures]).toEqual([1, [1 * MIN], []]);
+  });
+
+  it("keeps retrying a Post now started on a device that is not the publisher", async () => {
+    let calls = 0;
+    const { orchestrator, delays } = await setup(
+      async () => {
+        if (++calls < 2) throw http(503);
+        return { remoteId: "42", url: "https://t.me/eventx/42" };
+      },
+      { isPublisher: () => false },
+    );
+    expect((await orchestrator.run(P, "tg/event-x")).status).toBe("published");
+    expect(delays).toEqual([1 * MIN]);
   });
 
   it("never retries when the delivery moved to check_needed while the attempt was in flight (final review Important 4)", async () => {

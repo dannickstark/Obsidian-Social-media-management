@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App, requestUrlMock } from "../../fakes/obsidian";
-import { NtfyClient, NtfyError, MIN_DELAY_MS, testMessage, type NtfyMessage } from "../../../src/reminders/ntfy/client";
+import { NtfyClient, NtfyError, MIN_DELAY_MS, REQUEST_TIMEOUT_MS, testMessage, type NtfyMessage } from "../../../src/reminders/ntfy/client";
 import { DEFAULT_NTFY_SERVER, normalizeServer, ntfyTarget, randomTopic, type NtfyConfig } from "../../../src/reminders/ntfy/config";
 import { SecretIds, Secrets } from "../../../src/secrets/secrets";
 import { loadDeviceSettings } from "../../../src/settings/device";
@@ -86,6 +86,25 @@ describe("NtfyClient contract (#68)", () => {
       requestUrlMock.queue.push(fixture);
       const e = await failure(withToken.publish(msg));
       expect(e.message).not.toMatch(/SECRETTOPIC|SECRETTOKEN/);
+    }
+  });
+
+  it("gives up on a request the server never answers after 30 s, as unreachable (final review 2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = new NtfyClient(() => target, () => new Promise(() => undefined), () => NOW);
+      const failed = failure(hung.publish(msg));
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+      let settled = false;
+      void failed.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const e = await failed;
+      expect([e.kind, e.message]).toEqual(["unreachable", "The ntfy server did not answer within 30 s. Check the server address and the connection."]);
+      expect(e.message).not.toContain("SECRETTOPIC");
+    } finally {
+      vi.useRealTimers();
     }
   });
 

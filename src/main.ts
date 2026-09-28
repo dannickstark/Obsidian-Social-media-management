@@ -45,6 +45,7 @@ import { SvelteRenderChild } from "./ui/SvelteView";
 import { PlannerView } from "./views/PlannerView";
 import { SidebarView } from "./views/SidebarView";
 import CampaignTable from "./views/CampaignTable.svelte";
+import { withTimeout } from "./util/time";
 
 /** How long a phone link waits for a cold start (index built, startup check done) before giving up. */
 export const LINK_READY_TIMEOUT_MS = 30_000;
@@ -195,6 +196,7 @@ export default class OsmmPlugin extends Plugin {
       content: phoneContent,
       warn: (message) => new Notice(message),
     });
+    this.register(() => alerts.stop());
     ui.publish.notifier = {
       due: (path, channelId) => notifier.due(path, channelId),
       failed: (info) => {
@@ -330,11 +332,7 @@ export default class OsmmPlugin extends Plugin {
     const path = typeof params.path === "string" ? params.path : "";
     const channel = typeof params.channel === "string" ? params.channel : "";
     if (!path || !channel) return;
-    let handle: number | undefined;
-    const timedOut = new Promise<boolean>((resolve) => {
-      handle = window.setTimeout(() => resolve(true), LINK_READY_TIMEOUT_MS);
-    });
-    const late = await Promise.race([this.ready.then(() => false), timedOut]).finally(() => window.clearTimeout(handle));
+    const late = await withTimeout(this.ready.then(() => false), LINK_READY_TIMEOUT_MS, true);
     if (this.unloaded) return;
     if (late) {
       new Notice("Social Planner is still starting. Tap the reminder again in a moment.");
@@ -420,6 +418,7 @@ export default class OsmmPlugin extends Plugin {
           }),
         settings: () => this.settings,
         now: () => Date.now(),
+        isPublisher: () => this.publisher.isPublisher(),
       });
       this.ui = {
         app: this.app,

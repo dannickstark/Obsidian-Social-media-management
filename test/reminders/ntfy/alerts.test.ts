@@ -43,6 +43,16 @@ describe("PhoneAlerts", () => {
     expect(warnings).toEqual(["Phone alert not sent: The ntfy server had a problem (502)."]);
   });
 
+  it("shows nothing after unload, even for a push that fails later (final review 11)", async () => {
+    const { alerts, sent, warnings } = build({ fail: true });
+    alerts.published({ path: "p.md", channelId: "bs/you" });
+    alerts.stop();
+    await settle();
+    alerts.failed({ path: "p.md", channelId: "bs/you", kind: "transient", error: "503" });
+    await settle();
+    expect([sent, warnings]).toEqual([[], []]);
+  });
+
   it("hears about API publishes from the orchestrator", async () => {
     const P = "Social/Posts/P.md";
     const c = await makeCtx({

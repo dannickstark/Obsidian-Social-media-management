@@ -3,7 +3,8 @@ import { App } from "../../fakes/obsidian";
 import { formatDateTime } from "../../../src/model/dates";
 import { BookingLedger } from "../../../src/reminders/ntfy/bookings";
 import { BOOKING_WINDOW_MS, NtfyBooker, RETRY_MS, WITHDRAW_WAIT_MS, type BookerDeps } from "../../../src/reminders/ntfy/booker";
-import { NtfyError, type CancelOutcome, type NtfyMessage } from "../../../src/reminders/ntfy/client";
+import { NtfyClient, NtfyError, REQUEST_TIMEOUT_MS, type CancelOutcome, type NtfyMessage } from "../../../src/reminders/ntfy/client";
+import { NTFY } from "./fixtures";
 import { PublisherService } from "../../../src/settings/publisher";
 import { migrateSettings } from "../../../src/settings/settings";
 import { indexed, settle, writeNote } from "../../helpers";
@@ -638,6 +639,87 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect((await b.sync()).cancelled).toHaveLength(20);
     expect((await b.sync()).cancelled).toHaveLength(10);
     expect(new BookingLedger(c.app as never).size()).toBe(0);
+  });
+
+  it("abandons a run stuck for over 60 s: a later sync starts afresh and books the rest (final review 2)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    const { b, warnings } = booker(c, fake, now);
+    fake.hold();
+    const stuck = b.sync();
+    await settle();
+    expect(fake.calls()).toBe(1);
+    now.t += 59_000;
+    expect(b.sync()).toBe(stuck);
+    now.t += 1_001;
+    const fresh = b.sync();
+    expect(fresh).not.toBe(stuck);
+    // The stuck push is still in flight: never booked a second time.
+    expect((await fresh).booked).toEqual([key(A, T0 + 10 * HOUR, 10)]);
+    expect([fake.calls(), warnings]).toEqual([2, []]);
+  });
+
+  it("a push the server never answers times out, warns once and is booked again after the pause (final review 2)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
+    const now = { t: T0 };
+    let answer = false;
+    const calls: string[] = [];
+    const client = new NtfyClient(
+      () => ({ server: "https://ntfy.sh", topic: "osmm-SECRETTOPIC", token: null }),
+      async (req) => {
+        calls.push(String(req.method));
+        if (!answer) return new Promise(() => undefined);
+        return NTFY.scheduled() as never;
+      },
+      () => now.t,
+    );
+    const { b, warnings } = booker(c, fakeClient(), now, { client });
+    vi.useFakeTimers();
+    try {
+      const first = b.sync();
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      expect((await first).failed).toEqual([key(A, T0 + 10 * HOUR, 60)]);
+      expect(warnings).toEqual([`Phone reminders: The ntfy server did not answer within 30 s. Check the server address and the connection. Trying again in 5 min.`]);
+      now.t += 60_000;
+      expect((await b.sync()).booked).toEqual([]);
+      answer = true;
+      now.t = T0 + RETRY_MS;
+      expect((await b.sync()).booked).toEqual([key(A, T0 + 10 * HOUR, 60)]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect([calls.length, warnings.length]).toEqual([2, 1]);
+  });
+
+  it("records nothing in the ledger once stopped, even for a push that went out (final review 8)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
+    const fake = fakeClient();
+    const { b } = booker(c, fake, { t: T0 });
+    const release = fake.hold();
+    const run = b.sync();
+    await settle();
+    b.stop();
+    release();
+    expect((await run).booked).toEqual([]);
+    expect(fake.sent).toHaveLength(1);
+    expect(new BookingLedger(c.app as never).size()).toBe(0);
+  });
+
+  it("removes nothing from the ledger once stopped, even for a cancel that succeeded", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
+    const fake = fakeClient();
+    let enabled = true;
+    const { b } = booker(c, fake, { t: T0 }, { enabled: () => enabled });
+    await b.sync();
+    enabled = false;
+    const release = fake.holdCancel();
+    const run = b.sync();
+    await settle();
+    b.stop();
+    release();
+    expect((await run).cancelled).toEqual([]);
+    expect(new BookingLedger(c.app as never).size()).toBe(1);
   });
 
   it("a shorter failure pause never cuts a longer one short", async () => {

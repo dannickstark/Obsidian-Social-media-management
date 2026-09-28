@@ -1,5 +1,6 @@
 import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
 import { isRecord } from "../../model/frontmatter";
+import { withTimeout } from "../../util/time";
 import type { NtfyConfig } from "./config";
 
 export type NtfyAction =
@@ -46,7 +47,10 @@ export type Http = (req: RequestUrlParam) => Promise<RequestUrlResponse>;
 
 /** ntfy.sh's minimum delay; a push due sooner is sent without one. */
 export const MIN_DELAY_MS = 10_000;
+/** requestUrl has no timeout: a request the server never answers counts as unreachable after this (final review 2). */
+export const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_ACTIONS = 3;
+const TIMED_OUT = Symbol("timed out");
 const MESSAGE_ID_RE = /^[A-Za-z0-9]{1,64}$/;
 
 export function testMessage(): NtfyMessage {
@@ -118,13 +122,14 @@ export class NtfyClient {
 
   private async send(c: NtfyConfig, req: RequestUrlParam): Promise<RequestUrlResponse> {
     const scrub = (text: string) => [c.topic, c.token].reduce<string>((s, secret) => (secret ? s.split(secret).join("•••") : s), text);
-    let res: RequestUrlResponse;
+    let res: RequestUrlResponse | typeof TIMED_OUT;
     try {
-      res = await this.http({ ...req, throw: false });
+      res = await withTimeout(this.http({ ...req, throw: false }), REQUEST_TIMEOUT_MS, TIMED_OUT);
     } catch {
       // The underlying error text can contain the URL, and so the topic: never pass it on.
       throw new NtfyError("unreachable", "Couldn't reach the ntfy server. Check the server address and the connection.");
     }
+    if (res === TIMED_OUT) throw new NtfyError("unreachable", "The ntfy server did not answer within 30 s. Check the server address and the connection.");
     if (res.status >= 200 && res.status < 300) return res;
     const json = parseJson(res.text);
     const detail = isRecord(json) && typeof json.error === "string" ? scrub(json.error).slice(0, 160) : "";

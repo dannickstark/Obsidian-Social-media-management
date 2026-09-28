@@ -41,6 +41,8 @@ export interface PublishDeps {
   delay(ms: number): Promise<void>;
   settings(): OsmmSettings;
   now(): number;
+  /** This device holds the publisher role: a scheduled run stops retrying once it is lost (final review 4). */
+  isPublisher?(): boolean;
 }
 
 /** Where the publish service reports deliveries that need the user (Task 9 plugs in desktop notifications). */
@@ -78,6 +80,7 @@ export class PublishActions {
       onPublished: (info) => this.notifier.published?.(info),
       lateWindowMs: () => Math.max(GRACE_MS, autoPostLateMs(deps.settings()) ?? 0),
       defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
+      ...(deps.isPublisher ? { isPublisher: () => deps.isPublisher!() } : {}),
     });
   }
 
