@@ -10,7 +10,7 @@ Plan, preview, schedule and post your social media content, for every platform a
 - **Write per-platform variants** from one campaign brief. Each variant is a normal note: its frontmatter holds the platform, the channels (profiles, pages, groups, sites), the time and the delivery status per channel.
 - **Preview and check** every post the way each platform shows it (stylized, not pixel-perfect): character counts the way the platform counts them, thread splitting, image crops, hashtags, titles and links. Blocking problems stop you from scheduling.
 - **Post in one click where there is no API yet:** "Copy & open" opens the platform's compose page, already filled in where the platform allows it, with the text on your clipboard. Paste the live link back and the post is marked published.
-- **Never miss or double-post:** reminders before each assisted post (60 and 10 minutes by default), a desktop notification when it is due, an Overdue tray for anything whose time passed while Obsidian was closed, and a scheduler that never posts the same delivery twice and never posts late without asking.
+- **Don't miss a post, and guard against double posts:** reminders before each assisted post (60 and 10 minutes by default) on the desktop and, through the free ntfy app, on your phone even when the computer is asleep; an Overdue tray for anything whose time passed while Obsidian was closed; one publisher device, so a vault synced to several devices has a single device that posts; a scheduler that never retries a post whose outcome is unknown and never posts late without asking; and a publish log in `Social/_log.md`.
 
 Supported platforms: LinkedIn (profile and pages), X, Instagram, Facebook, Mastodon, Bluesky, Telegram, Discord, Hacker News, Indie Hackers, Reddit, WhatsApp and WordPress. Today every platform posts through the assisted flow; automatic posting through the platforms' APIs is on the roadmap (Telegram, Discord, Mastodon, Bluesky and WordPress first).
 
@@ -24,7 +24,7 @@ The plugin is not in the community catalogue yet. Install it with BRAT:
 2. Run **BRAT: Add a beta plugin for testing** and enter `dannickstark/Obsidian-Social-media-management`.
 3. Enable **Social Planner (OSMM)** under Community plugins.
 
-Obsidian 1.11.4 or newer is required. The plugin works on desktop and on phones; reminders on phones arrive with a later version.
+Obsidian 1.11.4 or newer is required. The plugin works on desktop and on phones (iOS and Android); phone reminders use the free ntfy app. If your vault syncs to several devices, update the plugin on every device before you choose the publisher device: a device still on an older version keeps posting on its own.
 
 ## Get started in 10 minutes
 
@@ -35,8 +35,10 @@ Follow [the getting-started guide](docs/getting-started.md): add a channel, writ
 ## Your data
 
 - Posts and campaigns are Markdown notes under `Social/` (configurable). Nothing leaves your vault unless you post it.
-- Channels live in the plugin settings. Credentials (for the API posting that comes later) are kept in Obsidian's per-device secret storage, never in your notes or in synced settings.
-- Reminders and notification settings are per device.
+- Channels live in the plugin settings. Credentials, the ntfy topic and the ntfy token are kept in Obsidian's per-device secret storage, never in your notes or in synced settings.
+- Every publish attempt is appended to `Social/_log.md` (earlier months move to `Social/_log/`). Secrets are never written there.
+- Reminders, notification settings, the device name and the phone-reminder setup are per device. The synced settings only record which device publishes (its id and name).
+- Phone reminders go through an ntfy server and carry the post's title, platform and text (the tap link opens the compose page with the text filled in). On the public ntfy.sh server anyone who knows the topic can read them: keep the random topic private, or run your own ntfy server with an access token over https.
 
 ## Development
 

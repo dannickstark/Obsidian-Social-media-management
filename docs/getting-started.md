@@ -41,6 +41,24 @@ Tip: for Mastodon, set the handle to `@you@your.instance` so the right server op
 
 You can start the same flow at any time with **Copy & open** in the composer, or **Post now** in the Overdue tray.
 
+## 6. Choose the publisher device (1 minute)
+
+Until one device is chosen, scheduled posts are neither posted nor marked overdue, and a notice says so at start-up. Only one device should post, even when your vault syncs to several. First update the plugin on every device (a device on an older version keeps posting on its own). Then open **Settings → Social Planner → This device**, give the device a name (for example "Studio iMac") and click **Make this device the publisher**. Your other devices show "Publishing happens on Studio iMac" and only show the plan and their own desktop reminders.
+
+To move the role, click **Publish from this device instead** in the banner on the other device and confirm. The first device stops as soon as the change reaches it through sync. Until the first device shows the change, don't edit the plugin settings there: it could write the old choice back through sync.
+
+## 7. Get reminders on your phone (2 minutes, optional)
+
+On the publisher device, open **Settings → Social Planner → Phone reminders (ntfy)** and turn on **Phone reminders on this device**. A long random topic is created for you.
+
+1. Install **ntfy** from the App Store or Google Play.
+2. In the app, tap **+** and enter the topic shown in the settings (**Copy** puts it on the clipboard).
+3. Click **Send test**. The test push should arrive within a few seconds.
+
+From now on, each reminder arrives on the phone at its time, even when the computer is asleep. Tap the push to open the platform's compose page with the text filled in; **Copy & open** opens the post in Obsidian on the phone with the text ready to paste; **Open note** opens the note; **Snooze 10 min** brings it back later (with an access token the third button is **Done**, which opens the step where you paste the live link). Reminders are booked up to 72 hours ahead, so open Obsidian on the publisher device at least every couple of days. If you edit or move a post, its booked pushes are replaced; on a server that can't cancel pushes, tapping goes through Obsidian so you always get the current text.
+
+The pushes carry the post's title and, in the tap link, its text. On the public ntfy.sh server anyone who knows the topic can read them. Keep the random topic private, or run your own ntfy server with an access token (use https: over plain http the token travels unencrypted, and the settings warn you).
+
 ## When something goes wrong
 
 - **The post's time passed while Obsidian was closed.** It is not posted late behind your back: it waits in the **Overdue** tray with **Post now**, **Reschedule** and **Skip**. (Settings → Publishing → **Post late items automatically** lets short delays go out anyway; it is off by default.)
