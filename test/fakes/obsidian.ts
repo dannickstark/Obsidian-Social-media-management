@@ -316,13 +316,15 @@ export class WorkspaceLeaf {
   view: ItemView | null = null;
   viewType: string | null = null;
   constructor(public app: App) {}
-  async setViewState(state: { type: string; active?: boolean }): Promise<void> {
-    this.viewType = state.type;
-    const factory = this.app.workspace.viewFactories.get(state.type);
-    if (factory) {
-      this.view = factory(this);
-      await this.view.onOpen();
+  async setViewState(state: { type: string; active?: boolean; state?: unknown }): Promise<void> {
+    if (!this.view || this.viewType !== state.type) {
+      await this.view?.onClose();
+      this.viewType = state.type;
+      const factory = this.app.workspace.viewFactories.get(state.type);
+      this.view = factory ? factory(this) : null;
+      if (this.view) await this.view.onOpen();
     }
+    if (this.view && state.state !== undefined) await this.view.setState(state.state, { history: false });
     if (!this.app.workspace.leaves.includes(this)) this.app.workspace.leaves.push(this);
   }
   async detach(): Promise<void> {
@@ -447,6 +449,10 @@ export class ItemView extends Component {
   }
   getIcon(): string {
     return "";
+  }
+  async setState(_state: unknown, _result: { history: boolean }): Promise<void> {}
+  getState(): Record<string, unknown> {
+    return {};
   }
   async onOpen(): Promise<void> {}
   async onClose(): Promise<void> {}

@@ -30,10 +30,12 @@ import QuickCreate from "../views/QuickCreate.svelte";
 
 export const VIEW_PLANNER = "osmm-planner";
 export const VIEW_SIDEBAR = "osmm-sidebar";
+export const VIEW_COMPOSER = "osmm-composer";
+export const VIEW_PREVIEW_GRID = "osmm-preview-grid";
 export const ROW_MIME = "text/x-osmm-row";
 export const UNDO_CONFLICT = "Some changes were kept because the note changed since.";
 
-type WriteResult = { ok: true; record: WriteRecord } | { ok: false; reason: string };
+export type WriteResult = { ok: true; record: WriteRecord } | { ok: false; reason: string };
 
 /** The snapshot variant with the fresh frontmatter values laid over it (keeps file, campaignPath, …). */
 function freshIndexed(v: IndexedVariant, fresh: Variant): IndexedVariant {
@@ -106,19 +108,24 @@ export class PlannerActions {
     return confirmDialog(this.deps.app, message, cta);
   }
 
-  undoNotice(message: string, undo: () => unknown): void {
+  /** A notice with one action button (Undo, Open, …); clicking it runs the action and hides the notice. */
+  actionNotice(message: string, label: string, run: () => unknown): void {
     const fragment = document.createDocumentFragment();
     const text = document.createElement("span");
     text.textContent = `${message} `;
-    const link = document.createElement("button");
-    link.type = "button";
-    link.textContent = "Undo";
-    fragment.append(text, link);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    fragment.append(text, button);
     const notice = new Notice(fragment, 8000);
-    link.addEventListener("click", () => {
-      void undo();
+    button.addEventListener("click", () => {
+      void run();
       notice.hide();
     });
+  }
+
+  undoNotice(message: string, undo: () => unknown): void {
+    this.actionNotice(message, "Undo", undo);
   }
 
   async reschedule(row: PostRow, target: RescheduleTarget): Promise<boolean> {
@@ -158,7 +165,7 @@ export class PlannerActions {
    * Every UI write: `plan` runs against fresh frontmatter inside the writer queue and returns only
    * what it changes. The stored status is always part of the record so undo can restore it.
    */
-  private async write(file: TFile, plan: VariantPlan): Promise<WriteResult> {
+  async write(file: TFile, plan: VariantPlan): Promise<WriteResult> {
     let before: Variant | undefined;
     const applied = await this.deps.writer.updateVariant(file, (fresh) => {
       before = fresh;
@@ -256,7 +263,7 @@ export class PlannerActions {
     this.afterWrite(result, "Unscheduled.");
   }
 
-  private afterWrite(result: WriteResult, message: string): void {
+  afterWrite(result: WriteResult, message: string): void {
     if (result.ok) this.undoNotice(message, () => this.undo([result.record]));
     else new Notice(result.reason);
   }

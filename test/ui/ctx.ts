@@ -2,10 +2,12 @@ import { get, writable, type Writable } from "svelte/store";
 import { App } from "../fakes/obsidian";
 import { buildSeed } from "../../scripts/seedData";
 import { ChannelRegistry } from "../../src/channels/registry";
+import { ComposerActions } from "../../src/composer/actions";
 import { SocialIndex } from "../../src/index/socialIndex";
 import { indexStore } from "../../src/index/stores";
 import { NoteFactory } from "../../src/model/factory";
 import { SafeWriter } from "../../src/model/writer";
+import { AdapterRegistry } from "../../src/platforms/registry";
 import { migrateSettings, type OsmmSettings } from "../../src/settings/settings";
 import { PlannerActions } from "../../src/ui/actions";
 import type { OsmmContext } from "../../src/ui/context";
@@ -57,6 +59,17 @@ export async function makeCtx(
     settings: () => get(settings),
     now: () => get(nowStore),
   });
+  const composer = new ComposerActions({
+    app: app as never,
+    writer,
+    factory,
+    channels,
+    index,
+    planner: actions,
+    adapters: new AdapterRegistry(),
+    settings: () => get(settings),
+    now: () => get(nowStore),
+  });
   const ctx: OsmmContext = {
     app: app as never,
     settings,
@@ -65,6 +78,7 @@ export async function makeCtx(
     viewState: writable(structuredClone(DEFAULT_VIEW_STATE)),
     channels,
     actions,
+    composer,
   };
   actions.context = ctx;
   return { app, ctx, index, writer, settings, now: nowStore };

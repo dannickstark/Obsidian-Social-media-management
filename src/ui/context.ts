@@ -2,6 +2,7 @@ import { getContext } from "svelte";
 import { readable, type Readable, type Writable } from "svelte/store";
 import type { App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
+import type { ComposerActions } from "../composer/actions";
 import type { IndexSnapshot } from "../index/stores";
 import type { ViewState } from "../planner/viewState";
 import type { OsmmSettings } from "../settings/settings";
@@ -17,6 +18,7 @@ export interface OsmmContext {
   viewState: Writable<ViewState>;
   channels: ChannelRegistry;
   actions: PlannerActions;
+  composer: ComposerActions;
 }
 
 export function osmmContext(ctx: OsmmContext): Map<unknown, unknown> {

@@ -9,7 +9,7 @@ describe("commands", () => {
     const plugin = new OsmmPlugin(app as never, { id: "osmm-social-planner", name: "", version: "", minAppVersion: "", description: "", author: "" });
     await plugin.load();
     const ids = (plugin as unknown as { commands: Array<{ id: string }> }).commands.map((c) => c.id);
-    expect(ids).toEqual(["open-planner", "open-board", "open-sidebar", "new-campaign", "new-post", "new-variant-for-campaign"]);
+    expect(ids).toEqual(["open-planner", "open-board", "open-sidebar", "new-campaign", "new-post", "new-variant-for-campaign", "preview-campaign"]);
     plugin.unload();
   });
 

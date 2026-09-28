@@ -1,5 +1,5 @@
 import type { PostRow, RowStatus } from "../index/queries";
-import type { Channel } from "../model/types";
+import type { Channel, VariantStatus } from "../model/types";
 
 export const STATUS_LABEL: Readonly<Record<RowStatus, string>> = {
   idea: "Idea",
@@ -14,6 +14,18 @@ export const STATUS_LABEL: Readonly<Record<RowStatus, string>> = {
   skipped: "Skipped",
   overdue: "Overdue",
   check_needed: "Check needed",
+};
+
+export const VARIANT_STATUS_LABEL: Readonly<Record<VariantStatus, string>> = {
+  idea: "Idea",
+  draft: "Draft",
+  ready: "Ready",
+  scheduled: "Scheduled",
+  partial: "Partly published",
+  published: "Published",
+  overdue: "Overdue",
+  attention: "Needs attention",
+  skipped: "Skipped",
 };
 
 export type ChipStyle = "published" | "auto" | "assisted" | "overdue" | "attention" | "draft";

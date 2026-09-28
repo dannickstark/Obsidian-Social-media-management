@@ -3,16 +3,19 @@ import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
 import { registerCommands } from "./commands";
+import { ComposerActions } from "./composer/actions";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
 import { NoteFactory } from "./model/factory";
 import { SafeWriter } from "./model/writer";
+import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
+import { PreviewGridView } from "./previews/PreviewGridView";
 import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
-import { PlannerActions, VIEW_PLANNER, VIEW_SIDEBAR } from "./ui/actions";
+import { PlannerActions, VIEW_PLANNER, VIEW_PREVIEW_GRID, VIEW_SIDEBAR } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
 import { SvelteRenderChild } from "./ui/SvelteView";
 import { PlannerView } from "./views/PlannerView";
@@ -28,6 +31,7 @@ export default class OsmmPlugin extends Plugin {
   factory!: NoteFactory;
   channels!: ChannelRegistry;
   index!: SocialIndex;
+  readonly adapters = new AdapterRegistry();
   private unloaded = false;
   private ui: OsmmContext | undefined;
 
@@ -67,6 +71,7 @@ export default class OsmmPlugin extends Plugin {
     this.registerView(VIEW_PLANNER, (leaf) => new PlannerView(leaf, this.uiContext()));
     this.registerHoverLinkSource(VIEW_PLANNER, { display: "Social planner", defaultMod: true });
     this.registerView(VIEW_SIDEBAR, (leaf) => new SidebarView(leaf, this.uiContext()));
+    this.registerView(VIEW_PREVIEW_GRID, (leaf) => new PreviewGridView(leaf, this.uiContext()));
 
     registerCommands(this);
 
@@ -92,14 +97,8 @@ export default class OsmmPlugin extends Plugin {
   }
 
   uiContext(): OsmmContext {
-    this.ui ??= {
-      app: this.app,
-      settings: this.settingsStore,
-      snapshot: indexStore(this.index),
-      now: clock(30_000),
-      viewState: viewStateStore(this.app),
-      channels: this.channels,
-      actions: new PlannerActions({
+    if (!this.ui) {
+      const actions = new PlannerActions({
         app: this.app,
         writer: this.writer,
         factory: this.factory,
@@ -107,9 +106,30 @@ export default class OsmmPlugin extends Plugin {
         index: this.index,
         settings: () => this.settings,
         now: () => Date.now(),
-      }),
-    };
-    this.ui.actions.context = this.ui;
+      });
+      const composer = new ComposerActions({
+        app: this.app,
+        writer: this.writer,
+        factory: this.factory,
+        channels: this.channels,
+        index: this.index,
+        planner: actions,
+        adapters: this.adapters,
+        settings: () => this.settings,
+        now: () => Date.now(),
+      });
+      this.ui = {
+        app: this.app,
+        settings: this.settingsStore,
+        snapshot: indexStore(this.index),
+        now: clock(30_000),
+        viewState: viewStateStore(this.app),
+        channels: this.channels,
+        actions,
+        composer,
+      };
+      actions.context = this.ui;
+    }
     return this.ui;
   }
 }

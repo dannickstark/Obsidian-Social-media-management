@@ -9,7 +9,7 @@
   import Timeline from "./Timeline.svelte";
 
   let { campaignPath }: { campaignPath: string } = $props();
-  const { snapshot, settings, actions } = useOsmm();
+  const { snapshot, settings, actions, composer } = useOsmm();
   const table = $derived(campaignTable(campaignPath, $snapshot.variants, $settings.channels));
   const campaign = $derived($snapshot.campaigns.find((c) => c.path === campaignPath));
   const STATUS: Record<string, string> = { idea: "Idea", draft: "Draft", ready: "Ready", scheduled: "Scheduled", partial: "Partly published", published: "Published", overdue: "Overdue", attention: "Needs attention", skipped: "Skipped" };
@@ -26,6 +26,7 @@
     <strong>Platform variants</strong>
     <span class="osmm-progress">{table.counts.created} created · {table.counts.published} published · {table.counts.overdue} overdue</span>
     <span class="osmm-spacer"></span>
+    <button type="button" onclick={() => void composer.openPreviewGrid(campaignPath)}>Preview all</button>
     <button type="button" onclick={templateMenu}>Apply schedule template</button>
   </header>
   <table class="osmm-table">

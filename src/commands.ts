@@ -24,4 +24,9 @@ export function registerCommands(plugin: OsmmPlugin): void {
     name: "New platform variant for this campaign",
     checkCallback: (checking) => plugin.uiContext().actions.newVariantForActiveCampaign(checking),
   });
+  plugin.addCommand({
+    id: "preview-campaign",
+    name: "Preview all variants of this campaign",
+    checkCallback: (checking) => plugin.uiContext().composer.previewActiveCampaign(checking),
+  });
 }

@@ -1,0 +1,25 @@
+.osmm-grid-view { display: flex; flex-direction: column; height: 100%; }
+.osmm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: start;
+  padding: 0 16px 16px;
+  overflow: auto;
+}
+.osmm-grid-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--osmm-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+}
+.osmm-grid-counters { display: flex; flex-wrap: wrap; gap: 8px; }
+.osmm-progress.is-over { color: var(--text-error); }
+.osmm-issue-list { margin: 0; padding-left: 18px; font-size: var(--font-ui-smaller); }
+.osmm-issue-list .is-error { color: var(--text-error); }
+.osmm-issue-list .is-warning { color: var(--text-warning); }
+.osmm-empty { padding: 16px; color: var(--text-muted); }
