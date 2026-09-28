@@ -123,9 +123,9 @@ describe("Needs attention", () => {
     render(Sidebar, { context: osmmContext(c.ctx) });
     const section = screen.getByRole("region", { name: "Needs attention · 1" });
     expect(section.textContent).toContain("Bot is not an admin of the channel");
-    await fireEvent.click(within(section).getByRole("button", { name: "Fix" }));
+    await fireEvent.click(within(section).getByRole("button", { name: /^Fix / }));
     expect(open).toHaveBeenCalledWith(TG);
-    await fireEvent.click(within(section).getByRole("button", { name: "Post again" }));
+    await fireEvent.click(within(section).getByRole("button", { name: /^Post .* again$/ }));
     await vi.waitFor(() => expect(Modal.opened.at(-1)?.contentEl.textContent).toContain("Telegram · Event X channel (1 of 1)"));
     Modal.opened.at(-1)?.close();
   });
@@ -135,7 +135,7 @@ describe("Needs attention", () => {
     const spy = vi.spyOn(c.ctx.publish, "resolveCheck").mockResolvedValue();
     render(Sidebar, { context: osmmContext(c.ctx) });
     const section = screen.getByRole("region", { name: "Needs attention · 2" });
-    await fireEvent.click(within(section).getByRole("button", { name: "Check again" }));
+    await fireEvent.click(within(section).getByRole("button", { name: /^Check .* again$/ }));
     expect(spy).toHaveBeenCalledWith(CHECK, "tg/event-x");
   });
 
@@ -143,10 +143,10 @@ describe("Needs attention", () => {
     const c = await makeCtx({ seed: true, notes: [checkNote] });
     render(Sidebar, { context: osmmContext(c.ctx) });
     const section = screen.getByRole("region", { name: "Needs attention · 2" });
-    await fireEvent.click(within(section).getByRole("button", { name: "It went out" }));
+    await fireEvent.click(within(section).getByRole("button", { name: / went out$/ }));
     expect(Modal.opened.at(-1)?.contentEl.querySelector("input[type=url]")).not.toBeNull();
     Modal.opened.at(-1)?.close();
-    await fireEvent.click(within(section).getByRole("button", { name: "It didn't" }));
+    await fireEvent.click(within(section).getByRole("button", { name: / didn't go out$/ }));
     await indexed(c.index, () => c.index.getVariant(CHECK)?.deliveries["tg/event-x"]?.status === "failed");
     expect(c.index.getVariant(CHECK)!.deliveries["tg/event-x"]?.error).toBe("Not published (checked by you).");
   });

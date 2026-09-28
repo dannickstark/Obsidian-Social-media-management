@@ -54,12 +54,12 @@
         <div class="osmm-row">
           <span class="osmm-spacer"></span>
           {#if r.status === "failed"}
-            <button type="button" onclick={() => void publish.postNow(r.variant.path, [r.channelId!])}>Post again</button>
-            <button type="button" onclick={() => void composer.openComposer(r.variant.path)}>Fix</button>
+            <button type="button" aria-label={`Post ${r.variant.displayTitle} on ${channelName(r.channelId)} again`} onclick={() => void publish.postNow(r.variant.path, [r.channelId!])}>Post again</button>
+            <button type="button" aria-label={`Fix ${r.variant.displayTitle} on ${channelName(r.channelId)}`} onclick={() => void composer.openComposer(r.variant.path)}>Fix</button>
           {:else}
-            <button type="button" onclick={() => publish.openAssisted(r.variant.path, [r.channelId!], 3)}>It went out</button>
-            <button type="button" onclick={() => void publish.resolveNotPublished(r.variant.path, r.channelId!)}>It didn't</button>
-            <button type="button" onclick={() => void publish.resolveCheck(r.variant.path, r.channelId!)}>Check again</button>
+            <button type="button" aria-label={`${r.variant.displayTitle} on ${channelName(r.channelId)} went out`} onclick={() => publish.openAssisted(r.variant.path, [r.channelId!], 3)}>It went out</button>
+            <button type="button" aria-label={`${r.variant.displayTitle} on ${channelName(r.channelId)} didn't go out`} onclick={() => void publish.resolveNotPublished(r.variant.path, r.channelId!)}>It didn't</button>
+            <button type="button" aria-label={`Check ${r.variant.displayTitle} on ${channelName(r.channelId)} again`} onclick={() => void publish.resolveCheck(r.variant.path, r.channelId!)}>Check again</button>
           {/if}
         </div>
       {/each}
