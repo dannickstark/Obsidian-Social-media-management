@@ -108,7 +108,14 @@ export function heldForReview(v: Pick<Variant, "review">): boolean {
   return v.review !== undefined;
 }
 
-/** Shown wherever an action on a held note is refused outside the sidebar's own Approve/Keep (#84 fix round 1). */
+/** Delivery statuses where the post is already public on the platform (push_update's targets, update_variant's warning). */
+export const LIVE_STATUSES: ReadonlySet<string> = new Set(["published", "handed_over"]);
+
+/**
+ * Shown wherever an action on a held note is refused outside the sidebar's own Approve/Keep (#84 fix round 1).
+ * It speaks to the user in Obsidian; PublishActions' HELD is the MCP counterpart, which speaks to Claude and says
+ * how the hold is released from the conversation (schedule after the user agrees) as well.
+ */
 export const HELD_REFUSAL = "Approve it first in Written by Claude.";
 
 const RESOLVED_DELIVERY = new Set<DeliveryStatus>(["published", "skipped"]);

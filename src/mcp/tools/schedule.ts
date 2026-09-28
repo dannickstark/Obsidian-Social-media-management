@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { planComposerSchedule, reminderDefaults, scheduleNeeds } from "../../composer/schedule";
-import { heldForReview } from "../../index/queries";
+import { channelRowStatus, heldForReview } from "../../index/queries";
 import { MINUTE } from "../../model/dates";
 import { zMinutesList } from "../../model/schemas";
 import { deliveryTime } from "../../model/stateMachine";
-import type { Delivery, Issue, Variant } from "../../model/types";
+import type { Delivery, DeliveryStatus, Issue, Variant } from "../../model/types";
 import { UNSCHEDULE_BLOCKED, unscheduleBlocked, unscheduleDeliveries } from "../../planner/board";
 import { deliveryChanges } from "../../planner/changes";
 import { blocking } from "../../platforms/checks";
@@ -24,6 +24,40 @@ const HANDED_OVER =
   "Some channels were already handed over to the platform. Change the time in Obsidian, or ask the user; the platform keeps the old time until an update is pushed.";
 const AWAITING =
   "Some channels are waiting for the user to post them by hand. Ask the user whether to move them too, then call schedule again with move_awaiting: true.";
+
+export const GOES_OUT_SOON = "This post goes out in less than 10 minutes; unschedule it first or ask the user.";
+
+/**
+ * Final review 3: a scheduled channel (among `channelIds`) whose effective time (its own `at`, or the post's
+ * time plus the stagger) is less than MIN_SCHEDULE_LEAD_MS away, or already past. Claude may not change what
+ * such a post says in the window P5 leaves the user to step in.
+ */
+export function goesOutSoon(
+  v: Pick<Variant, "channels" | "deliveries" | "status" | "scheduledAt" | "staggerMinutes">,
+  now: number,
+  stagger: number,
+  channelIds: readonly string[] = v.channels,
+): boolean {
+  return channelIds.some((id) => channelRowStatus(v, id) === "scheduled" && (deliveryTime(v, id, stagger) ?? Infinity) < now + MIN_SCHEDULE_LEAD_MS);
+}
+
+/** Final review 6: why unschedule is refused, most urgent first; each blocked status gets its own reason. */
+const UNSCHEDULE_REFUSALS: Array<[DeliveryStatus, string]> = [
+  ["publishing", "A channel is being published right now, so the post can't be unscheduled. Try again in a minute."],
+  ["check_needed", "A channel needs a check first (did it go out?). Ask the user to resolve it in Obsidian (Needs attention)."],
+  ["failed", "A channel failed to publish and waits for the user in Obsidian (Needs attention: Post again or Fix). Ask the user."],
+  ["handed_over", UNSCHEDULE_BLOCKED],
+  ["published", UNSCHEDULE_BLOCKED],
+  ["awaiting_you", "A channel is waiting for the user to post it by hand. Ask the user."],
+];
+
+function unscheduleRefusal(v: Pick<Variant, "deliveries" | "status">): string | null {
+  const statuses = new Set(Object.values(v.deliveries).map((d) => d.status));
+  for (const [status, message] of UNSCHEDULE_REFUSALS) if (statuses.has(status)) return message;
+  // Any other status unscheduleBlocked refuses, and a published post without delivery records (double-post guard).
+  if (unscheduleBlocked(v) || v.status === "published" || v.status === "partial") return UNSCHEDULE_BLOCKED;
+  return null;
+}
 
 const atIssue = (code: "past-time" | "too-soon", message: string): Issue[] => [{ level: "error", field: "at", code, message }];
 
@@ -46,7 +80,7 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
       name: "schedule",
       title: "Schedule a post",
       description:
-        "Makes a post go out at `at` on all its channels (staggered by the post's stagger). The plugin checks it first and refuses blocking issues, times in the past or less than 10 minutes ahead, and channels already handed over to the platform. API channels then post by themselves on the publisher device without asking again; the others remind the user. Only call this after the user agreed to the plan. Scheduling a note the /social skill wrote while Obsidian was closed also releases it from review, now that the plugin has validated it.",
+        "Makes a post go out at `at` on all its channels (staggered by the post's stagger). The plugin checks it first and refuses blocking issues, times in the past or less than 10 minutes ahead, and channels already handed over to the platform. The channels after the first follow the post's stagger; their times can't be set one by one through schedule. API channels then post by themselves on the publisher device without asking again; the others remind the user. Only call this after the user agreed to the plan. Scheduling a note the /social skill wrote while Obsidian was closed also releases it from review, now that the plugin has validated it.",
       input: z
         .object({
           path: zPath,
@@ -114,15 +148,15 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
       name: "unschedule",
       title: "Unschedule a post",
       description:
-        "Moves a scheduled post back to draft (or ready). Refused when a channel was already handed over, published, is being published, needs a check or is waiting for the user. The proposed time is kept.",
+        "Moves a scheduled post back to draft (or ready). Refused when a channel was already handed over or published, is being published, needs a check, failed, or is waiting for the user; the error says which. The proposed time is kept.",
       input: z.object({ path: zPath, to: z.enum(["draft", "ready"]).default("draft") }).strict(),
       annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
       run: async (a) => {
         const v = findPost(deps, a.path);
         if (!v) return fail(noPost(a.path));
         const result = await deps.planner.write(v.file, (fresh) => {
-          // A published post without delivery records has nothing to unschedule either.
-          if (unscheduleBlocked(fresh) || fresh.status === "published" || fresh.status === "partial") return { refuse: UNSCHEDULE_BLOCKED };
+          const refusal = unscheduleRefusal(fresh);
+          if (refusal) return { refuse: refusal };
           return { fields: { status: a.to }, deliveries: deliveryChanges(fresh, unscheduleDeliveries(fresh, a.to)) };
         });
         if (!result.ok) return fail(result.reason);

@@ -66,6 +66,11 @@ export function untilIndexed(index: SocialIndex, predicate: () => boolean, timeo
   });
 }
 
+/** For IdempotencyCache: a kept outcome is still valid while the note it names (`data.path`) exists. */
+export function noteStillExists(deps: Pick<McpToolDeps, "app">): (outcome: { data?: Record<string, unknown> }) => boolean {
+  return (o) => typeof o.data?.path !== "string" || !!deps.app.vault.getFileByPath(o.data.path);
+}
+
 /** Every write by Claude is visible in Obsidian, with a way to look at it. */
 export function claudeNotice(deps: Pick<McpToolDeps, "planner">, message: string, path: string): void {
   deps.planner.actionNotice(message, "Open", () => deps.planner.openNote(path));

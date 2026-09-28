@@ -251,7 +251,8 @@ describe("write tools never publish on their own", () => {
   it("keeps a check_needed entry verbatim and refuses to drop that channel", async () => {
     const deliveries = { "li/me": { status: "check_needed", error: "Timed out" }, "li/acme-studio": { status: "scheduled" } };
     const c = await mcpCtx({
-      notes: [{ path: "Social/Posts/Check.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Check", channels: ["li/me", "li/acme-studio"], status: "attention", scheduled_at: "2026-10-08T09:00:00+02:00", deliveries }, body: "Hello" }],
+      // Final review 3: the scheduled channel goes out tomorrow, so the text may still change.
+      notes: [{ path: "Social/Posts/Check.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Check", channels: ["li/me", "li/acme-studio"], status: "attention", scheduled_at: "2026-10-09T09:00:00+02:00", deliveries }, body: "Hello" }],
     });
     const path = "Social/Posts/Check.md";
     expect((await c.call("update_variant", { path, channels: ["li/acme-studio"] })).error).toBe("Me needs a check after an interrupted publish, so it stays on this post.");
@@ -523,5 +524,63 @@ describe("fix round 1", () => {
     const current = await body(c, X);
     const r = await c.call("update_variant", { path: X, body: current.replace(/\n+$/, "") });
     expect(r).toMatchObject({ ok: true, changed: false });
+  });
+});
+
+describe("edits close to the send time (final review 3)", () => {
+  const SOON = "This post goes out in less than 10 minutes; unschedule it first or ask the user.";
+  const path = "Social/Posts/Soon.md";
+  // now: Thu 8 Oct 2026, 10:00 Berlin
+  const soonNote = (scheduledAt: string, deliveries: Record<string, unknown>, channels = ["li/acme-studio", "li/maker-lab"]) => ({
+    path,
+    frontmatter: { type: "social-post", platform: "linkedin", title: "Soon", channels, stagger_minutes: 30, status: "scheduled", scheduled_at: scheduledAt, deliveries },
+    body: "Hello makers\n",
+  });
+
+  it("refuses text, title, link, media, mode and WordPress changes when a channel goes out in less than 10 minutes, inside the write", async () => {
+    const c = await mcpCtx({ notes: [soonNote("2026-10-08T10:09:00+02:00", { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled" } })] });
+    await c.app.vault.createBinary("cover.png", new ArrayBuffer(8));
+    const write = vi.spyOn(c.ctx.actions, "write");
+    const before = await c.app.vault.read(c.app.vault.getFileByPath(path)!);
+    for (const change of [{ body: "Changed" }, { title: "Other" }, { url: "https://example.com/x" }, { media: ["cover.png"] }, { mode: "assisted" }]) {
+      const r = await c.call("update_variant", { path, ...change });
+      expect(r, JSON.stringify(change)).toMatchObject({ ok: false, error: SOON });
+    }
+    // Refused inside planner.write, on the fresh frontmatter.
+    expect(write).toHaveBeenCalledTimes(5);
+    expect(await c.app.vault.read(c.app.vault.getFileByPath(path)!)).toBe(before);
+    // Reminders are not the post's content: still allowed.
+    expect((await c.call("update_variant", { path, reminders: [5] })).ok).toBe(true);
+    // The same value again is not a change.
+    expect((await c.call("update_variant", { path, title: "Soon" })).ok).toBe(true);
+  });
+
+  it("refuses WordPress field changes the same way", async () => {
+    const c = await mcpCtx({
+      notes: [{ path, frontmatter: { type: "social-post", platform: "wordpress", title: "Soon", channels: ["wp/eventx-berlin"], status: "scheduled", scheduled_at: "2026-10-08T10:05:00+02:00", slug: "soon", deliveries: { "wp/eventx-berlin": { status: "scheduled" } } }, body: "# Soon\n\nText.\n" }],
+    });
+    expect(await c.call("update_variant", { path, wordpress: { slug: "later" } })).toMatchObject({ ok: false, error: SOON });
+    expect((await fm(c, path)).slug).toBe("soon");
+  });
+
+  it("uses each channel's effective time: a pinned time or the stagger counts, 10 minutes or more is fine", async () => {
+    // First channel far ahead; the second has its own time pinned 5 minutes from now.
+    const pinned = await mcpCtx({ notes: [soonNote("2026-10-08T12:00:00+02:00", { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled", at: "2026-10-08T10:05:00+02:00" } })] });
+    expect(await pinned.call("update_variant", { path, body: "Changed" })).toMatchObject({ ok: false, error: SOON });
+    expect(await body(pinned, path)).toBe("Hello makers\n");
+    // First channel already published; the second goes out by the stagger (09:35 + 30 min = 10:05).
+    const staggered = await mcpCtx({ notes: [soonNote("2026-10-08T09:35:00+02:00", { "li/acme-studio": { status: "published", url: "https://www.linkedin.com/feed/update/urn:li:activity:2" }, "li/maker-lab": { status: "scheduled" } })] });
+    expect(await staggered.call("update_variant", { path, title: "Other" })).toMatchObject({ ok: false, error: SOON });
+    const later = await mcpCtx({ notes: [soonNote("2026-10-08T10:10:00+02:00", { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled" } })] });
+    expect((await later.call("update_variant", { path, body: "Changed" })).ok).toBe(true);
+  });
+
+  it("refuses to fork a channel that goes out in less than 10 minutes, and forks one that goes out later", async () => {
+    const deliveries = { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled", at: "2026-10-08T14:00:00+02:00" } };
+    const c = await mcpCtx({ notes: [soonNote("2026-10-08T10:05:00+02:00", deliveries)] });
+    expect(await c.call("fork_variant", { path, channel: "li/acme-studio" })).toMatchObject({ ok: false, error: SOON });
+    expect((await fm(c, path)).channels).toEqual(["li/acme-studio", "li/maker-lab"]);
+    expect(c.app.vault.getFiles().filter((f) => f.basename.includes("– Acme"))).toEqual([]);
+    expect((await c.call("fork_variant", { path, channel: "li/maker-lab" })).ok).toBe(true);
   });
 });

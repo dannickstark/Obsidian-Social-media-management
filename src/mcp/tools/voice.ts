@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { voicePath, VOICE_TEMPLATE } from "../../claude/voice";
 import { formatDateTime } from "../../model/dates";
-import { claudeNotice, clip, normalizePathArg, zKey, zPath } from "../common";
+import { claudeNotice, clip, normalizePathArg, noteStillExists, zKey, zPath } from "../common";
 import type { McpToolDeps } from "../deps";
 import { IdempotencyCache } from "../idempotency";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
@@ -18,8 +18,7 @@ function heading(text: string): string {
 export function registerVoiceTools(registry: ToolRegistry, deps: McpToolDeps): void {
   const today = () => formatDateTime(deps.now()).slice(0, 10);
   const idem = new IdempotencyCache(() => deps.now());
-  // A kept outcome is still valid while the note it names exists (same pattern as write.ts).
-  const exists = (o: { data?: Record<string, unknown> }) => typeof o.data?.path !== "string" || !!deps.app.vault.getFileByPath(o.data.path);
+  const exists = noteStillExists(deps);
 
   registry.add(
     defineTool({

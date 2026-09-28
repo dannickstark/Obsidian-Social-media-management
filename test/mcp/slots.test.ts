@@ -82,4 +82,15 @@ describe("find_free_slots tool", () => {
     const channel = r.channels.find((ch: R) => ch.channel_id === "li/me");
     expect(channel.slots).toEqual([]);
   });
+
+  it("proposes only times at least 15 minutes ahead, a margin over schedule's 10 (final review 7)", async () => {
+    const ask = (c: Awaited<ReturnType<typeof mcpCtx>>) =>
+      c.call("find_free_slots", { channels: ["li/me"], from: "2026-10-12T00:00", to: "2026-10-13T00:00", preferred_windows: [{ start: "09:00", end: "09:00" }] });
+    const tooClose = await ask(await mcpCtx({ now: at(0, 8, 46), seed: false }));
+    expect(tooClose.channels[0].slots).toEqual([]);
+    const enough = await ask(await mcpCtx({ now: at(0, 8, 45), seed: false }));
+    expect(enough.channels[0].slots.map((s: R) => s.at)).toEqual(["2026-10-12T09:00:00+02:00"]);
+    const tool = (await mcpCtx({ seed: false })).registry.list().find((t) => t.name === "find_free_slots")!;
+    expect(tool.description).toContain("Never proposes a time less than 15 minutes from now");
+  });
 });

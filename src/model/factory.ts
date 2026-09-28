@@ -3,6 +3,7 @@ import { formatDateTime } from "./dates";
 import { isRecord, parseVariant, serializeDelivery } from "./frontmatter";
 import { PLATFORM_META, type Platform } from "./platforms";
 import { pinScheduledTimes, rollupStatus } from "./stateMachine";
+import type { Variant } from "./types";
 import type { SafeWriter } from "./writer";
 
 const ILLEGAL_RE = /[\\/:*?"<>|#^[\]]/g;
@@ -86,7 +87,8 @@ export class NoteFactory {
     return this.app.vault.create(this.uniquePath(folder, safeFileName(name)), render(fm, `${input.body ?? ""}\n`));
   }
 
-  async forkVariant(file: TFile, channelId: string, channelName: string): Promise<TFile> {
+  /** `refuse` runs on the fresh frontmatter inside the same write; a message refuses the fork (MCP final review 3). */
+  async forkVariant(file: TFile, channelId: string, channelName: string, refuse?: (current: Variant) => string | null): Promise<TFile> {
     // Snapshot and remove the channel in ONE queued write, so writes queued before the fork are
     // included in the snapshot and none can land between reading and rewriting the original.
     const stagger = this.opts.defaultStaggerMinutes?.() ?? 0;
@@ -104,6 +106,8 @@ export class NoteFactory {
         throw new Error(`${channelName} needs a check first (did it go out?). Resolve it in Needs attention, then try again.`);
       }
       if (current.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
+      const refusal = refuse?.(current);
+      if (refusal) throw new Error(refusal);
       const copy = structuredClone(orig);
       const channels = current.channels.filter((c) => c !== channelId);
       // Scheduled channels that move up keep their time (M4 Task 6 cross-task ruling).

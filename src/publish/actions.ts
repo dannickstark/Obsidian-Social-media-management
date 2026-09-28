@@ -3,7 +3,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import { openMarkdownView } from "../composer/session";
 import type { LoadedContent } from "../composer/content";
-import { heldForReview } from "../index/queries";
+import { heldForReview, LIVE_STATUSES } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseVariant } from "../model/frontmatter";
@@ -113,10 +113,10 @@ const BLOCKING = "The post has blocking issues, so nothing was sent.";
 const CHANGED = "The post changed after it was approved, so nothing was sent. Ask again with the new text.";
 const NOTHING = "Nothing left to post for this note.";
 export const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
-// Fix round 1 (m4): say how it is released, not just where to approve it.
+// Fix round 1 (m4): say how it is released, not just where to approve it. Unlike HELD_REFUSAL (a Notice for
+// the user in Obsidian), this one goes back to Claude through publish_now/push_update, so it names both ways out.
 const HELD =
   "Claude wrote this note while Obsidian was closed. It is released once the user agrees in this conversation and Claude schedules it, or once they approve it in Obsidian (sidebar, Written by Claude).";
-const LIVE = new Set(["published", "handed_over"]);
 
 const SILENT: DeliveryNotifier = { due: () => undefined, failed: () => undefined };
 
@@ -554,7 +554,7 @@ export class PublishActions {
     const fresh = await this.freshChecked(path);
     if ("refuse" in fresh) return fresh;
     const { v, content } = fresh;
-    const channels = v.channels.filter((id) => (!channelIds || channelIds.includes(id)) && !unreadable(v, id) && LIVE.has(v.deliveries[id]?.status ?? "") && !!v.deliveries[id]?.remoteId);
+    const channels = v.channels.filter((id) => (!channelIds || channelIds.includes(id)) && !unreadable(v, id) && LIVE_STATUSES.has(v.deliveries[id]?.status ?? "") && !!v.deliveries[id]?.remoteId);
     if (!channels.length) return { refuse: "No channel of this post is live on the platform with a known id." };
     if (!this.deps.adapters.get(v.platform)?.update) return { refuse: `${PLATFORM_META[v.platform].label} posts can't be updated from Obsidian yet.` };
     const statuses = Object.fromEntries(channels.map((id) => [id, this.statusOf(v, id)]));
@@ -578,7 +578,7 @@ export class PublishActions {
     for (const id of plan.channels) {
       const d = v.deliveries[id];
       const channel = this.deps.channels.get(id);
-      if (!channel || !d || unreadable(v, id) || !LIVE.has(d.status) || !d.remoteId) {
+      if (!channel || !d || unreadable(v, id) || !LIVE_STATUSES.has(d.status) || !d.remoteId) {
         failed.push({ id, error: "It is no longer live with a known id." });
         continue;
       }

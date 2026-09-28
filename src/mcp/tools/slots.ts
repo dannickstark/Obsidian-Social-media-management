@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { addLocalDays, DAY } from "../../model/dates";
+import { addLocalDays, DAY, MINUTE } from "../../model/dates";
 import { zTimeOfDay } from "../../model/schemas";
 import { zChannelsArg, zWhen } from "../common";
 import type { McpToolDeps } from "../deps";
@@ -8,13 +8,16 @@ import { busyTimes, findFreeSlots, MAX_RANGE_DAYS, minutesOfDay } from "../slots
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 import { MIN_SCHEDULE_LEAD_MS } from "./schedule";
 
+/** Final review 7: suggestions start 15 minutes out, so one still clears schedule's 10-minute lead after the user confirms. */
+export const SLOT_LEAD_MS = MIN_SCHEDULE_LEAD_MS + 5 * MINUTE;
+
 export function registerSlotTools(registry: ToolRegistry, deps: McpToolDeps): void {
   registry.add(
     defineTool({
       name: "find_free_slots",
       title: "Find free slots",
       description:
-        "Proposes posting times per channel that keep min_spacing_minutes away from everything already planned on that channel (drafts included), inside the preferred windows (default 09:00–18:00 local), closest to the channel's usual time first. Never proposes a time less than 10 minutes from now, so schedule accepts every suggestion. Deterministic. Use it to fill a campaign timeline, then confirm the plan with the user before schedule.",
+        "Proposes posting times per channel that keep min_spacing_minutes away from everything already planned on that channel (drafts included), inside the preferred windows (default 09:00–18:00 local), closest to the channel's usual time first. Never proposes a time less than 15 minutes from now (schedule needs 10, and this leaves time to confirm the plan). Deterministic. Use it to fill a campaign timeline, then confirm the plan with the user before schedule.",
       input: z
         .object({
           channels: zChannelsArg,
@@ -53,8 +56,8 @@ export function registerSlotTools(registry: ToolRegistry, deps: McpToolDeps): vo
           for (const id of expanded) if (!ids.includes(id)) ids.push(id);
         }
         const rows = deps.planner.rows();
-        // Ruling P5: schedule refuses anything less than 10 minutes ahead, so no suggestion is earlier than that.
-        const earliest = now + MIN_SCHEDULE_LEAD_MS - 1;
+        // Ruling P5: schedule refuses anything less than 10 minutes ahead; final review 7 adds a margin on top.
+        const earliest = now + SLOT_LEAD_MS - 1;
         const channels = ids.map((id) => {
           const channel = deps.channels.get(id)!;
           const slots = findFreeSlots(busyTimes(rows, id), {

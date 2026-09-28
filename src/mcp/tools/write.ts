@@ -2,21 +2,21 @@ import { z } from "zod";
 import { GROUP_PREFIX } from "../../channels/registry";
 import { planSetChannels } from "../../composer/channels";
 import { openMarkdownView } from "../../composer/session";
-import { channelRowStatus, type RowStatus } from "../../index/queries";
+import { channelRowStatus, LIVE_STATUSES, type RowStatus } from "../../index/queries";
 import { parseVariant, type VariantPatch } from "../../model/frontmatter";
 import { PLATFORM_META, PLATFORMS, type Platform } from "../../model/platforms";
 import { POST_MODES, zMinutesList } from "../../model/schemas";
 import { pinScheduledTimes } from "../../model/stateMachine";
 import type { Channel, Delivery, Issue, Variant, WordPressFields } from "../../model/types";
 import { blocking } from "../../platforms/checks";
-import { bodyHash, claudeNotice, findPost, noPost, sameBody, normalizePathArg, untilIndexed, zChannelsArg, zHttpUrl, zKey, zPath, zWhen } from "../common";
+import { bodyHash, claudeNotice, findPost, noPost, noteStillExists, sameBody, normalizePathArg, untilIndexed, zChannelsArg, zHttpUrl, zKey, zPath, zWhen } from "../common";
 import type { McpToolDeps } from "../deps";
+import { GOES_OUT_SOON, goesOutSoon } from "./schedule";
 import { IdempotencyCache } from "../idempotency";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 
 export const BLOCKED = "Blocking issues, so nothing was written. Fix them, or pass force_draft: true to save the post as a draft anyway.";
 const PENDING = new Set<RowStatus>(["scheduled", "awaiting_you", "handed_over", "overdue"]);
-const LIVE = new Set<string>(["published", "handed_over"]);
 const PUBLISHING_NOW = "This post is being published right now. Try again in a minute.";
 const NOTE_CHANGED = "The note changed since you read it; call get_post again.";
 const ADDED_AS_DRAFT = "Added as draft; call schedule to plan it.";
@@ -108,8 +108,7 @@ async function draftIssues(deps: McpToolDeps, variant: Variant, body: string): P
 export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): void {
   const idem = new IdempotencyCache(() => deps.now());
   const nameOf = (id: string) => deps.channels.get(id)?.name ?? id;
-  // A kept outcome is still valid while the note it names exists.
-  const exists = (o: { data?: Record<string, unknown> }) => typeof o.data?.path !== "string" || !!deps.app.vault.getFileByPath(o.data.path);
+  const exists = noteStillExists(deps);
 
   registry.add(
     defineTool({
@@ -280,7 +279,7 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
           if (!a.force_draft) return fail(BLOCKED, issues);
           if (pendingDeliveries(v)) return fail("This post is scheduled, so it can't be saved with blocking issues. Fix them, or call unschedule first.", issues);
         }
-        const live = v.channels.filter((id) => LIVE.has(v.deliveries[id]?.status ?? ""));
+        const live = v.channels.filter((id) => LIVE_STATUSES.has(v.deliveries[id]?.status ?? ""));
         if (live.length) {
           issues.push({
             level: "warning",
@@ -295,6 +294,13 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
           await flush();
           if (!sameBody(await deps.composer.content.body(v), content.body)) return fail(NOTE_CHANGED, issues);
         }
+        const contentChanges = (fresh: Variant, wordpress: Partial<WordPressFields> | undefined): boolean =>
+          bodyChanged ||
+          !!wordpress ||
+          (a.title !== undefined && (a.title ?? undefined) !== fresh.title) ||
+          (a.url !== undefined && (a.url ?? undefined) !== fresh.url) ||
+          (a.mode !== undefined && a.mode !== fresh.mode) ||
+          (a.media !== undefined && JSON.stringify(a.media) !== JSON.stringify(fresh.media));
         let added: string[] = [];
         const result = await deps.planner.write(v.file, (fresh) => {
           if (publishing(fresh)) return { refuse: PUBLISHING_NOW };
@@ -302,6 +308,8 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
           const wordpress = a.wordpress ? wordpressChanges(fresh.wordpress, a.wordpress) : undefined;
           const all = wordpress ? { ...fields, wordpress } : fields;
           const stagger = deps.settings().defaultStaggerMinutes;
+          // Final review 3: what goes out within the lead time is what the user last saw.
+          if (contentChanges(fresh, wordpress) && goesOutSoon(fresh, deps.now(), stagger)) return { refuse: GOES_OUT_SOON };
           // A stagger (or channel order) change never moves a scheduled channel's time: only schedule does (P5).
           const pinFor = (channels?: string[]) =>
             pinScheduledTimes(fresh, { ...(channels ? { channels } : {}), ...(fields.staggerMinutes !== undefined ? { staggerMinutes: fields.staggerMinutes } : {}) }, stagger);
@@ -326,6 +334,7 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
               // Checked against the note as it is now, inside the write queue (I3, minor 3).
               const now = parseVariant(fm, v.path).value;
               if (now && publishing(now)) throw new BodyRefusal(PUBLISHING_NOW);
+              if (now && goesOutSoon(now, deps.now(), deps.settings().defaultStaggerMinutes)) throw new BodyRefusal(GOES_OUT_SOON);
               if (!sameBody(current, content.body)) throw new BodyRefusal(NOTE_CHANGED);
               return a.body as string;
             });
@@ -358,7 +367,8 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
         if (!v) return fail(noPost(a.path));
         if (!v.channels.includes(a.channel)) return fail(`${a.channel} is not a channel of this post.`);
         try {
-          const file = await deps.factory.forkVariant(v.file, a.channel, nameOf(a.channel));
+          const soon = (current: Variant) => (goesOutSoon(current, deps.now(), deps.settings().defaultStaggerMinutes, [a.channel]) ? GOES_OUT_SOON : null);
+          const file = await deps.factory.forkVariant(v.file, a.channel, nameOf(a.channel), soon);
           await untilIndexed(deps.index, () => !!deps.index.getVariant(file.path));
           claudeNotice(deps, `Claude forked ${nameOf(a.channel)} into its own note.`, file.path);
           return ok({ path: file.path, original: v.path });

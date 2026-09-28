@@ -38,6 +38,12 @@ describe("schedule (#75)", () => {
     expect(Notice.messages.at(-1)).toContain("released for review");
   });
 
+  it("says in its description that later channels follow the stagger (final review 11)", async () => {
+    const c = await mcpCtx();
+    const tool = c.registry.list().find((t) => t.name === "schedule")!;
+    expect(tool.description).toContain("The channels after the first follow the post's stagger; their times can't be set one by one through schedule.");
+  });
+
   it("mentions releasing a held note in the tool description (#84 fix round 1, m7)", async () => {
     const c = await mcpCtx();
     const tool = c.registry.list().find((t) => t.name === "schedule")!;
@@ -237,17 +243,32 @@ describe("unschedule", () => {
     );
   });
 
-  it("refuses channels awaiting the user, publishing or needing a check, and published posts", async () => {
+  it("refuses channels awaiting the user, publishing, needing a check or failed, and published posts, each with its own reason (final review 6)", async () => {
+    const note = (title: string, status: string) => ({
+      path: `Social/Posts/${title}.md`,
+      frontmatter: { type: "social-post", platform: "linkedin", title, channels: ["li/me"], status: "scheduled", scheduled_at: FRI_9, deliveries: { "li/me": { status } } },
+      body: "Hi\n",
+    });
     const c = await mcpCtx({
       notes: [
-        { path: "Social/Posts/Busy.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Busy", channels: ["li/me"], status: "scheduled", scheduled_at: FRI_9, deliveries: { "li/me": { status: "publishing" } } }, body: "Hi\n" },
-        { path: "Social/Posts/Check.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Check", channels: ["li/me"], status: "scheduled", scheduled_at: FRI_9, deliveries: { "li/me": { status: "check_needed" } } }, body: "Hi\n" },
+        note("Busy", "publishing"),
+        note("Check", "check_needed"),
+        note("Failed", "failed"),
+        note("Waiting", "awaiting_you"),
         { path: "Social/Posts/Done.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Done", channels: ["li/me"], status: "published" }, body: "Hi\n" },
       ],
     });
-    for (const path of [LI, "Social/Posts/Busy.md", "Social/Posts/Check.md", "Social/Posts/Done.md"]) {
+    const cases: Array<[string, string]> = [
+      [LI, "Some channels were already handed over or published. Unschedule the remaining ones from the post itself."],
+      ["Social/Posts/Done.md", "Some channels were already handed over or published. Unschedule the remaining ones from the post itself."],
+      ["Social/Posts/Busy.md", "A channel is being published right now, so the post can't be unscheduled. Try again in a minute."],
+      ["Social/Posts/Check.md", "A channel needs a check first (did it go out?). Ask the user to resolve it in Obsidian (Needs attention)."],
+      ["Social/Posts/Failed.md", "A channel failed to publish and waits for the user in Obsidian (Needs attention: Post again or Fix). Ask the user."],
+      ["Social/Posts/Waiting.md", "A channel is waiting for the user to post it by hand. Ask the user."],
+    ];
+    for (const [path, error] of cases) {
       const before = await fm(c, path);
-      expect((await c.call("unschedule", { path })).error).toBe("Some channels were already handed over or published. Unschedule the remaining ones from the post itself.");
+      expect((await c.call("unschedule", { path })).error, path).toBe(error);
       expect(await fm(c, path)).toEqual(before);
     }
   });
