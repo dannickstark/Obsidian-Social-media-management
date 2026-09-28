@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
 import { buildSeed } from "../../scripts/seedData";
+import { VOICE_TEMPLATE } from "../../src/claude/voice";
 import { parseCampaign, parseVariant, socialKind } from "../../src/model/frontmatter";
 import { validateAll } from "../../src/platforms/checks";
 import { migrateSettings } from "../../src/settings/settings";
@@ -49,5 +50,30 @@ describe("skill references", () => {
     });
     expect(kinds.filter((k) => k === "campaign")).toHaveLength(1);
     expect(kinds.filter((k) => k === "post").length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// jsdom's URL implementation rejects a relative `new URL(..., import.meta.url)` (see REFS above),
+// so this too is built from process.cwd().
+const SKILL = join(process.cwd(), "claude-plugin/skills/social");
+
+function files(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix)).flatMap((name) => {
+    const rel = prefix ? `${prefix}/${name}` : name;
+    return statSync(join(dir, rel)).isDirectory() ? files(dir, rel) : [rel];
+  });
+}
+
+describe("SKILL.md links (#82)", () => {
+  it("links every reference file, and every link resolves", () => {
+    const skill = readFileSync(join(SKILL, "SKILL.md"), "utf8");
+    const links = [...skill.matchAll(/\]\((references\/[^)]+)\)/g)].map((m) => m[1]!);
+    const all = files(SKILL, "references");
+    expect([...new Set(links)].sort()).toEqual(all.sort());
+  });
+
+  it("ships the same voice template as the plugin's Create voice profile command (#83)", () => {
+    const block = /^````markdown\n([\s\S]*?)^````$/m.exec(read("voice.md"))![1];
+    expect(block).toBe(VOICE_TEMPLATE);
   });
 });

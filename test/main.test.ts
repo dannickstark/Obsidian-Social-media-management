@@ -78,6 +78,22 @@ describe("OsmmPlugin", () => {
     plugin.unload();
   });
 
+  it("creates the voice profile once and opens it (#83)", async () => {
+    const { app, plugin } = await loaded();
+    const command = (plugin as unknown as { commands: Array<{ id: string; callback?: () => unknown }> }).commands.find((c) => c.id === "create-voice-profile")!;
+    await command.callback!();
+    await settle();
+    const file = app.vault.getFileByPath("Social/_voice.md")!;
+    expect(await app.vault.read(file)).toContain("# Voice profile");
+    expect(Notice.messages).toContain("Voice profile created. Fill it in; Claude reads it before drafting.");
+    await app.vault.modify(file, "# Voice profile\n\nMine.\n");
+    await command.callback!();
+    await settle();
+    expect(await app.vault.read(file)).toBe("# Voice profile\n\nMine.\n");
+    expect(Notice.messages.at(-1)).toBe("Opened your voice profile.");
+    plugin.unload();
+  });
+
   it("renders the General settings and applies edits", async () => {
     const { plugin } = await loaded();
     Setting.all = [];
@@ -101,6 +117,7 @@ describe("OsmmPlugin", () => {
       "Phone reminders on this device",
       "Claude Code",
       "About Claude Code",
+      "Voice profile",
       "MCP server on this device",
       "Channels",
       "Schedule templates",

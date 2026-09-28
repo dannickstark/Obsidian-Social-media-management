@@ -73,6 +73,17 @@ Either way: no answer within 2 minutes counts as a no, only one question is open
 ### push_update
 `path`, `channels`, `note`. Sends the current text to channels where the post is already live (`published` or `handed_over`) and the platform supports updates, after the same approval. A failed send is logged as `update_failed`, never `failed`, so a live post is never shown as failed in the log.
 
+## Voice and notes
+
+### get_voice_profile
+The voice profile (`Social/_voice.md`) as text, or `exists: false` with the template and a hint. Read it before drafting.
+
+### add_voice_refinement
+`text`: appends a dated entry under Refinements. Only after the user agreed to the exact text.
+
+### append_to_campaign
+`path`, `heading`, `text`: adds a section at the end of a campaign note, e.g. "Review decisions (2026-10-08)". Never changes existing text.
+
 ## Refusal codes
 
 A tool result's top-level `error` is always readable prose; `issues[].code` is the machine-readable reason underneath it, when there is one:

@@ -1,5 +1,6 @@
 import { get } from "svelte/store";
 import { normalizePath, Notice, Platform, PluginSettingTab, Setting, type App } from "obsidian";
+import { voicePath } from "../claude/voice";
 import type { McpActivity, McpStatus } from "../mcp/service";
 import type OsmmPlugin from "../main";
 import { PLATFORM_META } from "../model/platforms";
@@ -405,6 +406,11 @@ export class OsmmSettingTab extends PluginSettingTab {
     const osmm = this.osmm;
     new Setting(containerEl).setName("Claude Code").setHeading();
     new Setting(containerEl).setName("About Claude Code").setDesc(ABOUT_CLAUDE);
+    const hasVoice = !!this.app.vault.getFileByPath(voicePath(osmm.settings.rootFolder));
+    new Setting(containerEl)
+      .setName("Voice profile")
+      .setDesc("Social/_voice.md: your tone, dos and don'ts and example posts. Claude reads it before drafting and cites it.")
+      .addButton((b) => b.setButtonText(hasVoice ? "Open" : "Create").onClick(() => osmm.openVoiceProfile()));
     new Setting(containerEl)
       .setName("MCP server on this device")
       .setDesc("Off by default. Stored on this device only; the token stays in this device's secret storage.")

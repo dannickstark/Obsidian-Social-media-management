@@ -2,6 +2,7 @@ import { Notice, Platform, Plugin } from "obsidian";
 import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
+import { createVoiceProfile } from "./claude/voice";
 import { registerCommands } from "./commands";
 import { ComposerActions } from "./composer/actions";
 import { ComposerView } from "./composer/ComposerView";
@@ -382,6 +383,13 @@ export default class OsmmPlugin extends Plugin {
   setDevice(patch: Partial<Omit<DeviceSettings, "deviceId">>): void {
     this.device = { ...this.device, ...patch };
     saveDeviceSettings(this.app, this.device);
+  }
+
+  /** Command "Create voice profile" (#83): creates Social/_voice.md from the template if needed, then opens it. */
+  async openVoiceProfile(): Promise<void> {
+    const { file, created } = await createVoiceProfile(this.app, this.settings.rootFolder);
+    new Notice(created ? "Voice profile created. Fill it in; Claude reads it before drafting." : "Opened your voice profile.");
+    await this.app.workspace.getLeaf(false).openFile(file);
   }
 
   /**

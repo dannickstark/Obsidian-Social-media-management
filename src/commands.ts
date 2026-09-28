@@ -34,4 +34,5 @@ export function registerCommands(plugin: OsmmPlugin): void {
     name: "Open composer for this post",
     checkCallback: (checking) => plugin.uiContext().composer.composeActiveNote(checking),
   });
+  plugin.addCommand({ id: "create-voice-profile", name: "Create voice profile", callback: () => plugin.openVoiceProfile() });
 }
