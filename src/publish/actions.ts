@@ -239,25 +239,30 @@ export class PublishActions {
   }
 
   /**
-   * Ruling P3: re-validates the exact text about to be sent and refuses (Notice with the blocking
-   * issues) instead of copying/opening.
+   * Ruling P3: on top of `freshContent`'s flush, re-validates the exact text about to be sent and refuses
+   * (Notice with the blocking issues) instead of copying, opening or posting. Shared by `freshTarget`
+   * (Copy & open) and `postNow` (every entry point: composer, Overdue tray, Needs attention, banner) so
+   * neither duplicates the check.
    */
-  private async freshTarget(path: string, channelId: string): Promise<AssistedTarget | null> {
-    const channel = this.deps.channels.get(channelId);
-    if (!channel) {
-      new Notice("That note or channel is no longer available.");
-      return null;
-    }
+  private async freshValidated(path: string): Promise<{ v: Variant; content: LoadedContent } | null> {
     const fresh = await this.freshContent(path);
-    if (!fresh) {
-      new Notice("That note or channel is no longer available.");
-      return null;
-    }
+    if (!fresh) return null;
     const issues = this.deps.composer.check(fresh.v, fresh.content).filter((i) => i.level === "error");
     if (issues.length) {
       new Notice(issues.map((i) => i.message).join(" "));
       return null;
     }
+    return fresh;
+  }
+
+  private async freshTarget(path: string, channelId: string): Promise<AssistedTarget | null> {
+    const channel = this.deps.channels.get(channelId);
+    if (!channel || !this.deps.index.getVariant(path)) {
+      new Notice("That note or channel is no longer available.");
+      return null;
+    }
+    const fresh = await this.freshValidated(path);
+    if (!fresh) return null;
     return this.target(fresh.v, channel, fresh.content);
   }
 
@@ -279,13 +284,12 @@ export class PublishActions {
 
   /**
    * Post now (Overdue tray, Needs attention, composer, context menu): API channels run at once, the rest
-   * opens the assisted flow. Ruling P3: flushes an open editor for `path` first, so an API delivery reads
-   * the exact on-screen text (not stale content on disk). The composer's own "Post now" button additionally
-   * disables itself while there are blocking issues (`<ActionsBar variant issues>`), computed from the
-   * live session body; assisted deliveries are validated at the copy step (`freshTarget`, above).
+   * opens the assisted flow. Ruling P3: flushes an open editor for `path` and re-validates the exact text
+   * about to be sent first, from every entry point — refuses (Notice with the blocking issues) instead of
+   * sending anything, whether by API or the assisted flow.
    */
   async postNow(path: string, channelIds?: readonly string[]): Promise<void> {
-    const fresh = await this.freshContent(path);
+    const fresh = await this.freshValidated(path);
     if (!fresh) return;
     const { v } = fresh;
     const queue = assistedQueue(v, this.deps.settings().defaultStaggerMinutes, channelIds);

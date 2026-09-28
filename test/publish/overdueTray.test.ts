@@ -18,22 +18,54 @@ const checkNote = {
   frontmatter: { type: "social-post", platform: "telegram", channels: ["tg/event-x"], status: "attention", deliveries: { "tg/event-x": { status: "check_needed" } } },
   body: "Doors open",
 };
+// The seeded Instagram note is overdue but has a genuine blocking issue (its cover image is missing from
+// the vault, per test/previews/grid.test.ts); it now exercises the P3 refusal below. This note is overdue
+// too, but has no blocking issues, so it exercises the success path instead.
+const MASTODON = "Social/Event X/Event X – Mastodon.md";
+const overdueNote = {
+  path: MASTODON,
+  frontmatter: {
+    type: "social-post",
+    campaign: "[[Event X]]",
+    platform: "mastodon",
+    status: "overdue",
+    channels: ["ma/you"],
+    scheduled_at: "2026-10-06T18:00:00+02:00",
+    deliveries: { "ma/you": { status: "overdue" } },
+  },
+  body: "Event X was earlier this week — thanks for coming!",
+};
 
 describe("Overdue tray", () => {
   it("posts an overdue item now through the assisted flow", async () => {
-    const c = await makeCtx({ seed: true });
+    const c = await makeCtx({ seed: true, notes: [overdueNote] });
     render(Sidebar, { context: osmmContext(c.ctx) });
     const tray = screen.getByRole("region", { name: /Overdue/ });
-    await fireEvent.click(within(tray).getByRole("button", { name: "Post One evening. Eighty makers. Laptops open. now" }));
-    await vi.waitFor(() => expect(Modal.opened.at(-1)?.contentEl.textContent).toContain("Instagram · @acmestudio (1 of 1)"));
+    await fireEvent.click(within(tray).getByRole("button", { name: "Post Event X was earlier this week — thanks for coming! now" }));
+    await vi.waitFor(() => expect(Modal.opened.at(-1)?.contentEl.textContent).toContain("Mastodon · @you@mastodon.social (1 of 1)"));
     Modal.opened.at(-1)?.close();
   });
 
   it("posts through the API where an adapter exists", async () => {
     const c = await makeCtx({ seed: true });
-    c.adapters.register({ platform: "instagram", publish: async () => ({ remoteId: "1", url: "https://www.instagram.com/p/1" }) });
-    await c.ctx.publish.postNow(IG);
-    await indexed(c.index, () => c.index.getVariant(IG)?.status === "published");
+    const DC = "Social/Event X/Event X – Discord.md";
+    c.adapters.register({ platform: "discord", publish: async () => ({ remoteId: "1", url: "https://discord.com/channels/1/2/3" }) });
+    await c.ctx.publish.postNow(DC);
+    await indexed(c.index, () => c.index.getVariant(DC)?.status === "published");
+  });
+
+  it("refuses to post an overdue item with a blocking issue (ruling P3)", async () => {
+    const c = await makeCtx({ seed: true });
+    const publish = vi.fn().mockResolvedValue({ remoteId: "1", url: "https://www.instagram.com/p/1" });
+    c.adapters.register({ platform: "instagram", publish });
+    render(Sidebar, { context: osmmContext(c.ctx) });
+    const tray = screen.getByRole("region", { name: /Overdue/ });
+    const openModals = Modal.opened.length;
+    await fireEvent.click(within(tray).getByRole("button", { name: "Post One evening. Eighty makers. Laptops open. now" }));
+    expect(Notice.messages.at(-1)).toContain("Instagram needs an image.");
+    expect(publish).not.toHaveBeenCalled();
+    expect(c.index.getVariant(IG)?.status).toBe("overdue");
+    expect(Modal.opened.length).toBe(openModals);
   });
 
   it("flushes an open editor before an API delivery, so it sends the exact text on screen (ruling P3)", async () => {
@@ -122,12 +154,25 @@ describe("Needs attention", () => {
 
 describe("Campaign table Post now", () => {
   it("posts an overdue variant from the social-variants table", async () => {
-    const c = await makeCtx({ seed: true });
+    const c = await makeCtx({ seed: true, notes: [overdueNote] });
     render(CampaignTable, { props: { campaignPath: "Social/Event X/Event X.md" }, context: osmmContext(c.ctx) });
-    await fireEvent.click(screen.getByRole("button", { name: "Post Instagram variant now" }));
-    await vi.waitFor(() => expect(Modal.opened.at(-1)?.contentEl.textContent).toContain("Instagram · @acmestudio (1 of 1)"));
+    await fireEvent.click(screen.getByRole("button", { name: "Post Mastodon variant now" }));
+    await vi.waitFor(() => expect(Modal.opened.at(-1)?.contentEl.textContent).toContain("Mastodon · @you@mastodon.social (1 of 1)"));
     Modal.opened.at(-1)?.close();
     expect(screen.queryByRole("button", { name: "Post X variant now" })).toBeNull();
+  });
+
+  it("refuses to post an overdue variant with a blocking issue (ruling P3)", async () => {
+    const c = await makeCtx({ seed: true });
+    const publish = vi.fn().mockResolvedValue({ remoteId: "1", url: "https://www.instagram.com/p/1" });
+    c.adapters.register({ platform: "instagram", publish });
+    render(CampaignTable, { props: { campaignPath: "Social/Event X/Event X.md" }, context: osmmContext(c.ctx) });
+    const openModals = Modal.opened.length;
+    await fireEvent.click(screen.getByRole("button", { name: "Post Instagram variant now" }));
+    expect(Notice.messages.at(-1)).toContain("Instagram needs an image.");
+    expect(publish).not.toHaveBeenCalled();
+    expect(c.index.getVariant(IG)?.status).toBe("overdue");
+    expect(Modal.opened.length).toBe(openModals);
   });
 });
 
