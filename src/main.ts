@@ -5,6 +5,7 @@ import { ChannelRegistry } from "./channels/registry";
 import { registerCommands } from "./commands";
 import { ComposerActions } from "./composer/actions";
 import { ComposerView } from "./composer/ComposerView";
+import { overdueRows } from "./index/queries";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
 import { NoteFactory } from "./model/factory";
@@ -126,6 +127,7 @@ export default class OsmmPlugin extends Plugin {
       if (this.unloaded) return;
       await this.scheduler.reconcile();
       if (this.unloaded) return;
+      ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
       this.scheduler.start();
       void this.scheduler.tick();
     });

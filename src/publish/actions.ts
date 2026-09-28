@@ -8,9 +8,10 @@ import type { SafeWriter } from "../model/writer";
 import type { AssistedTarget, ClipItem } from "../platforms/types";
 import type { AdapterRegistry } from "../platforms/registry";
 import type { OsmmSettings } from "../settings/settings";
-import type { PlannerActions } from "../ui/actions";
+import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
 import { SvelteModal } from "../ui/dialogs";
 import type { OsmmContext } from "../ui/context";
+import { activateView } from "../views/PlannerView";
 import { assistedJob, assistedTarget } from "./assisted";
 import { assistedQueue } from "./assistedFlow";
 import AssistedFlow from "./AssistedFlow.svelte";
@@ -260,6 +261,49 @@ export class PublishActions {
     if (url) window.open(url);
     await this.startAssisted(path, channelId);
     return first && result ? { result, label: first.label } : null;
+  }
+
+  /** Post now (Overdue tray, Needs attention, composer, context menu): API channels run at once, the rest opens the assisted flow. */
+  async postNow(path: string, channelIds?: readonly string[]): Promise<void> {
+    const v = this.deps.index.getVariant(path);
+    if (!v) return;
+    const queue = assistedQueue(v, this.deps.settings().defaultStaggerMinutes, channelIds);
+    if (!queue.length) {
+      new Notice("Nothing left to post for this note.");
+      return;
+    }
+    const adapter = this.deps.adapters.get(v.platform);
+    const viaApi = queue.filter((id) => {
+      const method = effectiveMethod(v.mode, this.deps.channels.get(id), adapter);
+      return method === "api" || (method === "native" && !!adapter?.publish);
+    });
+    for (const id of viaApi) void this.runApi(path, id);
+    const assisted = queue.filter((id) => !viaApi.includes(id));
+    if (assisted.length) this.openAssisted(path, assisted);
+  }
+
+  /** The user checked the platform: the interrupted publish did not go out. */
+  async resolveNotPublished(path: string, channelId: string): Promise<boolean> {
+    const v = this.deps.index.getVariant(path);
+    if (!v) return false;
+    const name = this.channelName(channelId);
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      const d = fresh.deliveries[channelId];
+      if (d?.status !== "check_needed") return { refuse: `${name} no longer needs a check.` };
+      return { deliveries: { [channelId]: transition(d, "failed", { error: "Not published (checked by you)." }) } };
+    });
+    if (!result.ok) {
+      new Notice(result.reason);
+      return false;
+    }
+    this.deps.planner.undoNotice(`Marked ${name} as not published.`, () => this.deps.planner.undo([result.record]));
+    return true;
+  }
+
+  /** The startup banner (artboard 6). */
+  overdueBanner(count: number): void {
+    if (count === 0) return;
+    this.deps.planner.actionNotice(`${count} post${count === 1 ? " is" : "s are"} overdue.`, "Review", () => activateView(this.deps.app, VIEW_SIDEBAR, "right"));
   }
 
   /** The 3-step assisted flow (artboard 6) over the channels still to post, in stagger order. */

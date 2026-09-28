@@ -20,7 +20,7 @@ import { deliveryChanges, planUndo, recordWrite, type WriteRecord } from "../pla
 import { frozenForMove, statusEditable, uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
-import { planTemplate, templateLocked, type TemplateProposal } from "../planner/templates";
+import { planTemplate, planTemplateMove, type TemplateProposal } from "../planner/templates";
 import type { OsmmSettings } from "../settings/settings";
 import type { OsmmContext } from "./context";
 import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
@@ -136,10 +136,14 @@ export class PlannerActions {
       return false;
     }
     if (plan.needsConfirm) {
-      const go = await this.confirm(
-        "This post was already handed over to the platform. Moving it here won't change it on the platform until you push an update. Move anyway?",
-        "Move",
-      );
+      const message = plan.awaitingYou
+        ? "Some channels are awaiting you to post manually. Moving it here won't change what you already agreed to post. Move anyway?"
+        : "This post was already handed over to the platform. Moving it here won't change it on the platform until you push an update. Move anyway?";
+      const go = await this.confirm(message, "Move");
+      if (!go) return false;
+    }
+    if (plan.newAt < this.deps.now()) {
+      const go = await this.confirm("That time is in the past, so the post will show as overdue until you post or move it. Move it anyway?", "Move");
       if (!go) return false;
     }
     const stagger = this.deps.settings().defaultStaggerMinutes;
@@ -346,14 +350,12 @@ export class PlannerActions {
     const records: WriteRecord[] = [];
     let skipped = 0;
     for (const p of proposals) {
-      const result = await this.write(p.variant.file, (fresh) =>
-        templateLocked(fresh) ? { refuse: "locked" } : { fields: { scheduledAt: p.to } },
-      );
+      const result = await this.write(p.variant.file, (fresh) => planTemplateMove(fresh, p.to));
       if (result.ok) records.push(result.record);
       else skipped++;
     }
     const n = records.length;
-    const summary = `Scheduled ${n} post${n === 1 ? "" : "s"} from the template.${skipped ? ` Skipped ${skipped} already published or handed over.` : ""}`;
+    const summary = `Scheduled ${n} post${n === 1 ? "" : "s"} from the template.${skipped ? ` Skipped ${skipped} already published, handed over or being published.` : ""}`;
     if (records.length) this.undoNotice(summary, () => this.undo(records));
     else new Notice(summary);
   }

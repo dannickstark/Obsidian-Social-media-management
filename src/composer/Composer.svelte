@@ -104,7 +104,7 @@
           <Checks {variant} {issues} counters={counterList} />
           <SchedulePanel {variant} {issues} />
           <MediaPanel {variant} media={content.media} />
-          <ActionsBar {variant} />
+          <ActionsBar {variant} {issues} />
         </aside>
       </div>
     {/if}

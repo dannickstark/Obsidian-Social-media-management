@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SocialIndex } from "../../src/index/socialIndex";
 import type { App } from "obsidian";
+import { platformDef } from "../../src/platforms/registry";
+import { countFor, postText } from "../../src/platforms/text";
 import { createApp, indexed, nextChange, settle, writeNote } from "../helpers";
 
 let index: SocialIndex | undefined;
@@ -67,6 +69,26 @@ describe("SocialIndex", () => {
     expect(index.invalidNotes().map((n) => n.file.path)).toEqual(["Social/Broken.md"]);
     expect(index.variantsOf("Social/Event X/Event X.md")).toHaveLength(1);
     expect(variant?.bodyChars).toBe("I almost didn't host Event X.\n\nMore text".length);
+  });
+
+  it("counts bodyChars the way the platform will actually post it (ruling P5)", async () => {
+    const app = createApp();
+    await writeNote(
+      app,
+      "Social/Standalone – X.md",
+      { type: "social-post", platform: "x", channels: ["x/you"] },
+      "See [Event X](https://example.com/event-x) for details.",
+    );
+    await settle();
+    index = new SocialIndex(app, 0);
+    await index.build();
+    index.start();
+    const v = index.getVariant("Social/Standalone – X.md")!;
+    const def = platformDef("x");
+    const body = "See [Event X](https://example.com/event-x) for details.";
+    expect(v.bodyChars).toBe(countFor(postText(body, def), def));
+    // The platform-aware count keeps the URL (its "plain" dialect writes "label (url)"), unlike a naive markdown strip.
+    expect(v.bodyChars).toBeGreaterThan("See Event X for details.".length);
   });
 
   it("emits changes when a note is modified", async () => {

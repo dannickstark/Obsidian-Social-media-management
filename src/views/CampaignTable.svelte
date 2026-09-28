@@ -2,6 +2,7 @@
   import { Menu } from "obsidian";
   import { PLATFORM_META } from "../model/platforms";
   import { campaignTable } from "../planner/campaignTable";
+  import { VARIANT_STATUS_LABEL } from "../planner/status";
   import ChannelAvatar from "../ui/ChannelAvatar.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
@@ -9,10 +10,9 @@
   import Timeline from "./Timeline.svelte";
 
   let { campaignPath }: { campaignPath: string } = $props();
-  const { snapshot, settings, actions, composer } = useOsmm();
+  const { snapshot, settings, actions, composer, publish } = useOsmm();
   const table = $derived(campaignTable(campaignPath, $snapshot.variants, $settings.channels));
   const campaign = $derived($snapshot.campaigns.find((c) => c.path === campaignPath));
-  const STATUS: Record<string, string> = { idea: "Idea", draft: "Draft", ready: "Ready", scheduled: "Scheduled", partial: "Partly published", published: "Published", overdue: "Overdue", attention: "Needs attention", skipped: "Skipped" };
 
   function templateMenu(event: MouseEvent): void {
     const menu = new Menu();
@@ -41,10 +41,13 @@
           <td>{r.variant.mode === "assisted" ? "Assisted" : "Auto-post"}</td>
           <td>{r.when !== undefined ? `${formatShortDate(r.when)} ${formatTime(r.when)}` : "—"}</td>
           <td class="osmm-progress">{r.chars}</td>
-          <td><span class="osmm-pill-status">{STATUS[r.status] ?? r.status}</span></td>
+          <td><span class="osmm-pill-status">{VARIANT_STATUS_LABEL[r.status]}</span></td>
           <td>
             <button type="button" onclick={() => actions.openNote(r.variant.path)}>Open</button>
             <button type="button" aria-label={`Compose ${PLATFORM_META[r.variant.platform].label} variant`} onclick={() => void composer.openComposer(r.variant.path)}>Compose</button>
+            {#if r.status === "overdue"}
+              <button type="button" class="mod-cta" aria-label={`Post ${PLATFORM_META[r.variant.platform].label} variant now`} onclick={() => void publish.postNow(r.variant.path)}>Post now</button>
+            {/if}
           </td>
         </tr>
       {/each}

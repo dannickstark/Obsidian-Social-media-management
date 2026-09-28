@@ -6,7 +6,7 @@ import type { Delivery, DeliveryStatus } from "../model/types";
 export type RescheduleTarget = { day: number } | { at: number };
 
 export type ReschedulePlan =
-  | { ok: true; patch: VariantPatch; previous: VariantPatch; needsConfirm: boolean; newAt: number }
+  | { ok: true; patch: VariantPatch; previous: VariantPatch; needsConfirm: boolean; awaitingYou: boolean; newAt: number }
   | { ok: false; reason: string };
 
 const FROZEN = new Set<RowStatus>(["published", "publishing", "skipped"]);
@@ -63,12 +63,15 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
   }
   // Only deliveries that actually move need confirming: a sibling with its own explicit time stays put.
   const moving = explicit ? affected : affected.filter((id) => id === row.channelId || v.deliveries[id]?.at === undefined);
-  const needsConfirm = moving.some((id) => deliveries[id]?.status === "handed_over");
+  // Ruling P2: a delivery already awaiting the user is sticky, same as one handed over — moving it needs confirmation.
+  const awaitingYou = moving.some((id) => deliveries[id]?.status === "awaiting_you");
+  const needsConfirm = awaitingYou || moving.some((id) => deliveries[id]?.status === "handed_over");
 
   return {
     ok: true,
     newAt,
     needsConfirm,
+    awaitingYou,
     previous: { scheduledAt: v.scheduledAt, deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([k, d]) => [k, { ...d }])) },
     patch: { scheduledAt, deliveries },
   };

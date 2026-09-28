@@ -5,6 +5,35 @@ import { indexed } from "../helpers";
 import { ROW_MIME } from "../../src/ui/actions";
 
 describe("PlannerActions.reschedule", () => {
+  it("asks before moving a post into the past (parked M1 item)", async () => {
+    const { ctx, index } = await makeCtx({ seed: true });
+    const asked: string[] = [];
+    ctx.actions.confirm = async (message) => {
+      asked.push(message);
+      return false;
+    };
+    const row = ctx.actions.rowByKey("Social/Event X/Event X – Bluesky.md#bs/you")!;
+    expect(await ctx.actions.reschedule(row, { at: TEST_NOW - 3_600_000 })).toBe(false);
+    expect(asked).toEqual(["That time is in the past, so the post will show as overdue until you post or move it. Move it anyway?"]);
+    expect(index.getVariant(row.variant.path)?.scheduledAt).toBe(row.variant.scheduledAt);
+  });
+
+  it("asks before moving an awaiting-you delivery, with its own wording (ruling P2)", async () => {
+    const { ctx, index } = await makeCtx({ seed: true });
+    const asked: string[] = [];
+    ctx.actions.confirm = async (message) => {
+      asked.push(message);
+      return false;
+    };
+    const row = ctx.actions.rowByKey("Social/Event X/Event X – LinkedIn.md#li/acme-studio")!;
+    expect(row.status).toBe("awaiting_you");
+    expect(await ctx.actions.reschedule(row, { at: TEST_NOW + 3_600_000 })).toBe(false);
+    expect(asked).toEqual([
+      "Some channels are awaiting you to post manually. Moving it here won't change what you already agreed to post. Move anyway?",
+    ]);
+    expect(index.getVariant(row.variant.path)?.deliveries["li/acme-studio"]?.at).toBe(row.variant.deliveries["li/acme-studio"]?.at);
+  });
+
   it("writes the new time and restores it on undo", async () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const row = ctx.actions.rows().find((r) => r.key === "Social/Event X/Event X – Bluesky.md#bs/you")!;

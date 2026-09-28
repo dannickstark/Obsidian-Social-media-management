@@ -3,6 +3,9 @@ import type { IndexedVariant } from "../index/socialIndex";
 import { DAY } from "../model/dates";
 import { isPlatform, type Platform } from "../model/platforms";
 import { zPlatform, zTimeOfDay } from "../model/schemas";
+import { transition } from "../model/stateMachine";
+import type { Delivery, DeliveryStatus, Variant } from "../model/types";
+import type { VariantUpdate } from "../model/writer";
 import { dayKey } from "./calendar";
 
 export interface TemplateStep {
@@ -119,9 +122,39 @@ export function templateLocked(v: Pick<IndexedVariant, "status" | "deliveries">)
   return LOCKED.has(v.status) || Object.values(v.deliveries).some((d) => d.status === "handed_over" || d.status === "published");
 }
 
+/** Deliveries in flight: a template must not move their post either. */
+const IN_FLIGHT = new Set<DeliveryStatus>(["publishing", "check_needed"]);
+/** Deliveries whose explicit time is history, not a plan. */
+const KEEPS_TIME = new Set<DeliveryStatus>(["published", "skipped", "handed_over"]);
+
+export function templateMovable(v: Pick<Variant, "status" | "deliveries">): boolean {
+  return !templateLocked(v) && !Object.values(v.deliveries).some((d) => IN_FLIGHT.has(d.status));
+}
+
+/**
+ * A template move changes more than scheduled_at (parked M1 item): overdue deliveries become scheduled
+ * again, and explicit per-channel times move with the post, or are dropped when it had no time yet.
+ */
+export function planTemplateMove(fresh: Variant, to: number): VariantUpdate | { refuse: string } {
+  if (!templateMovable(fresh)) return { refuse: "locked" };
+  const delta = fresh.scheduledAt === undefined ? null : to - fresh.scheduledAt;
+  const deliveries: Record<string, Delivery> = {};
+  for (const [id, d] of Object.entries(fresh.deliveries)) {
+    let next: Delivery = d;
+    if (d.at !== undefined && !KEEPS_TIME.has(d.status)) {
+      next = { ...d };
+      if (delta === null) delete next.at;
+      else next.at = d.at + delta;
+    }
+    if (next.status === "overdue") next = transition(next, "scheduled");
+    if (next !== d) deliveries[id] = next;
+  }
+  return { fields: { scheduledAt: to }, deliveries };
+}
+
 export function planTemplate(template: ScheduleTemplate, anchor: number, variants: readonly IndexedVariant[]): TemplateProposal[] {
   const pool = [...variants]
-    .filter((v) => !templateLocked(v))
+    .filter((v) => templateMovable(v))
     .sort((a, b) => (a.scheduledAt ?? Infinity) - (b.scheduledAt ?? Infinity) || a.path.localeCompare(b.path));
   const used = new Set<string>();
   const a = new Date(anchor);

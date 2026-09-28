@@ -1,10 +1,13 @@
 <script lang="ts">
   import { Menu } from "obsidian";
   import type { IndexedVariant } from "../index/socialIndex";
+  import type { Issue } from "../model/types";
+  import { blocking } from "../platforms/checks";
   import { useOsmm } from "../ui/context";
 
-  let { variant }: { variant: IndexedVariant } = $props();
+  let { variant, issues = [] }: { variant: IndexedVariant; issues?: Issue[] } = $props();
   const { channels, composer, publish } = useOsmm();
+  const blocked = $derived(blocking(issues));
 
   function forkMenu(event: MouseEvent): void {
     const menu = new Menu();
@@ -17,7 +20,8 @@
 
 <section class="osmm-panel" aria-label="Actions">
   <div class="osmm-chips">
-    <button type="button" class="mod-cta" onclick={() => publish.openAssisted(variant.path)}>Copy & open</button>
+    <button type="button" class="mod-cta" disabled={blocked} onclick={() => void publish.postNow(variant.path)}>Post now</button>
+    <button type="button" disabled={blocked} onclick={() => publish.openAssisted(variant.path)}>Copy & open</button>
     {#if variant.channels.length > 1}<button type="button" onclick={forkMenu}>Fork for this page…</button>{/if}
     {#if variant.campaignPath}
       <button type="button" onclick={() => void composer.openPreviewGrid(variant.campaignPath!)}>Preview campaign</button>

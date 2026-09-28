@@ -51,6 +51,27 @@ describe("planReschedule", () => {
     expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30), "handed_over"), { at: T(9, 9) })).toMatchObject({ ok: true, needsConfirm: true });
   });
 
+  it("asks for confirmation when a moved delivery is awaiting the user (ruling P2)", () => {
+    const v = variant({ channels: ["li/me"], deliveries: { "li/me": { status: "awaiting_you" } } });
+    expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30), "awaiting_you"), { at: T(9, 9) })).toMatchObject({
+      ok: true,
+      needsConfirm: true,
+      awaitingYou: true,
+    });
+  });
+
+  it("still asks for an awaiting-you sibling without its own time, which moves with the post (ruling P2)", () => {
+    const v = variant({ deliveries: { "li/acme": { status: "awaiting_you" } } });
+    expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30)), { at: T(9, 9) })).toMatchObject({ ok: true, needsConfirm: true, awaitingYou: true });
+  });
+
+  it("does not ask for confirmation for an awaiting-you sibling with its own time, which does not move (ruling P2)", () => {
+    const v = variant({ deliveries: { "li/acme": { status: "awaiting_you", at: T(8, 20) } } });
+    const plan = planReschedule(rowOf(v, "li/me", T(8, 17, 30)), { at: T(9, 9) });
+    expect(plan).toMatchObject({ ok: true, needsConfirm: false });
+    expect(plan.ok && plan.patch.deliveries?.["li/acme"]).toEqual({ status: "awaiting_you", at: T(8, 20) });
+  });
+
   it("does not ask for confirmation for a handed-over sibling with its own time, which does not move (G5)", () => {
     const v = variant({ deliveries: { "li/acme": { status: "handed_over", at: T(8, 20) } } });
     const plan = planReschedule(rowOf(v, "li/me", T(8, 17, 30)), { at: T(9, 9) });

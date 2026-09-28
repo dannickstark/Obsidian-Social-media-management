@@ -1,7 +1,9 @@
 import { TFile, type App, type EventRef, type TAbstractFile } from "obsidian";
-import { bodyOf, countChars, excerpt, plainText } from "../model/body";
+import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseCampaign, parseVariant, socialKind, type SocialKind } from "../model/frontmatter";
 import type { Campaign, Issue, Variant } from "../model/types";
+import { platformDef } from "../platforms/registry";
+import { countFor, postText } from "../platforms/text";
 
 export interface IndexedCampaign extends Campaign {
   file: TFile;
@@ -182,7 +184,7 @@ export class SocialIndex {
         excerpt: text,
         displayTitle: r.value.title ?? (text || file.basename),
         campaignPath: this.resolveCampaign(r.value),
-        bodyChars: countChars(plainText(body).replace(/^#+\s*/gm, "").trim()),
+        bodyChars: countFor(postText(body, platformDef(r.value.platform)), platformDef(r.value.platform)),
       },
     };
   }

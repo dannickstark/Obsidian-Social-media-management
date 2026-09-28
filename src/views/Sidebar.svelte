@@ -5,9 +5,10 @@
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
 
-  const { snapshot, settings, now, channels, actions } = useOsmm();
+  const { snapshot, settings, now, channels, actions, composer, publish } = useOsmm();
   const rows = $derived(expandRows($snapshot.variants, $settings.defaultStaggerMinutes));
   const overdue = $derived(overdueRows(rows, $now));
+  const attention = $derived(rows.filter((r) => r.channelId !== null && (r.status === "failed" || r.status === "check_needed")));
   const endOfDay = $derived(addLocalDays(startOfLocalDay($now), 1));
   const upNext = $derived(upcomingRows(rows, $now, endOfDay - $now));
   const campaigns = $derived(
@@ -16,6 +17,7 @@
       .map((c) => ({ c, ...campaignProgress($snapshot.variants, c.path) }))
       .sort((a, b) => (a.c.anchorDate ?? Infinity) - (b.c.anchorDate ?? Infinity)),
   );
+  const channelName = (id: string | null) => (id ? (channels.get(id)?.name ?? id) : "");
 </script>
 
 <div class="osmm-sidebar">
@@ -29,10 +31,36 @@
           <button type="button" class="osmm-row-title osmm-link" onclick={() => actions.openNote(r.variant.path)}>{r.variant.displayTitle}</button>
         </div>
         <div class="osmm-row">
-          <span class="osmm-progress">{r.at !== undefined ? `${formatShortDate(r.at)} ${formatTime(r.at)}` : ""}{r.channelId ? ` · ${channels.get(r.channelId)?.name ?? r.channelId}` : ""}</span>
+          <span class="osmm-progress">{r.at !== undefined ? `${formatShortDate(r.at)} ${formatTime(r.at)}` : ""}{r.channelId ? ` · ${channelName(r.channelId)}` : ""}</span>
           <span class="osmm-spacer"></span>
+          <button type="button" class="mod-cta" aria-label={`Post ${r.variant.displayTitle} now`} onclick={() => void publish.postNow(r.variant.path, r.channelId ? [r.channelId] : undefined)}>Post now</button>
           <button type="button" onclick={(e) => actions.quickReschedule(e, r)}>Reschedule</button>
           <button type="button" aria-label={`Skip ${r.variant.displayTitle}`} onclick={() => void actions.skip(r)}>Skip</button>
+        </div>
+      {/each}
+    </section>
+  {/if}
+
+  {#if attention.length}
+    <section class="osmm-attention" aria-label={`Needs attention · ${attention.length}`}>
+      <h3 class="osmm-section-title">Needs attention · {attention.length}</h3>
+      {#each attention as r (r.key)}
+        {@const error = r.channelId ? r.variant.deliveries[r.channelId]?.error : undefined}
+        <div class="osmm-row">
+          <PlatformBadge platform={r.variant.platform} />
+          <button type="button" class="osmm-row-title osmm-link" onclick={() => actions.openNote(r.variant.path)}>{r.variant.displayTitle}</button>
+        </div>
+        <p class="osmm-progress">{channelName(r.channelId)}{error ? ` · ${error}` : ""}</p>
+        <div class="osmm-row">
+          <span class="osmm-spacer"></span>
+          {#if r.status === "failed"}
+            <button type="button" onclick={() => void publish.postNow(r.variant.path, [r.channelId!])}>Post again</button>
+            <button type="button" onclick={() => void composer.openComposer(r.variant.path)}>Fix</button>
+          {:else}
+            <button type="button" onclick={() => publish.openAssisted(r.variant.path, [r.channelId!], 3)}>It went out</button>
+            <button type="button" onclick={() => void publish.resolveNotPublished(r.variant.path, r.channelId!)}>It didn't</button>
+            <button type="button" onclick={() => void publish.resolveCheck(r.variant.path, r.channelId!)}>Check again</button>
+          {/if}
         </div>
       {/each}
     </section>
