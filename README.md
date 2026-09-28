@@ -2,7 +2,7 @@
 
 Plan, preview, schedule and post your social media content, for every platform and every page you run, from your vault.
 
-![The planner: month view with the Overdue tray](docs/images/planner.png)
+<!-- ![The planner: month view with the Overdue tray](docs/images/planner.png) (screenshot pending: see docs/qa/m2b.md) -->
 
 ## What it does
 
@@ -14,7 +14,7 @@ Plan, preview, schedule and post your social media content, for every platform a
 
 Supported platforms: LinkedIn (profile and pages), X, Instagram, Facebook, Mastodon, Bluesky, Telegram, Discord, Hacker News, Indie Hackers, Reddit, WhatsApp and WordPress. Today every platform posts through the assisted flow; automatic posting through the platforms' APIs is on the roadmap (Telegram, Discord, Mastodon, Bluesky and WordPress first).
 
-![The composer: live preview, channels, checks and schedule](docs/images/composer.png)
+<!-- ![The composer: live preview, channels, checks and schedule](docs/images/composer.png) (screenshot pending: see docs/qa/m2b.md) -->
 
 ## Install
 
@@ -30,7 +30,7 @@ Obsidian 1.11.4 or newer is required. The plugin works on desktop and on phones;
 
 Follow [the getting-started guide](docs/getting-started.md): add a channel, write a post, check it, schedule it, and post it with the assisted flow when the reminder comes.
 
-![The assisted publish flow](docs/images/assisted.png)
+<!-- ![The assisted publish flow](docs/images/assisted.png) (screenshot pending: see docs/qa/m2b.md) -->
 
 ## Your data
 
