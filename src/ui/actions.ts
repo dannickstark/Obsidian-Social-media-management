@@ -1,14 +1,15 @@
 import { Notice, type App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import { expandRows, type PostRow } from "../index/queries";
-import type { SocialIndex } from "../index/socialIndex";
+import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
 import { PLATFORM_META } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
+import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliveries, type BoardColumn } from "../planner/board";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
 import type { OsmmSettings } from "../settings/settings";
-import { confirmDialog } from "./dialogs";
+import { confirmDialog, pickDateTime } from "./dialogs";
 import { formatShortDate, formatTime } from "./format";
 
 export const VIEW_PLANNER = "osmm-planner";
@@ -136,5 +137,36 @@ export class PlannerActions {
     if (!row) return;
     const d = new Date(day);
     void this.reschedule(row, { at: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, minutes).getTime() });
+  }
+
+  async setStatus(v: IndexedVariant, status: "idea" | "draft" | "ready"): Promise<void> {
+    await this.deps.writer.patchVariant(v.file, { status });
+  }
+
+  async schedule(v: IndexedVariant, at: number): Promise<void> {
+    const previous = { scheduledAt: v.scheduledAt, deliveries: v.deliveries, status: v.status };
+    await this.deps.writer.patchVariant(v.file, { scheduledAt: at, deliveries: scheduleDeliveries(v) });
+    this.undoNotice(`Scheduled for ${formatShortDate(at)} ${formatTime(at)}.`, () => this.deps.writer.patchVariant(v.file, previous));
+  }
+
+  async unschedule(v: IndexedVariant, status: "idea" | "draft" | "ready"): Promise<void> {
+    const previous = { deliveries: v.deliveries, status: v.status };
+    const deliveries = unscheduleDeliveries(v, status === "ready" ? "ready" : "draft");
+    await this.deps.writer.patchVariant(v.file, { status, deliveries });
+    this.undoNotice("Unscheduled.", () => this.deps.writer.patchVariant(v.file, previous));
+  }
+
+  async moveOnBoard(v: IndexedVariant, to: BoardColumn): Promise<void> {
+    const plan = planBoardMove(v, to);
+    if (!plan.ok) {
+      new Notice(plan.reason);
+      return;
+    }
+    const { move } = plan;
+    if (move.kind === "setStatus") return this.setStatus(v, move.status);
+    if (move.kind === "unschedule") return this.unschedule(v, move.status);
+    const channel = this.deps.channels.get(v.channels[0] ?? "");
+    const at = await pickDateTime(this.deps.app, "Schedule post", defaultScheduleTime(this.deps.now(), v, channel?.defaultTime));
+    if (at !== null) await this.schedule(v, at);
   }
 }

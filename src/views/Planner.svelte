@@ -7,6 +7,7 @@
   import { useOsmm } from "../ui/context";
   import { monthTitle, weekTitle } from "../ui/format";
   import { icon } from "../ui/icon";
+  import BoardView from "./BoardView.svelte";
   import FilterBar from "./FilterBar.svelte";
   import Legend from "./Legend.svelte";
   import MonthView from "./MonthView.svelte";
@@ -14,7 +15,7 @@
   import WeekView from "./WeekView.svelte";
 
   const { snapshot, settings, viewState, channels, now } = useOsmm();
-  const MODES: PlannerMode[] = ["month", "week"];
+  const MODES: PlannerMode[] = ["month", "week", "board"];
 
   let anchor = $state(startOfLocalDay(get(now)));
   const mode = $derived(MODES.includes($viewState.mode) ? $viewState.mode : "month");
@@ -26,7 +27,12 @@
   const rows = $derived(filterRows(expandRows($snapshot.variants, $settings.defaultStaggerMinutes), toRowFilter(filter, channels)));
   const range = $derived(mode === "week" ? weekRange(anchor, $settings.weekStartsOn) : monthRange(year, month, $settings.weekStartsOn));
   const visible = $derived(rowsBetween(rows, range.from, range.to));
+  const boardVariants = $derived.by(() => {
+    const keep = new Set(rows.map((r) => r.variant.path));
+    return $snapshot.variants.filter((v) => keep.has(v.path));
+  });
   const title = $derived.by(() => {
+    if (mode === "board") return "Pipeline";
     if (mode !== "week") return monthTitle(year, month);
     const cells = weekCells(anchor, $settings.weekStartsOn, 0);
     return weekTitle(cells[0]!.date, cells[6]!.date);
@@ -47,11 +53,13 @@
 <div class="osmm-planner">
   <header class="osmm-toolbar">
     <h2 class="osmm-title">{title}</h2>
-    <div class="osmm-nav">
-      <button type="button" aria-label="Previous" onclick={() => step(-1)}><span use:icon={"chevron-left"}></span></button>
-      <button type="button" aria-label="Next" onclick={() => step(1)}><span use:icon={"chevron-right"}></span></button>
-      <button type="button" onclick={today}>Today</button>
-    </div>
+    {#if mode === "month" || mode === "week"}
+      <div class="osmm-nav">
+        <button type="button" aria-label="Previous" onclick={() => step(-1)}><span use:icon={"chevron-left"}></span></button>
+        <button type="button" aria-label="Next" onclick={() => step(1)}><span use:icon={"chevron-right"}></span></button>
+        <button type="button" onclick={today}>Today</button>
+      </div>
+    {/if}
     <div class="osmm-spacer"></div>
     <ViewSwitcher modes={MODES} value={mode} onchange={setMode} />
   </header>
@@ -65,6 +73,8 @@
       <MonthView {year} {month} rows={visible} />
     {:else if mode === "week"}
       <WeekView {anchor} rows={visible} />
+    {:else if mode === "board"}
+      <BoardView variants={boardVariants} />
     {/if}
   </div>
 </div>
