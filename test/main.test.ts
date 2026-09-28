@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PublishDeps } from "../src/publish/actions";
 import type { Notifier } from "../src/reminders/notifier";
-import { App, Notice, Setting, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
+import { App, Modal, Notice, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
 import { formatDateTime } from "../src/model/dates";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
@@ -67,6 +67,9 @@ describe("OsmmPlugin", () => {
       "Week starts on",
       "Default reminders",
       "Default stagger",
+      "This device",
+      "Device name",
+      "Publisher device",
       "Publishing",
       "Post late items automatically",
       "Late window (minutes)",
@@ -84,6 +87,37 @@ describe("OsmmPlugin", () => {
     await (byName("Post late items automatically").components[0] as ToggleComponent).toggle(true);
     await (byName("Late window (minutes)").components[0] as TextComponent).change("45");
     expect([plugin.settings.autoPostLate, plugin.settings.autoPostLateMinutes]).toEqual([true, 45]);
+    plugin.unload();
+  });
+
+  it("names this device and makes it the publisher from the settings (#26)", async () => {
+    const { app, plugin } = await loaded();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    Setting.all = [];
+    tab.display();
+    await (last("Device name").components[0] as TextComponent).change("Studio iMac");
+    expect(plugin.device.deviceName).toBe("Studio iMac");
+    expect(app.loadLocalStorage("osmm-device")).toMatchObject({ deviceName: "Studio iMac" });
+    expect(last("Publisher device").desc).toContain("No device publishes yet");
+    await (last("Publisher device").components[0] as ButtonComponent).click();
+    expect(plugin.settings.publisher).toMatchObject({ deviceId: plugin.device.deviceId, name: "Studio iMac" });
+
+    await plugin.updateSettings({ publisher: { deviceId: "other", name: "Work laptop", since: 1 } });
+    tab.display();
+    expect(last("Publisher device").desc).toContain("Publishing happens on Work laptop.");
+    const clicked = (last("Publisher device").components[0] as ButtonComponent).click();
+    (Modal.opened.at(-1)!.contentEl.querySelector("button.mod-cta") as HTMLButtonElement).click();
+    await clicked;
+    expect(plugin.publisher.isPublisher()).toBe(true);
+    plugin.unload();
+  });
+
+  it("tells the user at start-up when no device publishes (#26)", async () => {
+    Notice.messages = [];
+    const { plugin } = await loaded();
+    await settle(20);
+    expect(Notice.messages).toContain("No device publishes scheduled posts yet. Publish from this device");
     plugin.unload();
   });
 

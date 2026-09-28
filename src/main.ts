@@ -21,7 +21,7 @@ import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
 import { allSecretIds, Secrets } from "./secrets/secrets";
-import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
+import { loadDeviceSettings, saveDeviceSettings, type DeviceSettings } from "./settings/device";
 import { PublisherService } from "./settings/publisher";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
@@ -184,6 +184,9 @@ export default class OsmmPlugin extends Plugin {
       }
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
+      if (this.publisher.state().kind === "none") {
+        ui.actions.actionNotice("No device publishes scheduled posts yet.", "Publish from this device", () => this.publisher.claim());
+      }
       this.scheduler.start();
       void this.scheduler.tick();
     });
@@ -222,6 +225,11 @@ export default class OsmmPlugin extends Plugin {
     this.settings = migrateSettings({ ...this.settings, ...patch });
     this.settingsStore.set(this.settings);
     await this.saveSettings();
+  }
+
+  setDevice(patch: Partial<Omit<DeviceSettings, "deviceId">>): void {
+    this.device = { ...this.device, ...patch };
+    saveDeviceSettings(this.app, this.device);
   }
 
   uiContext(): OsmmContext {
@@ -280,6 +288,7 @@ export default class OsmmPlugin extends Plugin {
         actions,
         composer,
         publish,
+        publisher: this.publisher,
       };
       actions.context = this.ui;
       publish.context = this.ui;

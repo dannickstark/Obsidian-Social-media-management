@@ -13,6 +13,8 @@ import { PublishActions } from "../../src/publish/actions";
 import { ClipboardService } from "../../src/publish/clipboard";
 import { MemoryLog } from "../../src/publish/log";
 import { Secrets } from "../../src/secrets/secrets";
+import type { DeviceSettings } from "../../src/settings/device";
+import { PublisherService } from "../../src/settings/publisher";
 import { migrateSettings, type OsmmSettings } from "../../src/settings/settings";
 import { PlannerActions } from "../../src/ui/actions";
 import type { OsmmContext } from "../../src/ui/context";
@@ -29,6 +31,7 @@ export interface TestCtx {
   now: Writable<number>;
   adapters: AdapterRegistry;
   log: MemoryLog;
+  publisher: PublisherService;
 }
 
 export async function makeCtx(
@@ -86,6 +89,13 @@ export async function makeCtx(
     settings: () => get(settings),
     now: clock,
   });
+  const device: DeviceSettings = { deviceId: "test-device", deviceName: "Test laptop", notifications: true };
+  const publisher = new PublisherService({
+    device: () => device,
+    settings: () => get(settings),
+    update: async (patch) => settings.update((s) => ({ ...s, ...patch })),
+    now: clock,
+  });
   const ctx: OsmmContext = {
     app: app as never,
     settings,
@@ -96,8 +106,9 @@ export async function makeCtx(
     actions,
     composer,
     publish,
+    publisher,
   };
   actions.context = ctx;
   publish.context = ctx;
-  return { app, ctx, index, writer, settings, now: nowStore, adapters, log };
+  return { app, ctx, index, writer, settings, now: nowStore, adapters, log, publisher };
 }

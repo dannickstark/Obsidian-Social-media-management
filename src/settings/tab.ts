@@ -1,10 +1,12 @@
 import { normalizePath, PluginSettingTab, Setting, type App } from "obsidian";
 import type OsmmPlugin from "../main";
 import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
+import { confirmDialog } from "../ui/dialogs";
 import { mountSvelte, type Mounted } from "../ui/mount";
 import { osmmContext } from "../ui/context";
 import ChannelsSection from "./ChannelsSection.svelte";
-import { saveDeviceSettings } from "./device";
+import { cleanDeviceName } from "./device";
+import { publisherDescription } from "./publisher";
 import { parseMinutesList } from "./settings";
 
 export class OsmmSettingTab extends PluginSettingTab {
@@ -67,6 +69,36 @@ export class OsmmSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl).setName("This device").setHeading();
+
+    new Setting(containerEl)
+      .setName("Device name")
+      .setDesc("Other devices show this name when this device publishes. Stored on this device only.")
+      .addText((t) =>
+        t.setValue(this.osmm.device.deviceName).onChange(async (value) => {
+          const name = cleanDeviceName(value);
+          if (!name) return;
+          this.osmm.setDevice({ deviceName: name });
+          await this.osmm.publisher.renamed();
+        }),
+      );
+
+    const publisher = this.osmm.publisher.state();
+    new Setting(containerEl)
+      .setName("Publisher device")
+      .setDesc(publisherDescription(publisher))
+      .addButton((b) =>
+        b.setButtonText(publisher.kind === "this" ? "Stop publishing here" : "Make this device the publisher").onClick(async () => {
+          if (publisher.kind === "this") {
+            const ok = await confirmDialog(this.app, "Stop publishing from this device? Until another device is chosen, scheduled posts are neither posted nor marked overdue.", "Stop publishing");
+            if (ok) await this.osmm.publisher.release();
+          } else {
+            await this.osmm.publisher.takeOver((message) => confirmDialog(this.app, message, "Make this device the publisher"));
+          }
+          this.display();
+        }),
+      );
+
     new Setting(containerEl).setName("Publishing").setHeading();
 
     new Setting(containerEl)
@@ -93,8 +125,7 @@ export class OsmmSettingTab extends PluginSettingTab {
       .setDesc("Reminders before assisted posts, when a post is due, and when publishing fails. Stored on this device only.")
       .addToggle((t) =>
         t.setValue(this.osmm.device.notifications).onChange((value) => {
-          this.osmm.device = { ...this.osmm.device, notifications: value };
-          saveDeviceSettings(this.app, this.osmm.device);
+          this.osmm.setDevice({ notifications: value });
         }),
       );
 

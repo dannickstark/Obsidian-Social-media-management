@@ -12,6 +12,7 @@
   import Legend from "./Legend.svelte";
   import ListView from "./ListView.svelte";
   import MonthView from "./MonthView.svelte";
+  import PublisherBanner from "./PublisherBanner.svelte";
   import ViewSwitcher from "./ViewSwitcher.svelte";
   import WeekView from "./WeekView.svelte";
 
@@ -70,6 +71,7 @@
     <div class="osmm-spacer"></div>
     <Legend />
   </div>
+  <PublisherBanner />
   <div class="osmm-body">
     {#if mode === "month"}
       <MonthView {year} {month} rows={visible} />

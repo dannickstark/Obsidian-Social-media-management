@@ -20,7 +20,7 @@ export function publisherDescription(state: PublisherState): string {
 }
 
 export function takeoverMessage(name: string): string {
-  return `Publishing happens on ${name}. Make this device the publisher instead? ${name} stops publishing as soon as this change reaches it through sync. Until then, avoid having both open at a post's time, or it could be posted twice.`;
+  return `Publishing happens on ${name}. Make this device the publisher instead? ${name} stops publishing as soon as this change reaches it through sync. Until then, avoid having both open at a post's time, or it could be posted twice. Wait until ${name} shows this change before editing publisher settings there — until it syncs, it can still write the old publisher back.`;
 }
 
 export interface PublisherDeps {

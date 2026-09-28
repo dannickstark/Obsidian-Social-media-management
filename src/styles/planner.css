@@ -68,3 +68,6 @@
 .osmm-form { display: flex; flex-direction: column; gap: 10px; }
 .osmm-form label { display: flex; flex-direction: column; gap: 4px; }
 .osmm-issues { color: var(--text-error); margin: 0; padding-left: 18px; }
+.osmm-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--background-secondary); color: var(--osmm-muted); font-size: var(--font-ui-small); }
+.osmm-planner > .osmm-banner { margin: 0 16px 8px; }
+.osmm-banner.is-warning { background: rgba(var(--color-orange-rgb), 0.1); color: var(--text-normal); }
