@@ -17,13 +17,13 @@ function clickUndo(): void {
 }
 
 const P1 = "Social/Posts/P1.md";
-const p1 = (me: Record<string, unknown>) => ({
+const p1 = (me: Record<string, unknown>, status = "scheduled") => ({
   path: P1,
   frontmatter: {
     type: "social-post",
     platform: "linkedin",
     channels: ["li/me", "li/acme"],
-    status: "scheduled",
+    status,
     scheduled_at: formatDateTime(T),
     deliveries: {
       "li/me": me,
@@ -46,7 +46,9 @@ describe("UI writes against fresh frontmatter (G1)", () => {
   });
 
   it("P1: a patched delivery key keeps its unknown keys", async () => {
-    const c = await makeCtx({ notes: [p1({ status: "scheduled", at: formatDateTime(T + 3600_000), note: "keep me" })] });
+    const c = await makeCtx({
+      notes: [p1({ status: "scheduled", at: formatDateTime(T + 3600_000), note: "keep me" })],
+    });
     const row = c.ctx.actions.rowByKey(`${P1}#li/me`)!;
     expect(await c.ctx.actions.reschedule(row, { at: T + DAY })).toBe(true);
     const fm = await fmOf(c, P1);
@@ -76,7 +78,9 @@ describe("UI writes against fresh frontmatter (G1)", () => {
     });
     const acme = c.ctx.actions.rowByKey(`${path}#li/acme`)!;
     const file = acme.variant.file;
-    const publish = c.writer.updateDeliveries(file, { "li/me": { status: "published", url: "https://li/1" } });
+    const publish = c.writer.updateDeliveries(file, {
+      "li/me": { status: "published", url: "https://li/1" },
+    });
     expect(await c.ctx.actions.reschedule(acme, { at: T + DAY + 15 * 60_000 })).toBe(true);
     await publish;
     const fm = await fmOf(c, path);
@@ -94,12 +98,16 @@ describe("UI writes against fresh frontmatter (G1)", () => {
     const undo = Notice.last!;
     await c.writer.patchVariant(row.variant.file, { scheduledAt: T + 2 * DAY });
     undo.noticeEl.querySelector("button")!.click();
-    await vi.waitFor(() => expect(Notice.messages.at(-1)).toBe("Some changes were kept because the note changed since."));
+    await vi.waitFor(() =>
+      expect(Notice.messages.at(-1)).toBe("Some changes were kept because the note changed since."),
+    );
     expect((await fmOf(c, P1)).scheduled_at).toBe(formatDateTime(T + 2 * DAY));
   });
 
   it("undo restores untouched values without a conflict notice", async () => {
-    const c = await makeCtx({ notes: [p1({ status: "scheduled", at: formatDateTime(T), note: "keep me" })] });
+    const c = await makeCtx({
+      notes: [p1({ status: "scheduled", at: formatDateTime(T), note: "keep me" })],
+    });
     const row = c.ctx.actions.rowByKey(`${P1}#li/me`)!;
     await c.ctx.actions.reschedule(row, { at: T + DAY });
     const count = Notice.messages.length;
@@ -126,11 +134,16 @@ describe("UI writes against fresh frontmatter (G1)", () => {
     expect(fm.scheduled_at).toBe(formatDateTime(T + DAY));
     expect(fm.deliveries).toMatchObject({ "li/me": { status: "scheduled", note: "keep me" } });
     await c.ctx.actions.unschedule(v, "draft");
-    expect((await fmOf(c, P1)).deliveries).toMatchObject({ "li/me": { status: "draft", note: "keep me" } });
+    expect((await fmOf(c, P1)).deliveries).toMatchObject({
+      "li/me": { status: "draft", note: "keep me" },
+    });
   });
 
   it("bulk shift and bulk status keep unknown keys and unparsable siblings", async () => {
-    const c = await makeCtx({ notes: [p1({ status: "ready", at: formatDateTime(T), note: "keep me" })] });
+    // Stored status "ready": the unparsable li/acme entry inherits it, so every row is editable (G3).
+    const c = await makeCtx({
+      notes: [p1({ status: "ready", at: formatDateTime(T), note: "keep me" }, "ready")],
+    });
     const rows = c.ctx.actions.rows().filter((r) => r.variant.path === P1);
     await c.ctx.actions.bulkShift(rows, DAY);
     expect((await fmOf(c, P1)).deliveries).toEqual({
@@ -148,7 +161,9 @@ describe("UI writes against fresh frontmatter (G1)", () => {
     const c = await makeCtx({ notes: [p1({ status: "scheduled", note: "keep me" })] });
     const v = c.index.getVariant(P1)!;
     await c.writer.updateDeliveries(v.file, { "li/me": { status: "published" } });
-    await c.ctx.actions.applyTemplate([{ variant: v, from: v.scheduledAt, to: TEST_NOW + DAY, label: "T0" }]);
+    await c.ctx.actions.applyTemplate([
+      { variant: v, from: v.scheduledAt, to: TEST_NOW + DAY, label: "T0" },
+    ]);
     expect((await fmOf(c, P1)).scheduled_at).toBe(formatDateTime(T));
   });
 });

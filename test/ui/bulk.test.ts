@@ -65,4 +65,24 @@ describe("bulk actions", () => {
     expect(await ctx.actions.bulkTrash(rows)).toBe(2);
     expect(app.vault.getFileByPath("Social/Posts/WhatsApp reminder.md")).toBeNull();
   });
+
+  const publishedNoRecords = {
+    path: "Social/Posts/Done.md",
+    frontmatter: { type: "social-post", platform: "linkedin", channels: ["li/me"], status: "published", scheduled_at: "2026-10-05T09:00:00+02:00" },
+  };
+
+  it("bulk shift skips a post stored as published without delivery records (G3)", async () => {
+    const { ctx, index } = await makeCtx({ notes: [publishedNoRecords] });
+    const rows = ctx.actions.rows().filter((r) => r.variant.path === publishedNoRecords.path);
+    const before = index.getVariant(publishedNoRecords.path)!.scheduledAt;
+    expect(await ctx.actions.bulkShift(rows, 86_400_000)).toEqual({ moved: 0, skipped: 1 });
+    expect(index.getVariant(publishedNoRecords.path)!.scheduledAt).toBe(before);
+  });
+
+  it("bulk status skips a post stored as published without delivery records (G3)", async () => {
+    const { ctx, index } = await makeCtx({ notes: [publishedNoRecords] });
+    const rows = ctx.actions.rows().filter((r) => r.variant.path === publishedNoRecords.path);
+    expect(await ctx.actions.bulkSetStatus(rows, "draft")).toEqual({ changed: 0, skipped: 1 });
+    expect(index.getVariant(publishedNoRecords.path)!.status).toBe("published");
+  });
 });

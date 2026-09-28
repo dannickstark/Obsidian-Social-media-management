@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sortRows, uniqueVariants } from "../../src/planner/list";
+import { frozenForMove, sortRows, statusEditable, uniqueVariants } from "../../src/planner/list";
 import type { PostRow } from "../../src/index/queries";
 
 const row = (key: string, at: number | undefined, platform: string, title: string): PostRow =>
@@ -21,5 +21,30 @@ describe("list", () => {
   it("deduplicates variants", () => {
     const v = { path: "p.md" };
     expect(uniqueVariants([{ variant: v }, { variant: v }] as unknown as PostRow[])).toHaveLength(1);
+  });
+});
+
+describe("frozenForMove / statusEditable (G3)", () => {
+  const v = (partial: Record<string, unknown>) =>
+    ({ path: "p.md", platform: "linkedin", channels: ["li/me", "li/acme"], mode: "auto", status: "scheduled", media: [], deliveries: {}, scheduledAt: 0, ...partial }) as never;
+
+  it("counts a stored published status without delivery records as frozen", () => {
+    expect(frozenForMove(v({ status: "published" }), 0)).toBe(true);
+    expect(statusEditable(v({ status: "published" }), 0)).toBe(false);
+  });
+
+  it("is frozen when any row is published, publishing, handed over or skipped", () => {
+    for (const status of ["published", "publishing", "handed_over", "skipped"]) {
+      expect(frozenForMove(v({ deliveries: { "li/me": { status } } }), 0)).toBe(true);
+    }
+    expect(frozenForMove(v({ deliveries: { "li/me": { status: "overdue" } } }), 0)).toBe(false);
+    expect(frozenForMove(v({}), 0)).toBe(false);
+  });
+
+  it("allows a status change only when every row is idea, draft or ready", () => {
+    expect(statusEditable(v({ status: "idea" }), 0)).toBe(true);
+    expect(statusEditable(v({ status: "ready", deliveries: { "li/me": { status: "draft" } } }), 0)).toBe(true);
+    expect(statusEditable(v({ status: "draft", deliveries: { "li/me": { status: "scheduled" } } }), 0)).toBe(false);
+    expect(statusEditable(v({ status: "scheduled" }), 0)).toBe(false);
   });
 });

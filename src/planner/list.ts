@@ -1,4 +1,4 @@
-import type { PostRow } from "../index/queries";
+import { expandRows, type PostRow, type RowStatus } from "../index/queries";
 import type { IndexedVariant } from "../index/socialIndex";
 import { PLATFORM_META } from "../model/platforms";
 
@@ -42,4 +42,20 @@ export function uniqueVariants(rows: readonly PostRow[]): IndexedVariant[] {
   const seen = new Map<string, IndexedVariant>();
   for (const r of rows) if (!seen.has(r.variant.path)) seen.set(r.variant.path, r.variant);
   return [...seen.values()];
+}
+
+const FROZEN_FOR_MOVE = new Set<RowStatus>(["published", "publishing", "handed_over", "skipped"]);
+const EDITABLE = new Set<RowStatus>(["idea", "draft", "ready"]);
+
+/**
+ * One rule for bulk moves, judged on row statuses (so a stored `status: published` without delivery
+ * records counts): frozen when any row is published, publishing, handed over or skipped.
+ */
+export function frozenForMove(v: IndexedVariant, defaultStagger: number): boolean {
+  return expandRows([v], defaultStagger).some((r) => FROZEN_FOR_MOVE.has(r.status));
+}
+
+/** A bulk status change applies only when every row is still idea, draft or ready. */
+export function statusEditable(v: IndexedVariant, defaultStagger: number): boolean {
+  return expandRows([v], defaultStagger).every((r) => EDITABLE.has(r.status));
 }

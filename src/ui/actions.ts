@@ -17,7 +17,7 @@ import {
   type BoardColumn,
 } from "../planner/board";
 import { deliveryChanges, planUndo, recordWrite, type WriteRecord } from "../planner/changes";
-import { uniqueVariants } from "../planner/list";
+import { frozenForMove, statusEditable, uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
 import { planTemplate, templateLocked, type TemplateProposal } from "../planner/templates";
@@ -276,13 +276,12 @@ export class PlannerActions {
   }
 
   async bulkShift(rows: PostRow[], deltaMs: number): Promise<{ moved: number; skipped: number }> {
+    const stagger = this.deps.settings().defaultStaggerMinutes;
     let skipped = 0;
     const records: WriteRecord[] = [];
     for (const v of uniqueVariants(rows)) {
       const result = await this.write(v.file, (fresh) => {
-        const movable =
-          fresh.scheduledAt !== undefined && !Object.values(fresh.deliveries).some((d) => ["published", "publishing", "handed_over"].includes(d.status));
-        if (!movable) return { refuse: "frozen" };
+        if (fresh.scheduledAt === undefined || frozenForMove(freshIndexed(v, fresh), stagger)) return { refuse: "frozen" };
         const deliveries: Variant["deliveries"] = {};
         for (const [id, d] of Object.entries(fresh.deliveries)) if (d.at !== undefined) deliveries[id] = { ...d, at: d.at + deltaMs };
         return { fields: { scheduledAt: fresh.scheduledAt! + deltaMs }, deliveries };
@@ -291,20 +290,21 @@ export class PlannerActions {
       else skipped++;
     }
     const moved = records.length;
-    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`;
+    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over, skipped or unscheduled)` : ""}.`;
     if (records.length) this.undoNotice(summary, () => this.undo(records));
     else new Notice(summary);
     return { moved, skipped };
   }
 
   async bulkSetStatus(rows: PostRow[], status: "idea" | "draft" | "ready"): Promise<{ changed: number; skipped: number }> {
+    const stagger = this.deps.settings().defaultStaggerMinutes;
     let skipped = 0;
     const target = status === "ready" ? "ready" : "draft";
     const records: WriteRecord[] = [];
     for (const v of uniqueVariants(rows)) {
       const result = await this.write(v.file, (fresh) => {
+        if (!statusEditable(freshIndexed(v, fresh), stagger)) return { refuse: "frozen" };
         const ds = Object.entries(fresh.deliveries);
-        if (ds.some(([, d]) => d.status !== "draft" && d.status !== "ready")) return { refuse: "frozen" };
         const deliveries: Variant["deliveries"] = {};
         for (const [id, d] of ds) if (d.status !== target) deliveries[id] = { ...d, status: target };
         return { fields: { status }, deliveries };
