@@ -70,10 +70,14 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
         if (needs.awaitingYou && !a.move_awaiting) return fail(AWAITING, undefined, { needs_confirmation: "move_awaiting" });
         const reminders = a.reminders ?? reminderDefaults(v, deps.composer.channelsOf(v), deps.settings());
         let tooSoon = false;
+        let awaiting = false;
         const result = await deps.planner.write(v.file, (fresh) => {
           const again = scheduleNeeds(fresh, a.at, now);
           if (again.handedOver) return { refuse: HANDED_OVER };
-          if (again.awaitingYou && !a.move_awaiting) return { refuse: AWAITING };
+          if (again.awaitingYou && !a.move_awaiting) {
+            awaiting = true;
+            return { refuse: AWAITING };
+          }
           const plan = planComposerSchedule(fresh, { at: a.at, reminders }, stagger());
           if ("refuse" in plan) return plan;
           const first = earliestSend(fresh, a.at, plan.deliveries, stagger());
@@ -83,7 +87,10 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
           }
           return { fields: plan.fields, deliveries: deliveryChanges(fresh, plan.deliveries) };
         });
-        if (!result.ok) return fail(result.reason, tooSoon ? atIssue("too-soon", TOO_SOON) : undefined);
+        if (!result.ok) {
+          if (awaiting) return fail(result.reason, undefined, { needs_confirmation: "move_awaiting" });
+          return fail(result.reason, tooSoon ? atIssue("too-soon", TOO_SOON) : undefined);
+        }
         const changed = result.record.fields.length + result.record.deliveries.length > 0;
         // Wait for the reindex so the next read tool sees the write; nothing to wait for when nothing changed.
         if (changed) await untilIndexed(deps.index, () => deps.index.getVariant(v.path) !== v);

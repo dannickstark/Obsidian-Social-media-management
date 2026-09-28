@@ -76,6 +76,38 @@ describe("schedule (#75)", () => {
     expect(await fm(c, X)).toEqual(before);
   });
 
+  it("asks for confirmation when a channel starts waiting for the user during the write (M2b P2)", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    const file = c.app.vault.getFileByPath(X)!;
+    const write = c.deps.planner.write.bind(c.deps.planner);
+    vi.spyOn(c.deps.planner, "write").mockImplementationOnce(async (f, plan) => {
+      await c.app.vault.process(file, (t) => t.replace(/("?x\/you"?:\s*\n\s*status:) scheduled/, "$1 awaiting_you"));
+      return write(f, plan);
+    });
+    const r = await c.call("schedule", { path: X, at: "2026-10-10T09:00:00+02:00" });
+    expect(r).toMatchObject({ ok: false, needs_confirmation: "move_awaiting", error: expect.stringContaining("waiting for the user") });
+    expect(((await fm(c, X)).deliveries as Record<string, unknown>)["x/you"]).toEqual({ status: "awaiting_you" });
+  });
+
+  it("reads a time without an offset as local time", async () => {
+    const c = await mcpCtx(); // now: Thu 8 Oct 2026, 10:00 Berlin
+    const r = await c.call("schedule", { path: "Social/Event X/Event X – X.md", at: "2026-10-08T10:15:00" });
+    expect(r).toMatchObject({ ok: true, scheduled_at: "2026-10-08T10:15:00+02:00" });
+    expect(r.channels[0].at).toBe("2026-10-08T10:15:00+02:00");
+  });
+
+  it("moves a time in the spring-forward gap to the first real time after it", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    // 28 Mar 2027, Berlin: 02:00–03:00 does not exist.
+    const local = await c.call("schedule", { path: X, at: "2027-03-28T02:30:00" });
+    expect(local).toMatchObject({ ok: true, scheduled_at: "2027-03-28T03:30:00+02:00" });
+    expect(c.index.getVariant(X)!.scheduledAt).toBe(Date.parse("2027-03-28T01:30:00Z"));
+    const zoned = await c.call("schedule", { path: X, at: "2027-03-28T02:30:00+01:00" });
+    expect(zoned).toMatchObject({ ok: true, scheduled_at: "2027-03-28T03:30:00+02:00" });
+  });
+
   it("staggers the channels after the first one, all at least 10 minutes ahead (Ruling P5)", async () => {
     const path = "Social/Posts/Pages.md";
     const c = await mcpCtx({
