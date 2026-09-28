@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { Notice } from "../fakes/obsidian";
 import MediaPanel from "../../src/composer/MediaPanel.svelte";
@@ -59,6 +59,33 @@ describe("media attach", () => {
     await fireEvent.keyDown(screen.getByRole("button", { name: "Set the focal point of crowd.png" }), { key: "ArrowRight" });
     await indexed(c.index, () => c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus?.[0] === 0.55);
     expect(c.index.getVariant(IG)!.mediaMeta).toEqual({ "crowd.png": { alt: "Makers at laptops", focus: [0.55, 0.5] } });
+  });
+
+  it("does not move the focal point on a keyboard-activated click, but does on a real mouse click", async () => {
+    const c = await makeCtx({ seed: true });
+    await attach(c, image("crowd.png"));
+    await indexed(c.index, () => c.index.getVariant(IG)!.media.includes("crowd.png"));
+    await renderPanel(c);
+    const btn = screen.getByRole("button", { name: "Set the focal point of crowd.png" });
+    vi.spyOn(btn, "getBoundingClientRect").mockReturnValue({
+      width: 100,
+      height: 100,
+      left: 0,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    } as DOMRect);
+
+    await fireEvent.click(btn, { detail: 0, clientX: 0, clientY: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus).toBeUndefined();
+
+    await fireEvent.click(btn, { detail: 1, clientX: 75, clientY: 25 });
+    await indexed(c.index, () => c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus !== undefined);
+    expect(c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus).toEqual([0.75, 0.25]);
   });
 
   it("reorders and removes media, with undo", async () => {

@@ -24,6 +24,7 @@
   }
 
   function pickFocus(event: MouseEvent, m: MediaInfo): void {
+    if (event.detail === 0) return; // keyboard activation (Enter/Space); arrow keys nudge instead
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
     if (box.width === 0 || box.height === 0) return;
     void composer.setFocus(variant, m.target, focusFromPoint(event.clientX, event.clientY, box));
