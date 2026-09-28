@@ -3,7 +3,7 @@ import { columnOf, defaultScheduleTime, planBoardMove, scheduleDeliveries, unsch
 import type { IndexedVariant } from "../../src/index/socialIndex";
 
 function v(partial: Partial<IndexedVariant>): IndexedVariant {
-  return { path: "p.md", platform: "linkedin", channels: ["li/me"], mode: "auto", status: "draft", media: [], deliveries: {}, issues: [], excerpt: "", displayTitle: "", file: {} as never, ...partial };
+  return { path: "p.md", platform: "linkedin", channels: ["li/me"], mode: "auto", status: "draft", media: [], deliveries: {}, issues: [], excerpt: "", displayTitle: "", bodyChars: 0, file: {} as never, ...partial };
 }
 
 describe("board", () => {

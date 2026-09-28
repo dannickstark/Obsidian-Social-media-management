@@ -6,7 +6,7 @@ import type { IndexedVariant } from "../../src/index/socialIndex";
 const T = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
 
 function variant(partial: Partial<IndexedVariant>): IndexedVariant {
-  return { path: "p.md", platform: "linkedin", channels: ["li/me", "li/acme"], mode: "auto", status: "scheduled", media: [], deliveries: {}, issues: [], excerpt: "", displayTitle: "", file: {} as never, scheduledAt: T(8, 17, 30), staggerMinutes: 15, ...partial };
+  return { path: "p.md", platform: "linkedin", channels: ["li/me", "li/acme"], mode: "auto", status: "scheduled", media: [], deliveries: {}, issues: [], excerpt: "", displayTitle: "", bodyChars: 0, file: {} as never, scheduledAt: T(8, 17, 30), staggerMinutes: 15, ...partial };
 }
 const rowOf = (v: IndexedVariant, channelId: string, at: number, status: PostRow["status"] = "scheduled"): PostRow => ({ key: `${v.path}#${channelId}`, variant: v, channelId, status, at });
 

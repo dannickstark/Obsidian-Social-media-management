@@ -1,5 +1,5 @@
 import { TFile, type App, type EventRef, type TAbstractFile } from "obsidian";
-import { bodyOf, excerpt } from "../model/body";
+import { bodyOf, countChars, excerpt, plainText } from "../model/body";
 import { isRecord, parseCampaign, parseVariant, socialKind, type SocialKind } from "../model/frontmatter";
 import type { Campaign, Issue, Variant } from "../model/types";
 
@@ -15,6 +15,7 @@ export interface IndexedVariant extends Variant {
   campaignPath?: string;
   excerpt: string;
   displayTitle: string;
+  bodyChars: number;
 }
 
 export interface InvalidNote {
@@ -170,7 +171,8 @@ export class SocialIndex {
     }
     const r = parseVariant(fm, file.path);
     if (!r.value) return { kind: "invalid", value: { file, kind, issues: r.issues } };
-    const text = excerpt(bodyOf(await this.app.vault.cachedRead(file)));
+    const body = bodyOf(await this.app.vault.cachedRead(file));
+    const text = excerpt(body);
     return {
       kind: "post",
       value: {
@@ -180,6 +182,7 @@ export class SocialIndex {
         excerpt: text,
         displayTitle: r.value.title ?? (text || file.basename),
         campaignPath: this.resolveCampaign(r.value),
+        bodyChars: countChars(plainText(body).replace(/^#+\s*/gm, "").trim()),
       },
     };
   }

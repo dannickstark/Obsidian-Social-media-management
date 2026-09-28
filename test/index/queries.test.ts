@@ -26,6 +26,7 @@ function v(partial: Partial<IndexedVariant> & Pick<IndexedVariant, "path" | "pla
     issues: [],
     excerpt: "",
     displayTitle: partial.path,
+    bodyChars: 0,
     file: {} as IndexedVariant["file"],
     ...partial,
   };

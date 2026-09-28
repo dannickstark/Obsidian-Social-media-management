@@ -14,7 +14,7 @@ async function fmOf(app: App, file: TFile): Promise<Record<string, unknown>> {
 
 async function rowStatuses(app: App, file: TFile): Promise<Record<string, string>> {
   const parsed = parseVariant(await fmOf(app, file), file.path).value!;
-  const indexed: IndexedVariant = { ...parsed, file, issues: [], excerpt: "", displayTitle: file.basename };
+  const indexed: IndexedVariant = { ...parsed, file, issues: [], excerpt: "", displayTitle: file.basename, bodyChars: 0 };
   return Object.fromEntries(expandRows([indexed], 15).map((r) => [r.channelId ?? "", r.status]));
 }
 

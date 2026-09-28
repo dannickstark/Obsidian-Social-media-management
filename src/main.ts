@@ -13,8 +13,10 @@ import { migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
 import { PlannerActions, VIEW_PLANNER, VIEW_SIDEBAR } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
+import { SvelteRenderChild } from "./ui/SvelteView";
 import { PlannerView, activateView } from "./views/PlannerView";
 import { SidebarView } from "./views/SidebarView";
+import CampaignTable from "./views/CampaignTable.svelte";
 
 export default class OsmmPlugin extends Plugin {
   override settings!: OsmmSettings;
@@ -68,6 +70,10 @@ export default class OsmmPlugin extends Plugin {
 
     this.registerView(VIEW_SIDEBAR, (leaf) => new SidebarView(leaf, this.uiContext()));
     this.addCommand({ id: "open-sidebar", name: "Open social queue (sidebar)", callback: () => void activateView(this.app, VIEW_SIDEBAR, "right") });
+
+    this.registerMarkdownCodeBlockProcessor("social-variants", (_source, el, ctx) => {
+      ctx.addChild(new SvelteRenderChild(el, CampaignTable, { campaignPath: ctx.sourcePath }, this.uiContext()));
+    });
   }
 
   /** Called by Obsidian when data.json was changed on disk, e.g. synced from another device. */

@@ -4,7 +4,7 @@ import { expandRows, type PostRow } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
-import { PLATFORM_META } from "../model/platforms";
+import { PLATFORM_META, type Platform } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
 import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliveries, type BoardColumn } from "../planner/board";
 import { uniqueVariants } from "../planner/list";
@@ -260,6 +260,20 @@ export class PlannerActions {
       new Notice(notice);
     }
     return { changed: changedCount, skipped };
+  }
+
+  async createVariantForCampaign(campaignPath: string, platform: Platform): Promise<void> {
+    const file = this.deps.app.vault.getFileByPath(campaignPath);
+    if (!file) {
+      new Notice("Campaign note not found.");
+      return;
+    }
+    const created = await this.deps.factory.createVariant({
+      campaign: file,
+      platform,
+      channels: this.deps.channels.byPlatform(platform).map((c) => c.id),
+    });
+    this.openNote(created.path);
   }
 
   async bulkTrash(rows: PostRow[]): Promise<number> {

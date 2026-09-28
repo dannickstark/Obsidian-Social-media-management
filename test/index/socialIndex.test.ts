@@ -36,6 +36,7 @@ describe("SocialIndex", () => {
     });
     expect(index.invalidNotes().map((n) => n.file.path)).toEqual(["Social/Broken.md"]);
     expect(index.variantsOf("Social/Event X/Event X.md")).toHaveLength(1);
+    expect(variant?.bodyChars).toBe("I almost didn't host Event X.\n\nMore text".length);
   });
 
   it("emits changes when a note is modified", async () => {

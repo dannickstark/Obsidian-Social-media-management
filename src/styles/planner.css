@@ -55,6 +55,8 @@
 .osmm-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .osmm-progress { font-family: var(--font-monospace); color: var(--osmm-muted); }
 
+.osmm .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.osmm-variants tr.is-missing { opacity: 0.75; }
 .osmm-variants { border: 1px solid var(--osmm-border); border-radius: 12px; overflow: hidden; }
 .osmm-variants-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--osmm-border); }
 .osmm-lenbar { height: 3px; background: var(--osmm-border); border-radius: 2px; }
