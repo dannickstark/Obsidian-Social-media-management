@@ -163,7 +163,6 @@ export class PublishOrchestrator {
   private async checkNeeded(p: Prepared, job: DeliveryJob, message: string): Promise<Attempt> {
     await this.settle(p.file, p.channelId, (d) => transition(d, "check_needed", { error: message }));
     const remote = p.adapter.lookup ? await p.adapter.lookup(job).catch(() => null) : null;
-    void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
     if (remote?.published) {
       const at = this.deps.now();
       await this.settle(p.file, p.channelId, (d) => {
@@ -174,6 +173,7 @@ export class PublishOrchestrator {
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: remote.url });
       return { done: true, result: { status: "published", url: remote.url ?? "" } };
     }
+    void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
     this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: "unknown", error: message });
     return { done: true, result: { status: "check_needed" } };
   }

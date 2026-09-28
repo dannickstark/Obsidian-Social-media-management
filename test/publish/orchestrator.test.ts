@@ -3,6 +3,7 @@ import { getFrontMatterInfo, parseYaml } from "obsidian";
 import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
 import { AdapterRegistry } from "../../src/platforms/registry";
+import { TransientError } from "../../src/platforms/errors";
 import type { PlatformAdapter } from "../../src/platforms/types";
 import { PublishOrchestrator, type FailureInfo } from "../../src/publish/orchestrator";
 import { Secrets } from "../../src/secrets/secrets";
@@ -143,6 +144,35 @@ describe("PublishOrchestrator", () => {
     expect(calls).toBe(1);
     await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "published", url: "https://t.me/eventx/9", remoteId: "9" });
+    // Exactly one log row for this outcome: lookup already resolved it, so no separate "check_needed" row.
+    expect(c.log.entries.map((e) => e.result)).toEqual(["published"]);
+  });
+
+  it("retries a pre-send TransientError with no HTTP status, then publishes", async () => {
+    let calls = 0;
+    const { c, orchestrator, delays } = await setup(async () => {
+      calls++;
+      if (calls < 2) throw new TransientError("Could not build the request");
+      return { remoteId: "3", url: "https://t.me/eventx/3" };
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "published", url: "https://t.me/eventx/3" });
+    expect(calls).toBe(2);
+    expect(delays).toEqual([1 * MIN]);
+    expect(c.log.entries.map((e) => e.result)).toEqual(["retry", "published"]);
+    await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]?.attempts).toBe(2);
+  });
+
+  it("runs only one of two concurrent run() calls for the same delivery", async () => {
+    let calls = 0;
+    const { orchestrator } = await setup(async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 5));
+      return { remoteId: "1", url: "https://t.me/eventx/1" };
+    });
+    const results = await Promise.all([orchestrator.run(P, "tg/event-x"), orchestrator.run(P, "tg/event-x")]);
+    expect(calls).toBe(1);
+    expect(results.map((r) => r.status).sort()).toEqual(["published", "refused"]);
   });
 
   it("leaves check_needed alone when there is no lookup on the adapter", async () => {
