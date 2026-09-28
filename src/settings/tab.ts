@@ -1,6 +1,10 @@
-import { normalizePath, PluginSettingTab, Setting, type App } from "obsidian";
+import { normalizePath, Notice, PluginSettingTab, Setting, type App } from "obsidian";
 import type OsmmPlugin from "../main";
 import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
+import { ClipboardService } from "../publish/clipboard";
+import { testMessage } from "../reminders/ntfy/client";
+import { DEFAULT_NTFY_SERVER, normalizeServer, randomTopic, TOPIC_RE } from "../reminders/ntfy/config";
+import { SecretIds } from "../secrets/secrets";
 import { confirmDialog } from "../ui/dialogs";
 import { mountSvelte, type Mounted } from "../ui/mount";
 import { osmmContext } from "../ui/context";
@@ -8,6 +12,13 @@ import ChannelsSection from "./ChannelsSection.svelte";
 import { cleanDeviceName } from "./device";
 import { publisherDescription } from "./publisher";
 import { parseMinutesList } from "./settings";
+
+const ABOUT_PHONE =
+  "Pushes your reminders to the free ntfy app on your phone, so they arrive even when this computer is asleep. The publisher device books each reminder up to 72 hours ahead. Privacy: on a public server such as ntfy.sh, anyone who knows the topic can read these pushes: the post title, the post text (inside the pre-filled link) and links. Keep the long random topic, or use your own ntfy server with an access token.";
+const SETUP_PHONE =
+  "1. Install ntfy from the App Store or Google Play. 2. In the app, tap + and enter the topic above; for your own server, turn on “Use another server” and enter its address. 3. Tap “Send test” below: it should arrive within a few seconds.";
+const TOKEN_DESC = "Only for protected topics (your own server, or a reserved ntfy.sh topic). Stored in this device's secret storage.";
+const HTTP_TOKEN_WARNING = "Warning: this server uses http, so the token travels unencrypted. Use an https address.";
 
 export class OsmmSettingTab extends PluginSettingTab {
   private channelsUi: Mounted | null = null;
@@ -129,6 +140,8 @@ export class OsmmSettingTab extends PluginSettingTab {
         }),
       );
 
+    this.phoneSection(containerEl);
+
     new Setting(containerEl).setName("Channels").setHeading();
     const host = document.createElement("div");
     host.className = "osmm";
@@ -151,6 +164,116 @@ export class OsmmSettingTab extends PluginSettingTab {
           }),
         );
     }
+  }
+
+  private phoneSection(containerEl: HTMLElement): void {
+    const osmm = this.osmm;
+    const ntfy = osmm.device.ntfy;
+    const setNtfy = (patch: Partial<typeof ntfy>) => osmm.setDevice({ ntfy: { ...osmm.device.ntfy, ...patch } });
+
+    new Setting(containerEl).setName("Phone reminders (ntfy)").setHeading();
+    new Setting(containerEl).setName("About phone reminders").setDesc(ABOUT_PHONE);
+
+    const role = osmm.publisher.state();
+    new Setting(containerEl)
+      .setName("Phone reminders on this device")
+      .setDesc(
+        role.kind === "this"
+          ? "This device books a push for every reminder of the next 72 hours."
+          : role.kind === "other"
+            ? `Only the publisher device books phone reminders. Publishing happens on ${role.name}.`
+            : "Only the publisher device books phone reminders. Choose one under This device.",
+      )
+      .addToggle((t) =>
+        t.setValue(ntfy.enabled).onChange((value) => {
+          if (value && !osmm.secrets.get(SecretIds.ntfyTopic)) osmm.secrets.set(SecretIds.ntfyTopic, randomTopic());
+          setNtfy({ enabled: value });
+          // Off first, so no run books anything more; the cancels go on in the background (Task 9 ruling).
+          if (!value) void osmm.phone.withdraw();
+          this.display();
+        }),
+      );
+    if (!ntfy.enabled) return;
+
+    // Task 5 ruling: a token sent to an http server travels unencrypted.
+    const tokenDesc = () => (osmm.device.ntfy.server.startsWith("http:") && osmm.secrets.get(SecretIds.ntfyToken) ? `${TOKEN_DESC} ${HTTP_TOKEN_WARNING}` : TOKEN_DESC);
+    let tokenSetting: Setting | null = null;
+
+    new Setting(containerEl)
+      .setName("Server")
+      .setDesc("https://ntfy.sh, or the address of your own ntfy server.")
+      .addText((t) =>
+        t
+          .setPlaceholder(DEFAULT_NTFY_SERVER)
+          .setValue(ntfy.server)
+          .onChange((value) => {
+            const server = normalizeServer(value.trim() || DEFAULT_NTFY_SERVER);
+            if (!server) return;
+            osmm.phone.forget();
+            setNtfy({ server });
+            tokenSetting?.setDesc(tokenDesc());
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Topic")
+      .setDesc("Subscribe to this topic in the ntfy app. Letters, digits, - and _ only. Stored in this device's secret storage.")
+      .addText((t) =>
+        t.setValue(osmm.secrets.get(SecretIds.ntfyTopic) ?? "").onChange((value) => {
+          const topic = value.trim();
+          if (!TOPIC_RE.test(topic)) return;
+          osmm.phone.forget();
+          osmm.secrets.set(SecretIds.ntfyTopic, topic);
+        }),
+      )
+      .addButton((b) =>
+        b.setButtonText("Copy").onClick(async () => {
+          const topic = osmm.secrets.get(SecretIds.ntfyTopic);
+          if (topic && (await new ClipboardService(this.app).copyText(topic))) new Notice("Topic copied.");
+        }),
+      )
+      .addButton((b) =>
+        b.setButtonText("New topic").onClick(async () => {
+          const ok = await confirmDialog(this.app, "Make a new random topic? Your phone must subscribe to it again. Reminders already booked on the old topic are cancelled where the server allows it.", "New topic");
+          if (!ok) return;
+          // The cancels go to the old topic, so they run before it is replaced (bounded at 10 s, Task 9 ruling).
+          await osmm.phone.withdraw();
+          osmm.secrets.set(SecretIds.ntfyTopic, randomTopic());
+          this.display();
+        }),
+      );
+
+    tokenSetting = new Setting(containerEl)
+      .setName("Access token")
+      .setDesc(tokenDesc())
+      .addText((t) => {
+        t.inputEl.type = "password";
+        t.setPlaceholder("tk_…")
+          .setValue(osmm.secrets.get(SecretIds.ntfyToken) ?? "")
+          .onChange((value) => {
+            osmm.phone.forget();
+            osmm.secrets.set(SecretIds.ntfyToken, value.trim());
+            tokenSetting?.setDesc(tokenDesc());
+          });
+      });
+
+    new Setting(containerEl).setName("Set up your phone").setDesc(SETUP_PHONE);
+
+    new Setting(containerEl).setName("Send a test notification").addButton((b) =>
+      b.setButtonText("Send test").onClick(async () => {
+        try {
+          await osmm.ntfy.publish(testMessage());
+          new Notice("Test sent. It should reach your phone within a few seconds.");
+        } catch (e) {
+          new Notice(`Couldn't send the test: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }),
+    );
+
+    new Setting(containerEl)
+      .setName("Push publishing results")
+      .setDesc("Also push a confirmation when a post goes out automatically, and an alert when one fails (sent by the publisher device).")
+      .addToggle((t) => t.setValue(ntfy.results).onChange((value) => setNtfy({ results: value })));
   }
 
   override hide(): void {

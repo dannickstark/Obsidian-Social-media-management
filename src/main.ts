@@ -19,7 +19,12 @@ import { ClipboardService } from "./publish/clipboard";
 import { VaultLog } from "./publish/vaultLog";
 import { PreviewGridView } from "./previews/PreviewGridView";
 import { NotifiedLedger } from "./reminders/ledger";
-import { POST_ACTION } from "./reminders/ntfy/content";
+import { PhoneAlerts } from "./reminders/ntfy/alerts";
+import { NtfyBooker } from "./reminders/ntfy/booker";
+import { BookingLedger } from "./reminders/ntfy/bookings";
+import { NtfyClient } from "./reminders/ntfy/client";
+import { ntfyTarget } from "./reminders/ntfy/config";
+import { POST_ACTION, reminderMessage, type ReminderContentDeps } from "./reminders/ntfy/content";
 import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
@@ -56,6 +61,10 @@ export default class OsmmPlugin extends Plugin {
   index!: SocialIndex;
   scheduler!: Scheduler;
   reminders!: ReminderService;
+  /** The desktop notifier (M3 P6); `publish.notifier` is a fan-out to it and to the phone alerts. */
+  notifier!: Notifier;
+  ntfy!: NtfyClient;
+  phone!: NtfyBooker;
   readonly adapters = new AdapterRegistry();
   log!: VaultLog;
   private unloaded = false;
@@ -113,17 +122,30 @@ export default class OsmmPlugin extends Plugin {
     });
     this.index = new SocialIndex(this.app);
     this.register(() => this.index.stop());
+    // Rebook soon after an edit (reschedule, skip, publish early) instead of waiting for the next tick.
+    let pendingSync: number | null = null;
+    this.register(
+      this.index.onChange(() => {
+        if (pendingSync !== null) window.clearTimeout(pendingSync);
+        pendingSync = window.setTimeout(() => {
+          pendingSync = null;
+          void this.phone.sync();
+        }, 5_000);
+      }),
+    );
+    this.register(() => {
+      if (pendingSync !== null) window.clearTimeout(pendingSync);
+    });
 
     const ui = this.uiContext();
-    const notifier = new Notifier({
+    const notifier = (this.notifier = new Notifier({
       ledger: new NotifiedLedger(this.app, () => Date.now()),
       enabled: () => this.device.notifications,
       channelName: (id) => this.channels.get(id)?.name ?? id,
       noteTitle: (path) => this.index.getVariant(path)?.displayTitle ?? path,
       openAssisted: (path, ids) => void ui.publish.openAssisted(path, ids),
       openComposer: (path) => void ui.composer.openComposer(path),
-    });
-    ui.publish.notifier = notifier;
+    }));
     this.register(() => notifier.dispose());
     this.reminders = new ReminderService({
       rows: () => ui.actions.rows(),
@@ -132,6 +154,51 @@ export default class OsmmPlugin extends Plugin {
       settings: () => this.settings,
       notifier,
     });
+    this.ntfy = new NtfyClient(() => ntfyTarget(this.device, this.secrets));
+    const phoneContent: ReminderContentDeps = {
+      vaultName: () => this.app.vault.getName(),
+      variant: (path) => this.index.getVariant(path),
+      channelName: (id) => this.channels.get(id)?.name ?? id,
+      targetUrl: async (path, channelId) => {
+        const v = this.index.getVariant(path);
+        const channel = this.channels.get(channelId);
+        if (!v || !channel) return null;
+        const target = ui.publish.target(v, channel, await ui.composer.content.load(v));
+        return target.mobileUrl ?? target.url;
+      },
+      // Task 8 ruling: once the server can't cancel, a push can't follow edits, so it links through Obsidian.
+      cancelSupported: () => this.phone.cancelSupported(),
+    };
+    this.phone = new NtfyBooker({
+      rows: () => ui.actions.rows(),
+      offsets: (row) => this.reminders.offsets(row),
+      isPublisher: () => this.publisher.isPublisher(),
+      enabled: () => this.device.ntfy.enabled,
+      client: this.ntfy,
+      ledger: new BookingLedger(this.app),
+      compose: async (item) => {
+        const target = ntfyTarget(this.device, this.secrets);
+        if (!target) throw new Error("Phone reminders aren't set up.");
+        return reminderMessage(item, phoneContent, target);
+      },
+      now: () => Date.now(),
+      warn: (message) => new Notice(message, 0),
+    });
+    const alerts = new PhoneAlerts({
+      enabled: () => this.device.ntfy.enabled && this.device.ntfy.results,
+      isPublisher: () => this.publisher.isPublisher(),
+      client: this.ntfy,
+      content: phoneContent,
+      warn: (message) => new Notice(message),
+    });
+    ui.publish.notifier = {
+      due: (path, channelId) => notifier.due(path, channelId),
+      failed: (info) => {
+        notifier.failed(info);
+        alerts.failed(info);
+      },
+      published: (info) => alerts.published(info),
+    };
     this.scheduler = new Scheduler({
       index: this.index,
       settings: () => this.settings,
@@ -144,7 +211,10 @@ export default class OsmmPlugin extends Plugin {
           .then(async () => {
             await this.reminders.tick(now, previous);
           })
-          .catch((e) => void new Notice(e instanceof Error ? e.message : String(e), 0)),
+          .catch((e) => void new Notice(e instanceof Error ? e.message : String(e), 0))
+          // Phone bookings run on every tick; the booker itself checks the publisher role and the setting
+          // (spec §4.3–4.4). Not awaited (M3 P5): a slow ntfy server must never hold back due posts.
+          .then(() => void this.phone.sync()),
       warn: (message) => new Notice(message, 0),
     });
     this.register(() => this.scheduler.stop());
@@ -154,6 +224,8 @@ export default class OsmmPlugin extends Plugin {
       this.settingsStore.subscribe(() => {
         const now = this.publisher.isPublisher();
         if (now !== wasPublisher) this.roleChanges++;
+        // The booker follows the role: a device that lost it cancels its phone bookings now, not at the next tick.
+        if (!now && wasPublisher && !this.unloaded) void this.phone.sync();
         if (now && !wasPublisher && this.started && !this.unloaded) {
           void this.scheduler
             .becamePublisher()
