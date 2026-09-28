@@ -838,6 +838,7 @@ export class Notice {
 export interface RequestUrlParam {
   url: string;
   method?: string;
+  contentType?: string;
   headers?: Record<string, string>;
   body?: string | ArrayBuffer;
   throw?: boolean;
@@ -851,13 +852,19 @@ export interface RequestUrlResponse {
   arrayBuffer: ArrayBuffer;
 }
 
-/** Test-only: queue one handler per expected request. */
+/** Test-only: queue one handler per expected request; every request is recorded in `calls`. */
 export const requestUrlMock = {
   queue: [] as Array<(req: RequestUrlParam) => RequestUrlResponse | Error>,
+  calls: [] as RequestUrlParam[],
+  reset(): void {
+    this.queue = [];
+    this.calls = [];
+  },
 };
 
 export async function requestUrl(req: RequestUrlParam | string): Promise<RequestUrlResponse> {
   const param = typeof req === "string" ? { url: req } : req;
+  requestUrlMock.calls.push(param);
   const handler = requestUrlMock.queue.shift();
   if (!handler) throw new Error(`No requestUrl fixture for ${param.url}`);
   const res = handler(param);

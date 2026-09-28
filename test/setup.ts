@@ -1,11 +1,12 @@
 import { beforeEach } from "vitest";
 import { installBrowserFakes, resetBrowserFakes } from "./fakes/browser";
-import { setPlatform } from "./fakes/obsidian";
+import { requestUrlMock, setPlatform } from "./fakes/obsidian";
 
 installBrowserFakes();
 beforeEach(() => {
   resetBrowserFakes();
   setPlatform("desktop");
+  requestUrlMock.reset();
 });
 
 // Minimal versions of the DOM helpers Obsidian adds to HTMLElement.

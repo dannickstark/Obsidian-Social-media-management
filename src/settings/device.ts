@@ -1,6 +1,15 @@
 import { Platform, type App } from "obsidian";
 import { isRecord } from "../model/frontmatter";
 import { newDeviceId } from "../model/ids";
+import { DEFAULT_NTFY_SERVER, normalizeServer } from "../reminders/ntfy/config";
+
+/** Phone reminders on this device (#71). The topic and the token live in secret storage, never here. */
+export interface NtfyDeviceSettings {
+  enabled: boolean;
+  server: string;
+  /** Also push automatic-post confirmations and failure alerts (#70, optional). */
+  results: boolean;
+}
 
 /** Settings that must never sync between devices (stored in vault-scoped localStorage). */
 export interface DeviceSettings {
@@ -9,6 +18,7 @@ export interface DeviceSettings {
   deviceName: string;
   /** Desktop notifications on this device (spec §4.3: each device fires its own if enabled). */
   notifications: boolean;
+  ntfy: NtfyDeviceSettings;
 }
 
 const KEY = "osmm-device";
@@ -29,11 +39,18 @@ export function cleanDeviceName(raw: unknown): string | null {
   return name || null;
 }
 
+function sanitizeNtfy(raw: unknown): NtfyDeviceSettings {
+  const r: Record<string, unknown> = isRecord(raw) ? raw : {};
+  const server = typeof r.server === "string" ? normalizeServer(r.server) : null;
+  return { enabled: r.enabled === true, server: server ?? DEFAULT_NTFY_SERVER, results: r.results === true };
+}
+
 function sanitize(raw: Record<string, unknown>, deviceId: string): DeviceSettings {
   return {
     deviceId,
     deviceName: cleanDeviceName(raw.deviceName) ?? defaultDeviceName(),
     notifications: raw.notifications !== false,
+    ntfy: sanitizeNtfy(raw.ntfy),
   };
 }
 

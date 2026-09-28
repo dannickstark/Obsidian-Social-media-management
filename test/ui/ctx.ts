@@ -89,7 +89,7 @@ export async function makeCtx(
     settings: () => get(settings),
     now: clock,
   });
-  const device: DeviceSettings = { deviceId: "test-device", deviceName: "Test laptop", notifications: true };
+  const device: DeviceSettings = { deviceId: "test-device", deviceName: "Test laptop", notifications: true, ntfy: { enabled: false, server: "https://ntfy.sh", results: false } };
   const publisher = new PublisherService({
     device: () => device,
     settings: () => get(settings),
