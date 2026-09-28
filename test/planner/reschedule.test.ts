@@ -55,4 +55,27 @@ describe("planReschedule", () => {
     const v = variant({});
     expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30), status), { at: T(9, 9) }).ok).toBe(false);
   });
+
+  it("keeps a published sibling channel's time unchanged when the whole post shifts", () => {
+    const v = variant({ channels: ["li/me", "li/acme", "li/team"], deliveries: { "li/me": { status: "published" } } });
+    const plan = planReschedule(rowOf(v, "li/acme", T(8, 17, 45)), { at: T(9, 10, 0) });
+    if (!plan.ok) throw new Error();
+    expect(plan.patch.scheduledAt).toBe(T(9, 9, 45));
+    expect(plan.patch.deliveries?.["li/me"]).toMatchObject({ status: "published", at: T(8, 17, 30) });
+  });
+
+  it("keeps a skipped sibling channel's time unchanged when the whole post shifts", () => {
+    const v = variant({ channels: ["li/me", "li/acme", "li/team"], deliveries: { "li/me": { status: "skipped" } } });
+    const plan = planReschedule(rowOf(v, "li/acme", T(8, 17, 45)), { at: T(9, 10, 0) });
+    if (!plan.ok) throw new Error();
+    expect(plan.patch.deliveries?.["li/me"]).toMatchObject({ status: "skipped", at: T(8, 17, 30) });
+  });
+
+  it("copies deliveries into `previous` instead of aliasing the live object", () => {
+    const v = variant({ deliveries: { "li/acme": { status: "scheduled" } } });
+    const plan = planReschedule(rowOf(v, "li/acme", T(8, 17, 45)), { at: T(9, 10, 0) });
+    if (!plan.ok) throw new Error();
+    expect(plan.previous.deliveries).not.toBe(v.deliveries);
+    expect(plan.previous.deliveries).toEqual(v.deliveries);
+  });
 });

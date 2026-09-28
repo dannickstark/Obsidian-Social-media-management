@@ -1,7 +1,7 @@
 import type { PostRow, RowStatus } from "../index/queries";
 import type { VariantPatch } from "../model/frontmatter";
-import { transition } from "../model/stateMachine";
-import type { Delivery } from "../model/types";
+import { deliveryTime, transition } from "../model/stateMachine";
+import type { Delivery, DeliveryStatus } from "../model/types";
 
 export type RescheduleTarget = { day: number } | { at: number };
 
@@ -10,6 +10,8 @@ export type ReschedulePlan =
   | { ok: false; reason: string };
 
 const FROZEN = new Set<RowStatus>(["published", "publishing", "skipped"]);
+/** Sibling channels in these statuses keep their current effective time when the whole post shifts. */
+const KEEP_TIME = new Set<DeliveryStatus>(["published", "skipped", "publishing"]);
 
 function onDay(day: number, currentAt: number | undefined, defaultTime: string): number {
   const d = new Date(day);
@@ -25,7 +27,7 @@ function onDay(day: number, currentAt: number | undefined, defaultTime: string):
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
 }
 
-export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTime = "09:00"): ReschedulePlan {
+export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTime = "09:00", defaultStagger = 0): ReschedulePlan {
   if (FROZEN.has(row.status)) {
     return {
       ok: false,
@@ -38,8 +40,21 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
   const explicit = row.channelId !== null && v.deliveries[row.channelId]?.at !== undefined;
 
   let scheduledAt = v.scheduledAt;
-  if (explicit) deliveries[row.channelId!] = { ...deliveries[row.channelId!]!, at: newAt };
-  else scheduledAt = row.at === undefined || v.scheduledAt === undefined ? newAt : v.scheduledAt + (newAt - row.at);
+  if (explicit) {
+    deliveries[row.channelId!] = { ...deliveries[row.channelId!]!, at: newAt };
+  } else {
+    scheduledAt = row.at === undefined || v.scheduledAt === undefined ? newAt : v.scheduledAt + (newAt - row.at);
+    // The whole post is shifting: sibling channels that are already published/skipped/publishing and
+    // have no explicit time must keep their current effective time, not silently follow the shift.
+    for (const id of v.channels) {
+      if (id === row.channelId) continue;
+      const d = v.deliveries[id];
+      if (d && KEEP_TIME.has(d.status) && d.at === undefined) {
+        const effective = deliveryTime(v, id, defaultStagger);
+        if (effective !== undefined) deliveries[id] = { ...d, at: effective };
+      }
+    }
+  }
 
   const affected = explicit ? [row.channelId!] : v.channels;
   for (const id of affected) {
@@ -52,7 +67,7 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
     ok: true,
     newAt,
     needsConfirm,
-    previous: { scheduledAt: v.scheduledAt, deliveries: v.deliveries },
+    previous: { scheduledAt: v.scheduledAt, deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([k, d]) => [k, { ...d }])) },
     patch: { scheduledAt, deliveries },
   };
 }

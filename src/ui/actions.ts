@@ -95,7 +95,7 @@ export class PlannerActions {
 
   async reschedule(row: PostRow, target: RescheduleTarget): Promise<boolean> {
     const channel = row.channelId ? this.deps.channels.get(row.channelId) : undefined;
-    const plan = planReschedule(row, target, channel?.defaultTime ?? "09:00");
+    const plan = planReschedule(row, target, channel?.defaultTime ?? "09:00", this.deps.settings().defaultStaggerMinutes);
     if (!plan.ok) {
       new Notice(plan.reason);
       return false;
