@@ -32,6 +32,7 @@ export interface TestCtx {
   adapters: AdapterRegistry;
   log: MemoryLog;
   publisher: PublisherService;
+  factory: NoteFactory;
 }
 
 export async function makeCtx(
@@ -116,5 +117,5 @@ export async function makeCtx(
   };
   actions.context = ctx;
   publish.context = ctx;
-  return { app, ctx, index, writer, settings, now: nowStore, adapters, log, publisher };
+  return { app, ctx, index, writer, settings, now: nowStore, adapters, log, publisher, factory };
 }

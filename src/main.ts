@@ -8,6 +8,7 @@ import { ComposerView } from "./composer/ComposerView";
 import { overdueRows } from "./index/queries";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
+import { registerAllTools } from "./mcp/index";
 import { McpDispatcher } from "./mcp/protocol";
 import { McpService } from "./mcp/service";
 import { ToolRegistry } from "./mcp/tools";
@@ -237,6 +238,20 @@ export default class OsmmPlugin extends Plugin {
     this.tools = new ToolRegistry({
       redact: (text) => this.secrets.redact(text, allSecretIds(this.channels.list())),
       onCall: (name, ok) => this.mcp.record(ok ? name : `${name} (refused)`),
+    });
+    registerAllTools(this.tools, {
+      app: this.app,
+      index: this.index,
+      channels: this.channels,
+      factory: this.factory,
+      writer: this.writer,
+      planner: ui.actions,
+      composer: ui.composer,
+      publish: ui.publish,
+      secrets: this.secrets,
+      settings: () => this.settings,
+      now: () => Date.now(),
+      isPublisher: () => this.publisher.isPublisher(),
     });
     const dispatcher = new McpDispatcher({ tools: this.tools, version: this.manifest.version });
     this.mcp = new McpService({
