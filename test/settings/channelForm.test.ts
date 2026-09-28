@@ -46,6 +46,17 @@ describe("ChannelForm", () => {
     render(ChannelForm, { props: { channel, close: () => {} }, context: osmmContext(ctx) });
     expect((screen.getByLabelText("Channel id") as HTMLInputElement).readOnly).toBe(true);
   });
+
+  it("saves a character limit for Mastodon channels only (#41)", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    expect(screen.queryByLabelText("Character limit")).toBeNull();
+    await fireEvent.change(screen.getByLabelText("Platform"), { target: { value: "mastodon" } });
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Fosstodon" } });
+    await fireEvent.input(screen.getByLabelText("Character limit"), { target: { value: "1000" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(ctx.channels.get("ma/fosstodon")?.maxChars).toBe(1000);
+  });
 });
 
 describe("ChannelsSection", () => {

@@ -64,7 +64,7 @@ export function excerpt(body: string, max = 120): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-export type CharCounter = "graphemes" | "x-weighted";
+export type CharCounter = "graphemes" | "x-weighted" | "mastodon";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const URL_RE = /\bhttps?:\/\/[^\s]+/gi;
@@ -85,6 +85,8 @@ export function countChars(text: string, counter: CharCounter = "graphemes"): nu
     total += 23;
     return "";
   });
+  // Mastodon: graphemes, and every URL counts 23 no matter its length.
+  if (counter === "mastodon") return total + [...segmenter.segment(withoutUrls)].length;
   for (const { segment } of segmenter.segment(withoutUrls)) total += xWeight(segment);
   return total;
 }

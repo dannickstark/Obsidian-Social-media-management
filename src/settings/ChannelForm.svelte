@@ -23,6 +23,7 @@
   let avatarColor = $state(initial?.avatarColor ?? PLATFORM_COLORS.linkedin);
   let defaultTime = $state(initial?.defaultTime ?? "");
   let secretId = $state(initial?.secretId ?? "");
+  let maxChars = $state<number | null | undefined>(initial?.maxChars);
   let issues = $state<Issue[]>([]);
 
   $effect(() => {
@@ -45,6 +46,7 @@
       defaultTime: defaultTime || undefined,
       secretId: secretId || undefined,
       defaultReminders: initial?.defaultReminders,
+      maxChars: platform === "mastodon" && maxChars ? maxChars : undefined,
     };
     // Editing never renames (that would orphan notes using the old id); adding never overwrites.
     const result = editing ? await channels.upsertChannel({ ...input, id: initial!.id }) : await channels.createChannel(input);
@@ -70,6 +72,9 @@
     <select bind:value={kind}>{#each CHANNEL_KINDS as k (k)}<option value={k}>{KIND_LABEL[k]}</option>{/each}</select>
   </label>
   <label>Handle / URL<input type="text" bind:value={handle} /></label>
+  {#if platform === "mastodon"}
+    <label>Character limit<input type="number" min="1" max="100000" placeholder="500" bind:value={maxChars} /></label>
+  {/if}
   <label>
     Publishing
     <select bind:value={method}>{#each PUBLISH_METHODS as m (m)}<option value={m}>{METHOD_LABEL[m]}</option>{/each}</select>

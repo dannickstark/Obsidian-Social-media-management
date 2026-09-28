@@ -58,6 +58,8 @@ export const zChannel = z
     secretId: zSecretId.optional(),
     defaultTime: zTimeOfDay.optional(),
     defaultReminders: zMinutesList.optional(),
+    /** Per-channel character limit (a Mastodon instance's own limit). */
+    maxChars: z.coerce.number().int().min(1).max(100_000).optional(),
   })
   .superRefine((c, ctx) => {
     const meta = PLATFORM_META[c.platform];

@@ -22,6 +22,8 @@ export interface Issue {
   level: "error" | "warning";
   field: string;
   message: string;
+  /** Stable id of the check (e.g. "too-long"); quick fixes key on it. */
+  code?: string;
 }
 
 export interface Delivery {
