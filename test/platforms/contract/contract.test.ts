@@ -1,9 +1,23 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { requestUrlMock } from "../../fakes/obsidian";
+import type { Platform } from "../../../src/model/platforms";
 import { createAdapters } from "../../../src/platforms/adapters";
 import { hang, json, netError, text, type Fixture } from "../http";
 import { CASES } from "./cases";
 import { adapterFor, attempt, contractDeps, expectDigestReads, trackedJob, type ContractCase } from "./harness";
+
+/**
+ * M5 P2: what a 5xx answer to each platform's publish commit must be. Telegram sends and Discord webhook executes are
+ * not retry-safe (the post may be out); Mastodon (Idempotency-Key), Bluesky (findRecent) and WordPress (bySlug) are.
+ * A case whose platform is missing here fails: add the platform with its P2 class first.
+ */
+const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> = {
+  telegram: "unknown",
+  discord: "unknown",
+  mastodon: "transient",
+  bluesky: "transient",
+  wordpress: "transient",
+};
 
 /** Answers of 2xx to the post request that say nothing readable about the post (Task 2 carry). */
 const UNREADABLE: Array<[string, Fixture]> = [
@@ -18,6 +32,13 @@ describe("adapter registry (#87)", () => {
   it("has a contract case for every registered API adapter", () => {
     const registered = createAdapters(contractDeps()).map((a) => a.platform);
     expect(CASES.map((c) => c.platform).sort()).toEqual([...registered].sort());
+  });
+
+  it("declares the 5xx class M5 P2 fixes for every case's platform", () => {
+    for (const c of CASES) {
+      expect(EXPECTED_PUBLISH_5XX[c.platform], `${c.platform} has no entry in EXPECTED_PUBLISH_5XX (M5 P2)`).toBeDefined();
+      expect(c.serverError.kind, `${c.platform}: serverError.kind`).toBe(EXPECTED_PUBLISH_5XX[c.platform]);
+    }
   });
 });
 
