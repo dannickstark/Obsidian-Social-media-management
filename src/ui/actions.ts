@@ -1,4 +1,4 @@
-import { Notice, type App } from "obsidian";
+import { Notice, type App, type TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import { expandRows, type PostRow } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
@@ -184,37 +184,59 @@ export class PlannerActions {
   async bulkShift(rows: PostRow[], deltaMs: number): Promise<{ moved: number; skipped: number }> {
     let moved = 0;
     let skipped = 0;
+    const changed: Array<[TFile, { scheduledAt?: number; deliveries: IndexedVariant["deliveries"] }]> = [];
     for (const v of uniqueVariants(rows)) {
       const movable = v.scheduledAt !== undefined && !Object.values(v.deliveries).some((d) => ["published", "publishing", "handed_over"].includes(d.status));
       if (!movable) {
         skipped++;
         continue;
       }
+      const previous = { scheduledAt: v.scheduledAt, deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, { ...d }])) };
       const deliveries = Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, d.at === undefined ? d : { ...d, at: d.at + deltaMs }]));
       await this.deps.writer.patchVariant(v.file, { scheduledAt: v.scheduledAt! + deltaMs, deliveries });
+      changed.push([v.file, previous]);
       moved++;
     }
-    new Notice(`Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`);
+    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`;
+    if (changed.length) {
+      this.undoNotice(summary, async () => {
+        for (const [file, previous] of changed) await this.deps.writer.patchVariant(file, previous);
+      });
+    } else {
+      new Notice(summary);
+    }
     return { moved, skipped };
   }
 
   async bulkSetStatus(rows: PostRow[], status: "idea" | "draft" | "ready"): Promise<{ changed: number; skipped: number }> {
-    let changed = 0;
+    let changedCount = 0;
     let skipped = 0;
     const target = status === "ready" ? "ready" : "draft";
+    const changed: Array<[TFile, { status: IndexedVariant["status"]; deliveries: IndexedVariant["deliveries"] }]> = [];
     for (const v of uniqueVariants(rows)) {
       const ds = Object.entries(v.deliveries);
       if (ds.some(([, d]) => d.status !== "draft" && d.status !== "ready")) {
         skipped++;
         continue;
       }
+      const previous = { status: v.status, deliveries: Object.fromEntries(ds.map(([id, d]) => [id, { ...d }])) };
       const deliveries: typeof v.deliveries = {};
       for (const [id, d] of ds) deliveries[id] = d.status === target ? d : { ...d, status: target };
       await this.deps.writer.patchVariant(v.file, { status, deliveries });
-      changed++;
+      changed.push([v.file, previous]);
+      changedCount++;
     }
-    new Notice(`Changed ${changed} post${changed === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} already scheduled or published` : ""}.`);
-    return { changed, skipped };
+    const summary = `Changed ${changedCount} post${changedCount === 1 ? "" : "s"}, skipped ${skipped} with channels already scheduled, in progress or done.`;
+    const summaryNoSkip = `Changed ${changedCount} post${changedCount === 1 ? "" : "s"}.`;
+    const notice = skipped ? summary : summaryNoSkip;
+    if (changed.length) {
+      this.undoNotice(notice, async () => {
+        for (const [file, previous] of changed) await this.deps.writer.patchVariant(file, previous);
+      });
+    } else {
+      new Notice(notice);
+    }
+    return { changed: changedCount, skipped };
   }
 
   async bulkTrash(rows: PostRow[]): Promise<number> {
