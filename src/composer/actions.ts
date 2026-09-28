@@ -286,7 +286,7 @@ export class ComposerActions {
     }
     if (
       needs.awaitingYou &&
-      !(await planner.confirm("Some channels are awaiting you to post manually. Changing the time here won't change what you already agreed to post. Continue?", "Continue"))
+      !(await planner.confirm("Some channels are awaiting you to post manually. They keep waiting for you; only their time changes. Continue?", "Continue"))
     ) {
       return false;
     }

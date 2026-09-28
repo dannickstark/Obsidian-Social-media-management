@@ -22,7 +22,7 @@ import { deliveryChanges, planUndo, recordWrite, type WriteRecord } from "../pla
 import { frozenForMove, statusEditable, uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
-import { planTemplate, planTemplateMove, type TemplateProposal } from "../planner/templates";
+import { planTemplate, planTemplateMove, templateMovable, type TemplateProposal } from "../planner/templates";
 import type { OsmmSettings } from "../settings/settings";
 import type { OsmmContext } from "./context";
 import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
@@ -36,6 +36,14 @@ export const VIEW_COMPOSER = "osmm-composer";
 export const VIEW_PREVIEW_GRID = "osmm-preview-grid";
 export const ROW_MIME = "text/x-osmm-row";
 export const UNDO_CONFLICT = "Some changes were kept because the note changed since.";
+
+/** Ruling P2: bulk shift and template apply ask once before moving deliveries that are awaiting the user. */
+export const AWAITING_MOVE = "Some of these posts have channels awaiting you to post manually. Moving them won't change what you already agreed to post. Move them anyway?";
+
+/** A listed channel is awaiting the user (ruling P2: sticky, moving it needs confirmation). */
+function awaitingYou(v: Pick<Variant, "channels" | "deliveries">): boolean {
+  return v.channels.some((id) => v.deliveries[id]?.status === "awaiting_you");
+}
 
 export type WriteResult = { ok: true; record: WriteRecord } | { ok: false; reason: string };
 
@@ -357,13 +365,25 @@ export class PlannerActions {
     if (at !== null) await this.schedule(v, at);
   }
 
+  /**
+   * Ruling P2, the reschedule() pattern for multi-post moves: ask once when a post has a channel awaiting the
+   * user. Declined, those posts are left unchanged (counted as skipped); the write plans re-check on fresh
+   * frontmatter so a delivery that became awaiting_you meanwhile is not moved unconfirmed.
+   */
+  private async confirmAwaiting(movable: readonly IndexedVariant[]): Promise<boolean> {
+    return !movable.some(awaitingYou) || this.confirm(AWAITING_MOVE, "Move");
+  }
+
   async bulkShift(rows: PostRow[], deltaMs: number): Promise<{ moved: number; skipped: number }> {
     const stagger = this.deps.settings().defaultStaggerMinutes;
     let skipped = 0;
     const records: WriteRecord[] = [];
-    for (const v of uniqueVariants(rows)) {
+    const variants = uniqueVariants(rows);
+    const moveAwaiting = await this.confirmAwaiting(variants.filter((v) => v.scheduledAt !== undefined && !frozenForMove(v, stagger)));
+    for (const v of variants) {
       const result = await this.write(v.file, (fresh) => {
         if (fresh.scheduledAt === undefined || frozenForMove(freshIndexed(v, fresh), stagger)) return { refuse: "frozen" };
+        if (!moveAwaiting && awaitingYou(fresh)) return { refuse: "awaiting you" };
         const deliveries: Variant["deliveries"] = {};
         for (const [id, d] of Object.entries(fresh.deliveries)) if (d.at !== undefined) deliveries[id] = { ...d, at: d.at + deltaMs };
         return { fields: { scheduledAt: fresh.scheduledAt! + deltaMs }, deliveries };
@@ -372,7 +392,7 @@ export class PlannerActions {
       else skipped++;
     }
     const moved = records.length;
-    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over, skipped or unscheduled)` : ""}.`;
+    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over, skipped, unscheduled or awaiting you)` : ""}.`;
     if (records.length) this.undoNotice(summary, () => this.undo(records));
     else new Notice(summary);
     return { moved, skipped };
@@ -420,13 +440,14 @@ export class PlannerActions {
   async applyTemplate(proposals: TemplateProposal[]): Promise<void> {
     const records: WriteRecord[] = [];
     let skipped = 0;
+    const moveAwaiting = await this.confirmAwaiting(proposals.map((p) => p.variant).filter((v) => templateMovable(v)));
     for (const p of proposals) {
-      const result = await this.write(p.variant.file, (fresh) => planTemplateMove(fresh, p.to));
+      const result = await this.write(p.variant.file, (fresh) => (!moveAwaiting && awaitingYou(fresh) ? { refuse: "awaiting you" } : planTemplateMove(fresh, p.to)));
       if (result.ok) records.push(result.record);
       else skipped++;
     }
     const n = records.length;
-    const summary = `Scheduled ${n} post${n === 1 ? "" : "s"} from the template.${skipped ? ` Skipped ${skipped} already published, handed over or being published.` : ""}`;
+    const summary = `Scheduled ${n} post${n === 1 ? "" : "s"} from the template.${skipped ? ` Skipped ${skipped} already published, handed over, being published or awaiting you.` : ""}`;
     if (records.length) this.undoNotice(summary, () => this.undo(records));
     else new Notice(summary);
   }

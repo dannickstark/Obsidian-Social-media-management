@@ -13,6 +13,8 @@ export type SchedulePlan =
 
 /** Channels that keep their status and their time: done, in flight, or already on the platform. */
 const KEEP = new Set<DeliveryStatus>(["published", "skipped", "publishing", "handed_over", "check_needed"]);
+/** Ruling P2: a channel awaiting the user keeps its status (sticky); only its time moves with the post. */
+const KEEP_STATUS = new Set<DeliveryStatus>(["awaiting_you"]);
 
 export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defaultStagger: number): SchedulePlan {
   if (!fresh.channels.length) return { refuse: "Pick at least one channel before scheduling." };
@@ -34,7 +36,7 @@ export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defau
       continue;
     }
     const base: Delivery = d ?? { status: "draft" };
-    const next: Delivery = base.status === "scheduled" ? { ...base } : transition(base, "scheduled");
+    const next: Delivery = base.status === "scheduled" || KEEP_STATUS.has(base.status) ? { ...base } : transition(base, "scheduled");
     delete next.at;
     delete next.error;
     deliveries[id] = next;

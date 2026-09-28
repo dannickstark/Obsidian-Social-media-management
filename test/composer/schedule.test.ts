@@ -59,6 +59,14 @@ describe("planComposerSchedule", () => {
     expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({ refuse: reason });
   });
 
+  it("keeps an awaiting-you channel waiting and moves only its time (ruling P2)", () => {
+    const post = v({ status: "scheduled", deliveries: { "li/acme": { status: "awaiting_you", at: T + 900_000 } } });
+    expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({
+      fields: { scheduledAt: NEW, reminders: [] },
+      deliveries: { "li/me": { status: "scheduled" }, "li/acme": { status: "awaiting_you" }, "li/maker": { status: "scheduled" } },
+    });
+  });
+
   it("skips a channel with an unreadable delivery entry and reports it (M2b ruling P1)", () => {
     const post = v({ invalidDeliveries: ["li/acme"] });
     expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({

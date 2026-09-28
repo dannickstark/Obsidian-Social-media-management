@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Notice } from "../fakes/obsidian";
 import { makeCtx } from "./ctx";
+import { AWAITING_MOVE } from "../../src/ui/actions";
 import { indexed } from "../helpers";
 
 describe("bulk actions", () => {
@@ -84,5 +85,42 @@ describe("bulk actions", () => {
     const rows = ctx.actions.rows().filter((r) => r.variant.path === publishedNoRecords.path);
     expect(await ctx.actions.bulkSetStatus(rows, "draft")).toEqual({ changed: 0, skipped: 1 });
     expect(index.getVariant(publishedNoRecords.path)!.status).toBe("published");
+  });
+
+  const awaiting = {
+    path: "Social/Posts/Waiting.md",
+    frontmatter: {
+      type: "social-post",
+      platform: "linkedin",
+      channels: ["li/me"],
+      status: "scheduled",
+      scheduled_at: "2026-10-09T09:00:00+02:00",
+      deliveries: { "li/me": { status: "awaiting_you", at: "2026-10-09T09:15:00+02:00" } },
+    },
+  };
+
+  it("bulk shift asks before moving an awaiting-you delivery and leaves it when declined (ruling P2)", async () => {
+    const { ctx, index } = await makeCtx({ notes: [awaiting] });
+    const asked: string[] = [];
+    ctx.actions.confirm = async (message) => {
+      asked.push(message);
+      return false;
+    };
+    const rows = ctx.actions.rows().filter((r) => r.variant.path === awaiting.path);
+    const before = index.getVariant(awaiting.path)!;
+    expect(await ctx.actions.bulkShift(rows, 86_400_000)).toEqual({ moved: 0, skipped: 1 });
+    expect(asked).toEqual([AWAITING_MOVE]);
+    expect(index.getVariant(awaiting.path)!.scheduledAt).toBe(before.scheduledAt);
+    expect(index.getVariant(awaiting.path)!.deliveries["li/me"]).toEqual(before.deliveries["li/me"]);
+  });
+
+  it("bulk shift moves an awaiting-you delivery once confirmed and keeps it waiting (ruling P2)", async () => {
+    const { ctx, index } = await makeCtx({ notes: [awaiting] });
+    ctx.actions.confirm = async () => true;
+    const rows = ctx.actions.rows().filter((r) => r.variant.path === awaiting.path);
+    const before = index.getVariant(awaiting.path)!;
+    expect(await ctx.actions.bulkShift(rows, 86_400_000)).toEqual({ moved: 1, skipped: 0 });
+    await indexed(index, () => index.getVariant(awaiting.path)!.scheduledAt === before.scheduledAt! + 86_400_000);
+    expect(index.getVariant(awaiting.path)!.deliveries["li/me"]).toEqual({ status: "awaiting_you", at: before.deliveries["li/me"]!.at! + 86_400_000 });
   });
 });

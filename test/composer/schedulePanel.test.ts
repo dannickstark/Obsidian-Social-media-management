@@ -63,7 +63,11 @@ describe("SchedulePanel", () => {
     const c = await makeCtx({ seed: true });
     const LI = "Social/Event X/Event X – LinkedIn.md";
     // li/acme-studio is awaiting_you in the seed data (M2b ruling P2): confirm the move.
-    c.ctx.actions.confirm = async () => true;
+    const asked: string[] = [];
+    c.ctx.actions.confirm = async (message) => {
+      asked.push(message);
+      return true;
+    };
     const before = (await fm(c, LI)).deliveries as Record<string, unknown>;
     render(SchedulePanel, { props: { variant: c.index.getVariant(LI)!, issues: [] }, context: osmmContext(c.ctx) });
     await setWhen("2026-10-15", "17:30");
@@ -71,8 +75,10 @@ describe("SchedulePanel", () => {
     await vi.waitFor(async () => expect((await fm(c, LI)).scheduled_at).toBe(formatDateTime(new Date(2026, 9, 15, 17, 30).getTime())));
     const after = (await fm(c, LI)).deliveries as Record<string, unknown>;
     expect(after["li/me"]).toEqual(before["li/me"]);
-    expect(after["li/acme-studio"]).toEqual({ status: "scheduled" });
+    // Ruling P2: the awaiting-you channel keeps waiting for the user; only its time moves with the post.
+    expect(after["li/acme-studio"]).toEqual({ status: "awaiting_you" });
     expect(after["li/maker-lab"]).toEqual({ status: "scheduled" });
+    expect(asked).toEqual(["Some channels are awaiting you to post manually. They keep waiting for you; only their time changes. Continue?"]);
   });
 
   it("changes the mode and shows how each channel will post", async () => {
