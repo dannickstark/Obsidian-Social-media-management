@@ -1,8 +1,10 @@
+import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceLeaf } from "../fakes/obsidian";
 import { SvelteItemView } from "../../src/ui/SvelteView";
 import Hello from "../fixtures/Hello.svelte";
-import { makeCtx } from "./ctx";
+import { formatDateTime } from "../../src/model/dates";
+import { makeCtx, TEST_NOW } from "./ctx";
 import { Notice } from "../fakes/obsidian";
 
 describe("SvelteItemView", () => {
@@ -49,5 +51,28 @@ describe("PlannerActions basics", () => {
     Notice.last!.noticeEl.querySelector("button")!.click();
     expect(undo).toHaveBeenCalledOnce();
     expect(Notice.last!.hidden).toBe(true);
+  });
+
+  it("recomputes row times when the default stagger changes", async () => {
+    const { ctx, settings } = await makeCtx({
+      notes: [
+        {
+          path: "Social/Posts/Multi.md",
+          frontmatter: {
+            type: "social-post",
+            platform: "linkedin",
+            channels: ["li/me", "li/acme-studio"],
+            scheduled_at: formatDateTime(TEST_NOW),
+          },
+        },
+      ],
+    });
+    const before = ctx.actions.rows().find((r) => r.key === "Social/Posts/Multi.md#li/acme-studio")!;
+    expect(before.at).toBe(TEST_NOW + get(settings).defaultStaggerMinutes * 60_000);
+
+    settings.update((s) => ({ ...s, defaultStaggerMinutes: s.defaultStaggerMinutes + 30 }));
+    const after = ctx.actions.rowByKey("Social/Posts/Multi.md#li/acme-studio")!;
+    expect(after.at).toBe(TEST_NOW + (before.variant.channels.indexOf("li/acme-studio")) * (get(settings).defaultStaggerMinutes) * 60_000);
+    expect(after.at).not.toBe(before.at);
   });
 });

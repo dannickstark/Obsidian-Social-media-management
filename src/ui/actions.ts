@@ -26,7 +26,7 @@ export interface ActionDeps {
 /** Every UI side effect goes through this class; components stay declarative. */
 export class PlannerActions {
   private readonly hoverParent = { hoverPopover: null };
-  private rowsCache: { revision: number; rows: PostRow[] } | undefined;
+  private rowsCache: { revision: number; stagger: number; rows: PostRow[] } | undefined;
 
   constructor(protected readonly deps: ActionDeps) {}
 
@@ -45,13 +45,15 @@ export class PlannerActions {
   }
 
   /**
-   * Cached per index revision so a row object handed to the UI (e.g. from a list render) stays
-   * `===` across repeated calls until the index actually changes.
+   * Cached per index revision and stagger setting so a row object handed to the UI (e.g. from a
+   * list render) stays `===` across repeated calls until the index or the stagger default
+   * actually changes.
    */
   rows(): PostRow[] {
     const revision = this.deps.index.revision;
-    if (!this.rowsCache || this.rowsCache.revision !== revision) {
-      this.rowsCache = { revision, rows: expandRows(this.deps.index.variants(), this.deps.settings().defaultStaggerMinutes) };
+    const stagger = this.deps.settings().defaultStaggerMinutes;
+    if (!this.rowsCache || this.rowsCache.revision !== revision || this.rowsCache.stagger !== stagger) {
+      this.rowsCache = { revision, stagger, rows: expandRows(this.deps.index.variants(), stagger) };
     }
     return this.rowsCache.rows;
   }
