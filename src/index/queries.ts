@@ -1,5 +1,5 @@
 import { deliveryTime, inheritedStatus } from "../model/stateMachine";
-import type { DeliveryStatus } from "../model/types";
+import type { DeliveryStatus, Variant } from "../model/types";
 import type { Platform } from "../model/platforms";
 import type { IndexedVariant } from "./socialIndex";
 
@@ -98,9 +98,14 @@ export function unreadableRow(r: Pick<PostRow, "variant" | "channelId">): boolea
   return r.channelId !== null && (r.variant.invalidDeliveries?.includes(r.channelId) ?? false);
 }
 
+/** A note the /social skill wrote while Obsidian was closed: nothing posts or reminds until the user reviews it (#84). */
+export function heldForReview(v: Pick<Variant, "review">): boolean {
+  return v.review === "claude";
+}
+
 export function overdueRows(rows: readonly PostRow[], now: number): PostRow[] {
   return rows
-    .filter((r) => !unreadableRow(r))
+    .filter((r) => !unreadableRow(r) && !heldForReview(r.variant))
     .filter((r) => r.status === "overdue" || (OVERDUE_CANDIDATES.has(r.status) && r.at !== undefined && r.at < now))
     .sort(byTime);
 }

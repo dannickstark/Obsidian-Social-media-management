@@ -1,4 +1,4 @@
-import { expandRows } from "../index/queries";
+import { expandRows, heldForReview } from "../index/queries";
 import type { IndexedVariant } from "../index/socialIndex";
 import { MINUTE } from "../model/dates";
 import { unreadable } from "../publish/eligibility";
@@ -21,6 +21,7 @@ export function dueItems(variants: readonly IndexedVariant[], now: number, defau
   for (const r of expandRows(variants, defaultStagger)) {
     if (r.channelId === null || r.status !== "scheduled" || r.at === undefined || r.at > now) continue;
     if (unreadable(r.variant, r.channelId)) continue;
+    if (heldForReview(r.variant)) continue;
     out.push({ key: `${r.key}@${r.at}`, path: r.variant.path, channelId: r.channelId, at: r.at, late: now - r.at });
   }
   return out.sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));

@@ -81,6 +81,8 @@ export interface Variant {
   /** Ids of delivery entries that exist but can't be read (e.g. a typo'd status). They are frozen: never published or overwritten. */
   invalidDeliveries?: string[];
   wordpress?: WordPressFields;
+  /** "claude": written by the /social skill while Obsidian was closed; held from posting and reminders until reviewed (#84). */
+  review?: "claude";
 }
 
 export interface Parsed<T> {

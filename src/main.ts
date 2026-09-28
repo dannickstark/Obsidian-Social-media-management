@@ -48,7 +48,7 @@ import {
 } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
 import { SvelteRenderChild } from "./ui/SvelteView";
-import { PlannerView } from "./views/PlannerView";
+import { activateView, PlannerView } from "./views/PlannerView";
 import { SidebarView } from "./views/SidebarView";
 import CampaignTable from "./views/CampaignTable.svelte";
 import { withTimeout } from "./util/time";
@@ -325,6 +325,11 @@ export default class OsmmPlugin extends Plugin {
       }
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
+      const held = this.index.variants().filter((v) => v.review === "claude").length;
+      if (held) {
+        const message = `${held} post${held === 1 ? "" : "s"} written by Claude need${held === 1 ? "s" : ""} your review.`;
+        ui.actions.actionNotice(message, "Review", () => activateView(this.app, VIEW_SIDEBAR, "right"));
+      }
       if (this.publisher.state().kind === "none") {
         ui.actions.actionNotice("No device publishes scheduled posts yet.", "Publish from this device", () => this.publisher.claim());
       }

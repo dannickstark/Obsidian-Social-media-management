@@ -27,6 +27,15 @@ describe("schedule (#75)", () => {
     expect((await c.call("get_post", { path: created.path })).status).toBe("scheduled");
   });
 
+  it("releases a note written offline once the plugin has validated and scheduled it", async () => {
+    const c = await mcpCtx({
+      notes: [{ path: "Social/Posts/Offline.md", frontmatter: { type: "social-post", platform: "mastodon", title: "Offline", channels: ["ma/you"], status: "ready", review: "claude" }, body: "Written while Obsidian was closed." }],
+    });
+    expect((await c.call("get_post", { path: "Social/Posts/Offline.md" })).review).toBe("claude");
+    expect((await c.call("schedule", { path: "Social/Posts/Offline.md", at: FRI_9 })).ok).toBe(true);
+    expect((await fm(c, "Social/Posts/Offline.md")).review).toBeUndefined();
+  });
+
   it("is idempotent: scheduling again at the same time changes nothing (review focus 2)", async () => {
     const c = await mcpCtx();
     const X = "Social/Event X/Event X – X.md";

@@ -162,6 +162,11 @@ describe("Needs attention", () => {
     expect(overdueRows(c.ctx.actions.rows(), Date.UTC(2026, 9, 8, 8))).toEqual([]);
   });
 
+  it("leaves a note Claude wrote while Obsidian was closed out of the Overdue tray, even overdue (ruling P6)", async () => {
+    const c = await makeCtx({ notes: [{ ...overdueNote, frontmatter: { ...overdueNote.frontmatter, review: "claude" } }] });
+    expect(overdueRows(c.ctx.actions.rows(), Date.UTC(2026, 9, 8, 8))).toEqual([]);
+  });
+
   it("resolves a check-needed delivery either way", async () => {
     const c = await makeCtx({ seed: true, notes: [checkNote] });
     render(Sidebar, { context: osmmContext(c.ctx) });

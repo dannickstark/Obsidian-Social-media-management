@@ -44,6 +44,16 @@ describe("OsmmPlugin unload (final review Minor 7)", () => {
 });
 
 describe("OsmmPlugin", () => {
+  it("tells the user at start-up about notes Claude wrote while Obsidian was closed (#84)", async () => {
+    const app = new App();
+    await writeNote(app as never, "Social/Posts/Offline.md", { type: "social-post", platform: "mastodon", title: "Offline", channels: [], status: "ready", review: "claude" }, "Hi");
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await settle();
+    expect(Notice.messages.some((m) => m.startsWith("1 post written by Claude needs your review."))).toBe(true);
+    plugin.unload();
+  });
+
   it("records publish attempts in Social/_log.md (#65)", async () => {
     const { app, plugin } = await loaded();
     await plugin.log.append({ at: Date.UTC(2026, 9, 8, 15, 30), path: "Social/Posts/A.md", channelId: "li/me", result: "published", url: "https://www.linkedin.com/feed/update/1" });

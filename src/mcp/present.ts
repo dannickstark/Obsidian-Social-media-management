@@ -51,6 +51,7 @@ export function postSummary(v: IndexedVariant, stagger: number, nameOf: (id: str
     scheduled_at: iso(v.scheduledAt),
     excerpt: v.excerpt,
     chars: v.bodyChars,
+    ...(v.review ? { review: v.review } : {}),
     channels: channelRows(v, stagger, nameOf),
   };
 }

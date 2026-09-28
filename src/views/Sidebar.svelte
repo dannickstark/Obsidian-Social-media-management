@@ -4,6 +4,7 @@
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
+  import ClaudeDrafts from "./ClaudeDrafts.svelte";
   import McpStatusLight from "./McpStatusLight.svelte";
   import PublisherBanner from "./PublisherBanner.svelte";
 
@@ -71,6 +72,8 @@
       {/each}
     </section>
   {/if}
+
+  <ClaudeDrafts />
 
   <section aria-label="Up next · today">
     <h3 class="osmm-section-title">Up next · today</h3>

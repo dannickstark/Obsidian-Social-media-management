@@ -85,7 +85,7 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
             tooSoon = true;
             return { refuse: TOO_SOON };
           }
-          return { fields: plan.fields, deliveries: deliveryChanges(fresh, plan.deliveries) };
+          return { fields: { ...plan.fields, review: undefined }, deliveries: deliveryChanges(fresh, plan.deliveries) };
         });
         if (!result.ok) {
           if (awaiting) return fail(result.reason, undefined, { needs_confirmation: "move_awaiting" });

@@ -1,4 +1,4 @@
-import { unreadableRow, type PostRow } from "../index/queries";
+import { heldForReview, unreadableRow, type PostRow } from "../index/queries";
 import { MINUTE } from "../model/dates";
 
 export interface ReminderItem {
@@ -32,7 +32,7 @@ export function reminderSlots(
 ): ReminderItem[] {
   const out: ReminderItem[] = [];
   for (const row of rows) {
-    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= postAfter || unreadableRow(row)) continue;
+    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= postAfter || unreadableRow(row) || heldForReview(row.variant)) continue;
     for (const minutes of offsets(row) ?? []) {
       if (minutes <= 0) continue;
       const fireAt = row.at - minutes * MINUTE;

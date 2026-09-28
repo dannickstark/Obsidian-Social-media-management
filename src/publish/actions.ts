@@ -3,6 +3,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import { openMarkdownView } from "../composer/session";
 import type { LoadedContent } from "../composer/content";
+import { heldForReview } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseVariant } from "../model/frontmatter";
@@ -457,7 +458,7 @@ export class PublishActions {
     const fm: unknown = info.exists ? parseYaml(info.frontmatter) : null;
     const parsed = isRecord(fm) ? parseVariant(fm, path) : null;
     if (!isRecord(fm) || !parsed?.value) return { refuse: GONE };
-    if (fm.review === "claude") return { refuse: HELD };
+    if (heldForReview(parsed.value)) return { refuse: HELD };
     const body = bodyOf(raw);
     const v: IndexedVariant = { ...indexed, ...parsed.value, file: indexed.file, issues: parsed.issues, displayTitle: parsed.value.title ?? (excerpt(body) || indexed.file.basename) };
     const content = { ...(await this.deps.composer.content.load(v)), body };

@@ -46,6 +46,14 @@ describe("socialKind and linkTarget", () => {
 });
 
 describe("parseVariant", () => {
+  it("reads review: claude and warns about other values", () => {
+    const base = { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "ready" };
+    expect(parseVariant({ ...base, review: "claude" }, "p.md").value!.review).toBe("claude");
+    const other = parseVariant({ ...base, review: "yes" }, "p.md");
+    expect(other.value!.review).toBeUndefined();
+    expect(other.issues).toEqual([expect.objectContaining({ level: "warning", field: "review" })]);
+  });
+
   it("splits comma-separated channels, reminders and media (final review F5.3)", () => {
     const v = parseVariant(
       { type: "social-post", platform: "linkedin", channels: "li/me, li/acme", reminders: "60, 10", media: "[[a.png]], [[b, c.png]]" },

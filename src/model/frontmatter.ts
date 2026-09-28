@@ -235,6 +235,11 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
   if (mediaMeta) variant.mediaMeta = mediaMeta;
   if (invalidDeliveries.length) variant.invalidDeliveries = invalidDeliveries;
 
+  if (!isBlank(fm.review)) {
+    if (fm.review === "claude") variant.review = "claude";
+    else issues.push({ level: "warning", field: "review", message: 'review can only be "claude" (set by the /social skill on notes written while Obsidian was closed).' });
+  }
+
   if (platform === "wordpress") {
     variant.wordpress = {
       slug: str(fm.slug),
@@ -279,6 +284,7 @@ export type VariantPatch = Partial<
     | "title"
     | "url"
     | "deliveries"
+    | "review"
   >
 > & {
   /** Only the WordPress fields to write; keys left out stay as they are in the note. */
@@ -299,6 +305,7 @@ export function variantFields(patch: VariantPatch): Record<string, unknown> {
   if ("title" in patch) out.title = patch.title;
   if ("url" in patch) out.url = patch.url;
   if ("deliveries" in patch) out.deliveries = patch.deliveries ? serializeDeliveries(patch.deliveries) : undefined;
+  if ("review" in patch) out.review = patch.review;
   if ("wordpress" in patch) {
     // WordPress fields are top-level keys, written one by one; an empty value removes its key.
     const wp = patch.wordpress ?? {};

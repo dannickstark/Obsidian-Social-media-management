@@ -7,7 +7,7 @@ import type { SafeWriter } from "../model/writer";
 import { MediaInspector } from "../media/mediaInfo";
 import { planSelectGroup, planToggleChannel } from "./channels";
 import { slugify } from "./fixes";
-import { scheduleDeliveries } from "../planner/board";
+import { scheduleDeliveries, UNSCHEDULE_BLOCKED, unscheduleBlocked, unscheduleDeliveries } from "../planner/board";
 import { deliveryChanges, type WriteRecord } from "../planner/changes";
 import { blocking, counters, validateAll, type Counter } from "../platforms/checks";
 import { effectiveMethod, platformDef, type AdapterRegistry, type EffectiveMethod } from "../platforms/registry";
@@ -16,7 +16,7 @@ import type { OsmmSettings } from "../settings/settings";
 import { VIEW_COMPOSER, VIEW_PREVIEW_GRID, type PlannerActions } from "../ui/actions";
 import { formatShortDate, formatTime } from "../ui/format";
 import { ContentLoader, type LoadedContent } from "./content";
-import { planComposerSchedule, scheduleNeeds, type ScheduleRequest } from "./schedule";
+import { planComposerSchedule, reminderDefaults, scheduleNeeds, type ScheduleRequest } from "./schedule";
 import { composerSession, type ComposerSession } from "./session";
 
 const ATTACHABLE_RE = /\.(png|jpe?g|webp|gif|mp4|mov|m4v|webm)$/i;
@@ -302,6 +302,51 @@ export class ComposerActions {
       ? ` ${frozen.length} channel${frozen.length === 1 ? "" : "s"} skipped: an unreadable delivery entry.`
       : "";
     planner.afterWrite(result, `Scheduled for ${formatShortDate(req.at)} ${formatTime(req.at)}.${suffix}`);
+    return result.ok;
+  }
+
+  /** The plugin's checks on a note Claude wrote with Obsidian closed (#84), as the note is now. */
+  async reviewIssues(v: IndexedVariant): Promise<Issue[]> {
+    return this.check(v, await this.content.load(v));
+  }
+
+  /** "Approve & schedule": validated here, scheduled at its proposed time, released from review, in one write. */
+  async approveClaudeDraft(v: IndexedVariant): Promise<boolean> {
+    const errors = (await this.reviewIssues(v)).filter((i) => i.level === "error");
+    if (errors.length) {
+      new Notice(`Fix these first: ${errors.map((i) => i.message).join(" ")}`);
+      return false;
+    }
+    const at = v.scheduledAt;
+    if (at === undefined) {
+      new Notice("Set a time in the composer first.");
+      return false;
+    }
+    if (at <= this.deps.now()) {
+      new Notice("The proposed time has passed. Pick a new time in the composer.");
+      return false;
+    }
+    const reminders = reminderDefaults(v, this.channelsOf(v), this.deps.settings());
+    const stagger = this.deps.settings().defaultStaggerMinutes;
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      if (fresh.review !== "claude") return { refuse: "This post was already reviewed." };
+      if (fresh.scheduledAt !== at) return { refuse: "The proposed time changed. Check the post again." };
+      const plan = planComposerSchedule(fresh, { at, reminders }, stagger);
+      if ("refuse" in plan) return plan;
+      return { fields: { ...plan.fields, review: undefined }, deliveries: deliveryChanges(fresh, plan.deliveries as Record<string, Delivery>) };
+    });
+    this.deps.planner.afterWrite(result, `Approved and scheduled for ${formatShortDate(at)} ${formatTime(at)}.`);
+    return result.ok;
+  }
+
+  /** "Keep as draft": no longer held, and nothing of it stays scheduled. */
+  async keepClaudeDraft(v: IndexedVariant): Promise<boolean> {
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      if (fresh.review !== "claude") return { refuse: "This post was already reviewed." };
+      if (unscheduleBlocked(fresh)) return { refuse: UNSCHEDULE_BLOCKED };
+      return { fields: { review: undefined, status: "draft" }, deliveries: deliveryChanges(fresh, unscheduleDeliveries(fresh, "draft")) };
+    });
+    this.deps.planner.afterWrite(result, "Kept as a draft.");
     return result.ok;
   }
 
