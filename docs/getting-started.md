@@ -61,6 +61,20 @@ From now on, each reminder arrives on the phone at its time, even when the compu
 
 The pushes carry the post's title and, in the tap link, its text; the buttons that open Obsidian also carry the vault name and the note's path. On the public ntfy.sh server anyone who knows the topic can read them. Keep the random topic private, or run your own ntfy server with an access token (use https: over plain http the token travels unencrypted, and the settings warn you).
 
+## 8. Plan a campaign with Claude Code (5 minutes, optional)
+
+On a desktop:
+
+1. Open **Settings → Social Planner → Claude Code** and turn on **MCP server on this device**. It listens on this computer only and uses a secret token.
+2. Click **Copy setup command**, paste it into a terminal and run it. Then click **Test connection**: "The server answers" means Claude Code can connect. The command contains the token in the clear; running it stores that token in Claude Code's own configuration, and possibly your shell history, so don't share it. After **New token**, run the new command.
+3. Install the skill in Claude Code: `claude plugin marketplace add dannickstark/Obsidian-Social-media-management`, then `claude plugin install osmm@osmm-social-planner`.
+4. Optional but worth it: run **Create voice profile** and describe how you write; add two or three posts you like.
+5. In Claude Code, type `/osmm:social` and what you want, for example "plan Event X for LinkedIn, X and Bluesky, the event is on the 12th". Claude proposes a plan, drafts each post, checks it and schedules it once you agree. Each change shows a notice in Obsidian with **Open**.
+
+Claude never publishes by itself. If you ask it to post now or edit a live post, Obsidian shows what, where and when, with **Approve** and **Deny**; no answer within two minutes means no. Under **Publishing from Claude** you can let a channel skip that question for posting now; editing a live post always asks, and a post Claude schedules goes out at its time without a second question.
+
+If Obsidian is closed, run Claude Code inside your vault folder: the skill writes the notes directly, and the next time Obsidian opens they wait under **Written by Claude** in the sidebar until you click **Approve & schedule** (or **Keep as draft**). They are not posted or reminded about before that.
+
 ## When something goes wrong
 
 - **The post's time passed while Obsidian was closed.** It is not posted late behind your back: it waits in the **Overdue** tray with **Post now**, **Reschedule** and **Skip**. (Settings → Publishing → **Post late items automatically** lets short delays go out anyway; it is off by default.)
