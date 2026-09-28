@@ -12,6 +12,7 @@ import { AdapterRegistry } from "../../src/platforms/registry";
 import { PublishActions } from "../../src/publish/actions";
 import { ClipboardService } from "../../src/publish/clipboard";
 import { MemoryLog } from "../../src/publish/log";
+import { Secrets } from "../../src/secrets/secrets";
 import { migrateSettings, type OsmmSettings } from "../../src/settings/settings";
 import { PlannerActions } from "../../src/ui/actions";
 import type { OsmmContext } from "../../src/ui/context";
@@ -80,6 +81,8 @@ export async function makeCtx(
     adapters,
     clipboard: new ClipboardService(app as never),
     log,
+    secrets: new Secrets(app as never),
+    delay: async () => undefined,
     settings: () => get(settings),
     now: clock,
   });

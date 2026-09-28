@@ -134,6 +134,8 @@ export default class OsmmPlugin extends Plugin {
         adapters: this.adapters,
         clipboard: new ClipboardService(this.app),
         log: this.log,
+        secrets: this.secrets,
+        delay: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
         settings: () => this.settings,
         now: () => Date.now(),
       });

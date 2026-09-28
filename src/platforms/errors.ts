@@ -1,4 +1,10 @@
-export type ErrorKind = "transient" | "needs_user" | "invalid_content";
+/**
+ * `unknown` (Ruling P4): the outcome of a send is not known — a network error or timeout raised by
+ * `adapter.publish` after the request may already have reached the platform. It is never classified
+ * by `classifyError` itself (which keeps its existing, general-purpose behaviour); the orchestrator
+ * decides this case for a publish attempt specifically, since only it knows the send just happened.
+ */
+export type ErrorKind = "transient" | "needs_user" | "invalid_content" | "unknown";
 
 /** Spec §4.1: every adapter error is normalised into one of three classes. */
 export class PublishError extends Error {
@@ -33,7 +39,16 @@ export class InvalidContentError extends PublishError {
   }
 }
 
-function statusOf(e: unknown): number | undefined {
+/** Ruling P4: a send whose outcome is unknown (see `ErrorKind`). Built by the orchestrator, not `classifyError`. */
+export class UnknownOutcomeError extends PublishError {
+  constructor(message: string) {
+    super("unknown", message);
+    this.name = "UnknownOutcomeError";
+  }
+}
+
+/** Whether the error carries an HTTP status, i.e. classifyError read it off a real response rather than guessing. */
+export function statusOf(e: unknown): number | undefined {
   if (typeof e !== "object" || e === null || !("status" in e)) return undefined;
   const status = (e as { status: unknown }).status;
   return typeof status === "number" ? status : undefined;

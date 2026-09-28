@@ -18,6 +18,7 @@ import { isMobile, type ClipboardService, type CopyResult } from "./clipboard";
 import { effectiveDelivery } from "./eligibility";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
+import { PublishOrchestrator, type FailureInfo, type RunResult } from "./orchestrator";
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
 
 export interface PublishDeps {
@@ -30,9 +31,20 @@ export interface PublishDeps {
   adapters: AdapterRegistry;
   clipboard: ClipboardService;
   log: AttemptLog;
+  secrets: { get(id: string): string | null; redact(text: string, ids: readonly string[]): string };
+  /** Waits between API retries (a timer in the plugin; immediate in tests). */
+  delay(ms: number): Promise<void>;
   settings(): OsmmSettings;
   now(): number;
 }
+
+/** Where the publish service reports deliveries that need the user (Task 9 plugs in desktop notifications). */
+export interface DeliveryNotifier {
+  due(path: string, channelId: string): void;
+  failed(info: FailureInfo): void;
+}
+
+const SILENT: DeliveryNotifier = { due: () => undefined, failed: () => undefined };
 
 export type MarkResult = { ok: true } | { ok: false; reason: string };
 
@@ -41,7 +53,32 @@ export class PublishActions {
   /** Set by the plugin so actions can open Svelte modals with the same context. */
   context: OsmmContext | null = null;
 
-  constructor(protected readonly deps: PublishDeps) {}
+  readonly orchestrator: PublishOrchestrator;
+  notifier: DeliveryNotifier = SILENT;
+
+  constructor(protected readonly deps: PublishDeps) {
+    this.orchestrator = new PublishOrchestrator({
+      writer: deps.writer,
+      index: deps.index,
+      channels: deps.channels,
+      adapters: deps.adapters,
+      secrets: deps.secrets,
+      content: deps.composer.content,
+      log: deps.log,
+      now: () => deps.now(),
+      delay: (ms) => deps.delay(ms),
+      onFailure: (info) => this.notifier.failed(info),
+    });
+  }
+
+  /** Runs one API delivery and reports the outcome (failures are reported by the notifier). */
+  async runApi(path: string, channelId: string): Promise<RunResult> {
+    const result = await this.orchestrator.run(path, channelId);
+    const name = this.channelName(channelId);
+    if (result.status === "published") new Notice(`Published to ${name}.`);
+    else if (result.status === "refused") new Notice(`${name}: ${result.reason}`);
+    return result;
+  }
 
   protected channelName(channelId: string): string {
     return this.deps.channels.get(channelId)?.name ?? channelId;
