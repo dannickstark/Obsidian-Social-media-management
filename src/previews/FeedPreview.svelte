@@ -19,7 +19,7 @@
       {#if i === 0 && mediaFirst}<PvMedia media={model.media} />{/if}
       {#if i === 0 && model.fold && !expanded}
         <PvText segments={model.fold} />
-        <button type="button" class="osmm-pv-more" onclick={() => (expanded = true)}>…see more</button>
+        <button type="button" class="osmm-pv-more" aria-expanded={expanded} onclick={() => (expanded = true)}>…see more</button>
       {:else}
         <PvText segments={item.segments} />
       {/if}

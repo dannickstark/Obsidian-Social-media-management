@@ -19,4 +19,20 @@ describe("articleBlocks", () => {
     expect(articleBlocks("# We're back\n\nHello", "We're back")).toEqual([{ kind: "paragraph", segments: [{ text: "Hello" }] }]);
     expect(articleBlocks("# Another\n\nHello", "We're back")[0]).toMatchObject({ kind: "heading" });
   });
+
+  it("pulls an inline embed out of paragraph text into an image block right after it", () => {
+    const blocks = articleBlocks("Some text ![[cover.png]] more text");
+    expect(blocks).toEqual([
+      { kind: "paragraph", segments: [{ text: "Some text more text" }] },
+      { kind: "image", target: "cover.png" },
+    ]);
+    for (const b of blocks) {
+      if (b.kind === "paragraph") {
+        for (const s of b.segments) {
+          expect(s.text).not.toContain("![[");
+          expect(s.text).not.toContain("](");
+        }
+      }
+    }
+  });
 });

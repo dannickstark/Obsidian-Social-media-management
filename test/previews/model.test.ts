@@ -33,6 +33,16 @@ describe("segments", () => {
   it("leaves Markdown markers alone on plain platforms", () => {
     expect(segments("**not bold** https://x.y", "plain")).toEqual([{ text: "**not bold** " }, { text: "https://x.y", href: "https://x.y" }]);
   });
+
+  it("only links http(s) urls, never javascript:, data:, vbscript: or relative/obsidian: schemes", () => {
+    const hasHref = (text: string) => segments(text, "markdown").some((s) => s.href !== undefined);
+    expect(hasHref("[click](javascript:alert(1))")).toBe(false);
+    expect(segments("[click](data:text/html,x)", "markdown")).toEqual([{ text: "click" }]);
+    expect(hasHref("[click](vbscript:msgbox(1))")).toBe(false);
+    expect(segments("[click](obsidian://open?vault=x)", "markdown")).toEqual([{ text: "click" }]);
+    expect(segments("[click](/relative/path)", "markdown")).toEqual([{ text: "click" }]);
+    expect(segments("[click](https://example.com)", "markdown")).toEqual([{ text: "click", href: "https://example.com" }]);
+  });
 });
 
 describe("previewModel", () => {

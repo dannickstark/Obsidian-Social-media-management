@@ -10,7 +10,9 @@ describe("feed previews", () => {
     const figure = screen.getByRole("figure", { name: "LinkedIn preview" });
     expect(figure.textContent).toContain("a".repeat(210));
     expect(figure.textContent).not.toContain("a".repeat(211));
-    await fireEvent.click(screen.getByRole("button", { name: "…see more" }));
+    const more = screen.getByRole("button", { name: "…see more" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await fireEvent.click(more);
     expect(figure.textContent).toContain("a".repeat(250));
   });
 

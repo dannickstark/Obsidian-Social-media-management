@@ -50,6 +50,9 @@ function regexFor(dialect: TextDialect): RegExp {
   return re;
 }
 
+/** Only http(s) links are ever rendered as clickable; javascript:, data:, vbscript:, relative and obsidian: links render as plain text. */
+const SAFE_URL_RE = /^https?:\/\//i;
+
 /** How the text looks on the platform: emphasis per dialect, plus links and hashtags. */
 export function segments(text: string, dialect: TextDialect): Segment[] {
   const out: Segment[] = [];
@@ -59,7 +62,7 @@ export function segments(text: string, dialect: TextDialect): Segment[] {
     if (m.index > last) out.push({ text: text.slice(last, m.index) });
     if (g.url !== undefined) out.push({ text: g.url, href: g.url });
     else if (g.tag !== undefined) out.push({ text: g.tag, tag: true });
-    else if (g.lt !== undefined) out.push({ text: g.lt, href: g.lu });
+    else if (g.lt !== undefined) out.push(SAFE_URL_RE.test(g.lu ?? "") ? { text: g.lt, href: g.lu } : { text: g.lt });
     else if (g.b !== undefined) out.push({ text: g.b, bold: true });
     else if (g.i !== undefined) out.push({ text: g.i, italic: true });
     else if (g.s !== undefined) out.push({ text: g.s, strike: true });
@@ -218,15 +221,20 @@ export type Block =
 const inline = (text: string): Segment[] => segments(renderText(text, "markdown"), "markdown");
 const WIKI_IMAGE_RE = /^!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$/;
 const MD_IMAGE_RE = /^!\[[^\]]*\]\(([^)\s]+)\)$/;
+/** Inline (not whole-line) embeds inside a paragraph line, to be pulled out into their own image blocks. */
+const INLINE_EMBED_RE = /!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]|!\[[^\]]*\]\(([^)\s]+)\)/g;
 
 /** A small Markdown block parser for the neutral article preview (not a full CommonMark renderer). */
 export function articleBlocks(markdown: string, title?: string): Block[] {
   const blocks: Block[] = [];
   let para: string[] = [];
+  let paraImages: string[] = [];
   let list: { ordered: boolean; items: Segment[][] } | null = null;
   const flushPara = () => {
     if (para.length) blocks.push({ kind: "paragraph", segments: inline(para.join("\n")) });
     para = [];
+    for (const target of paraImages) blocks.push({ kind: "image", target });
+    paraImages = [];
   };
   const flush = () => {
     flushPara();
@@ -259,7 +267,15 @@ export function articleBlocks(markdown: string, title?: string): Block[] {
       blocks.push({ kind: "quote", segments: inline(m[1]!) });
     } else {
       if (list) flush();
-      para.push(line);
+      const stripped = line
+        .replace(INLINE_EMBED_RE, (_full, wiki: string | undefined, md: string | undefined) => {
+          const target = (wiki ?? md ?? "").trim();
+          if (target) paraImages.push(target);
+          return "";
+        })
+        .replace(/[ \t]{2,}/g, " ")
+        .trim();
+      if (stripped) para.push(stripped);
     }
   }
   flush();
