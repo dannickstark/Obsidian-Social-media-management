@@ -79,10 +79,10 @@ Either way: no answer within 2 minutes counts as a no, only one question is open
 The voice profile (`Social/_voice.md`) as text, or `exists: false` with the template and a hint. Read it before drafting.
 
 ### add_voice_refinement
-`text`: appends a dated entry under Refinements. Only after the user agreed to the exact text.
+`text`, `idempotency_key`. Appends a dated entry under Refinements. Only after the user agreed to the exact text.
 
 ### append_to_campaign
-`path`, `heading`, `text`: adds a section at the end of a campaign note, e.g. "Review decisions (2026-10-08)". Never changes existing text.
+`path`, `heading`, `text`, `idempotency_key`. Adds a section at the end of a campaign note, e.g. "Review decisions (2026-10-08)". Never changes existing text.
 
 ## Refusal codes
 

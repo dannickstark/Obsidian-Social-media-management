@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { getFrontMatterInfo, parseYaml } from "obsidian";
 import { createVoiceProfile, VOICE_TEMPLATE } from "../../src/claude/voice";
+import { KEY_REUSED } from "../../src/mcp/idempotency";
+import { parseCampaign } from "../../src/model/frontmatter";
 import { mcpCtx } from "./helpers";
 
 describe("voice profile tools (#83)", () => {
@@ -47,5 +50,66 @@ describe("voice profile tools (#83)", () => {
     // The voice profile tools never take a path argument at all: they always target the plugin's own
     // Social/_voice.md, so there is no argument through which a caller could reach .obsidian/.
     expect(c.registry.list().find((t) => t.name === "add_voice_refinement")!.inputSchema).not.toHaveProperty("properties.path");
+  });
+
+  it("replays add_voice_refinement with the same idempotency_key, and refuses a reused key with different arguments (Task 14 fix round 1)", async () => {
+    const c = await mcpCtx();
+    await createVoiceProfile(c.app as never, "Social");
+    const key = "voice-refine-key-1234";
+    const first = await c.call("add_voice_refinement", { text: "Shorter hooks.", idempotency_key: key });
+    expect(first.ok).toBe(true);
+    const again = await c.call("add_voice_refinement", { text: "Shorter hooks.", idempotency_key: key });
+    expect(again).toMatchObject({ ok: true, replayed: true });
+    const text = await c.app.vault.read(c.app.vault.getFileByPath("Social/_voice.md")!);
+    expect(text.match(/Shorter hooks\./g)).toHaveLength(1);
+    const reused = await c.call("add_voice_refinement", { text: "A different refinement.", idempotency_key: key });
+    expect(reused).toEqual({ ok: false, error: KEY_REUSED });
+  });
+
+  it("replays append_to_campaign with the same idempotency_key, and refuses a reused key with different arguments (Task 14 fix round 1)", async () => {
+    const c = await mcpCtx();
+    const path = "Social/Event X/Event X.md";
+    const key = "campaign-append-key-1234";
+    const first = await c.call("append_to_campaign", { path, heading: "Review decisions", text: "LinkedIn: approved.", idempotency_key: key });
+    expect(first.ok).toBe(true);
+    const again = await c.call("append_to_campaign", { path, heading: "Review decisions", text: "LinkedIn: approved.", idempotency_key: key });
+    expect(again).toMatchObject({ ok: true, replayed: true });
+    const text = await c.app.vault.read(c.app.vault.getFileByPath(path)!);
+    expect(text.match(/LinkedIn: approved\./g)).toHaveLength(1);
+    const reused = await c.call("append_to_campaign", { path, heading: "Review decisions", text: "A different note.", idempotency_key: key });
+    expect(reused).toEqual({ ok: false, error: KEY_REUSED });
+  });
+
+  it("treats a text payload that looks like frontmatter as inert body text (add_voice_refinement)", async () => {
+    const c = await mcpCtx();
+    await createVoiceProfile(c.app as never, "Social");
+    const payload = "---\nfoo: bar\n---\n\n## Fake section\nInjected.";
+    const r = await c.call("add_voice_refinement", { text: payload });
+    expect(r.ok).toBe(true);
+    const file = c.app.vault.getFileByPath("Social/_voice.md")!;
+    const full = await c.app.vault.read(file);
+    // The profile note itself has no real frontmatter, and the injected "---" is nowhere near the
+    // start of the file, so it is never read back as a frontmatter block.
+    expect(getFrontMatterInfo(full).exists).toBe(false);
+    expect(full).toContain(payload);
+  });
+
+  it("treats a text payload that looks like frontmatter as inert body text, without touching the real frontmatter (append_to_campaign, #85)", async () => {
+    const c = await mcpCtx();
+    const path = "Social/Event X/Event X.md";
+    const before = await c.app.vault.read(c.app.vault.getFileByPath(path)!);
+    const beforeInfo = getFrontMatterInfo(before);
+    const beforeFm = parseYaml(beforeInfo.frontmatter) as Record<string, unknown>;
+    const payload = "---\nfoo: bar\n---\n\n## Fake section\nInjected.";
+    const r = await c.call("append_to_campaign", { path, heading: "Notes", text: payload });
+    expect(r.ok).toBe(true);
+    const after = await c.app.vault.read(c.app.vault.getFileByPath(path)!);
+    const afterInfo = getFrontMatterInfo(after);
+    // The real frontmatter block (bytes and parsed value) is exactly the one that was there before.
+    expect(afterInfo.frontmatter).toBe(beforeInfo.frontmatter);
+    const afterFm = parseYaml(afterInfo.frontmatter) as Record<string, unknown>;
+    expect(afterFm).toEqual(beforeFm);
+    expect(parseCampaign(afterFm, path).issues).toEqual([]);
+    expect(after).toContain(payload);
   });
 });
