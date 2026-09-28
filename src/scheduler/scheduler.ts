@@ -46,6 +46,8 @@ export class Scheduler {
   private running = false;
   /** Set by reconcile(): a tick before the startup reconcile is a no-op (a stuck `publishing` is checked first). */
   private ready = false;
+  /** Bumped by becamePublisher(): a superseded reconcile or tick stops, and never reopens the gate. */
+  private generation = 0;
   private readonly handled = new Set<string>();
   private readonly warned = new Set<string>();
 
@@ -75,6 +77,8 @@ export class Scheduler {
     const result: TickResult = { dispatched: [], overdue: [] };
     if (this.running || !this.ready) return result;
     this.running = true;
+    const generation = this.generation;
+    const current = () => this.ready && this.generation === generation && this.deps.isPublisher();
     try {
       const now = this.deps.now();
       const previous = this.lastTick;
@@ -85,13 +89,13 @@ export class Scheduler {
         this.deps.warn(e instanceof Error ? e.message : String(e));
       }
       // Re-checked after onTick: becamePublisher() may have closed the gate while it ran (M3 P2).
-      if (!this.ready || !this.deps.isPublisher()) return result;
+      if (!current()) return result;
       this.warnUnreadable();
       const stagger = this.deps.settings().defaultStaggerMinutes;
       const lateMs = this.deps.autoPostLateMs();
       for (const item of dueItems(this.deps.index.variants(), now, stagger)) {
-        // The role can move to another device mid-loop (a synced takeover): stop at once.
-        if (!this.deps.isPublisher()) break;
+        // The role can move to another device, or a new reconcile start, mid-loop: stop at once.
+        if (!current()) break;
         if (this.handled.has(item.key)) continue;
         this.handled.add(item.key);
         try {
@@ -114,10 +118,12 @@ export class Scheduler {
 
   /** Runs once at startup, before the loop (publisher only); ticks are no-ops until it has run. */
   async reconcile(): Promise<ReconcileSummary> {
+    const generation = this.generation;
     try {
-      return await this.reconcileOnce();
+      return await this.reconcileOnce(generation);
     } finally {
-      this.ready = true;
+      // Only the latest reconcile opens the gate; a superseded one leaves it to its successor.
+      if (generation === this.generation) this.ready = true;
     }
   }
 
@@ -126,16 +132,17 @@ export class Scheduler {
    * reconcile it skipped as a non-publisher, so a stuck `publishing` becomes check_needed before any dispatch.
    */
   becamePublisher(): Promise<ReconcileSummary> {
+    this.generation++;
     this.ready = false;
     return this.reconcile();
   }
 
-  private async reconcileOnce(): Promise<ReconcileSummary> {
+  private async reconcileOnce(generation: number): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { checkNeeded: 0, overdue: 0, dispatched: 0 };
     if (!this.deps.isPublisher()) return summary;
     const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs());
     for (const action of plan) {
-      if (!this.deps.isPublisher()) break;
+      if (generation !== this.generation || !this.deps.isPublisher()) break;
       try {
         if (action.kind === "check_needed") {
           if (await this.deps.publish.markCheckNeeded(action.path, action.channelId)) {

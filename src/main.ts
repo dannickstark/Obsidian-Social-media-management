@@ -55,6 +55,8 @@ export default class OsmmPlugin extends Plugin {
   private unloaded = false;
   /** Set once the startup reconcile has run; later role changes run their own (M3 P2). */
   private started = false;
+  /** Counts publisher-role changes, so start-up can tell whether its reconcile finished as the publisher. */
+  private roleChanges = 0;
   private ui: OsmmContext | undefined;
   /** Pending orchestrator retry delays, cleared on unload so no retry fires after the plugin is gone. */
   private readonly delays = new Set<number>();
@@ -142,7 +144,15 @@ export default class OsmmPlugin extends Plugin {
     this.register(
       this.settingsStore.subscribe(() => {
         const now = this.publisher.isPublisher();
-        if (now && !wasPublisher && this.started) void this.scheduler.becamePublisher().then(() => this.scheduler.tick());
+        if (now !== wasPublisher) this.roleChanges++;
+        if (now && !wasPublisher && this.started && !this.unloaded) {
+          void this.scheduler
+            .becamePublisher()
+            .then(async () => {
+              if (!this.unloaded) await this.scheduler.tick();
+            })
+            .catch((e) => void new Notice(e instanceof Error ? e.message : String(e), 0));
+        }
         wasPublisher = now;
       }),
     );
@@ -157,12 +167,15 @@ export default class OsmmPlugin extends Plugin {
       this.index.start();
       await this.index.build();
       if (this.unloaded) return;
-      const reconciledAsPublisher = this.publisher.isPublisher();
+      const startedAsPublisher = this.publisher.isPublisher();
+      const changes = this.roleChanges;
       await this.scheduler.reconcile();
       if (this.unloaded) return;
       this.started = true;
-      // The role arrived while the startup reconcile ran as a non-publisher: run it again as the publisher.
-      if (!reconciledAsPublisher && this.publisher.isPublisher()) await this.scheduler.becamePublisher();
+      // It finished as the publisher only if it held the role throughout. Otherwise (the role arrived, or was
+      // lost and regained, while it ran) run it again now as the publisher, before the loop starts.
+      const finishedAsPublisher = startedAsPublisher && this.roleChanges === changes;
+      if (this.publisher.isPublisher() && !finishedAsPublisher) await this.scheduler.becamePublisher();
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
       this.scheduler.start();

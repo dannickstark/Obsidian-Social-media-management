@@ -3,6 +3,7 @@ import type { PublishDeps } from "../src/publish/actions";
 import type { Notifier } from "../src/reminders/notifier";
 import { App, Notice, Setting, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
+import { formatDateTime } from "../src/model/dates";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
@@ -137,6 +138,64 @@ describe("OsmmPlugin", () => {
     await plugin.publisher.claim();
     await indexed(plugin.index, () => plugin.index.getVariant("Social/Posts/P.md")?.deliveries["bs/you"]?.status === "check_needed");
     plugin.unload();
+  });
+
+  describe("a role change during the startup reconcile (Task 2 follow-up)", () => {
+    const P = "Social/Posts/P.md";
+    const Q = "Social/Posts/Q.md";
+
+    /** A stuck `publishing` delivery and a due one; the layout-ready callback is held so the test drives start-up. */
+    async function startingUp() {
+      const app = new App();
+      const at = formatDateTime(Date.now());
+      const post = (deliveries: Record<string, unknown>) => ({ type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: at, deliveries });
+      await writeNote(app as never, P, post({ "bs/you": { status: "publishing", at } }), "Hi");
+      await writeNote(app as never, Q, post({ "bs/you": { status: "scheduled" } }), "Hi");
+      await settle();
+      let ready: (() => Promise<void>) | undefined;
+      app.workspace.onLayoutReady = (cb) => {
+        ready = cb as () => Promise<void>;
+      };
+      const plugin = new OsmmPlugin(app as never, manifest);
+      await plugin.load();
+      const publish = plugin.uiContext().publish;
+      const checked = vi.spyOn(publish, "markCheckNeeded");
+      const dispatched = vi.spyOn(publish, "dispatch");
+      const reconcile = plugin.scheduler.reconcile.bind(plugin.scheduler);
+      return { plugin, checked, dispatched, reconcile, start: () => ready!() };
+    }
+
+    async function expectCheckedBeforeDispatch(t: Awaited<ReturnType<typeof startingUp>>) {
+      await indexed(t.plugin.index, () => t.plugin.index.getVariant(P)?.deliveries["bs/you"]?.status === "check_needed");
+      expect(t.checked).toHaveBeenCalledWith(P, "bs/you");
+      expect(t.dispatched).toHaveBeenCalledOnce();
+      expect(t.checked.mock.invocationCallOrder[0]!).toBeLessThan(t.dispatched.mock.invocationCallOrder[0]!);
+      t.plugin.unload();
+    }
+
+    it("checks a stuck publish before any dispatch when the role is claimed while the startup reconcile is pending", async () => {
+      const t = await startingUp();
+      vi.spyOn(t.plugin.scheduler, "reconcile").mockImplementationOnce(async () => {
+        const summary = await t.reconcile();
+        await t.plugin.publisher.claim();
+        return summary;
+      });
+      await t.start();
+      await expectCheckedBeforeDispatch(t);
+    });
+
+    it("reconciles again when the role is lost and regained while the startup reconcile runs", async () => {
+      const t = await startingUp();
+      await t.plugin.publisher.claim();
+      vi.spyOn(t.plugin.scheduler, "reconcile").mockImplementationOnce(async () => {
+        await t.plugin.publisher.release();
+        const summary = await t.reconcile();
+        await t.plugin.publisher.claim();
+        return summary;
+      });
+      await t.start();
+      await expectCheckedBeforeDispatch(t);
+    });
   });
 
   it("does not build or start the index when unloaded before the layout is ready (final review F5.4)", async () => {

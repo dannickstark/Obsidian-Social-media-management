@@ -3,7 +3,7 @@ import { get } from "svelte/store";
 import { formatDateTime } from "../../src/model/dates";
 import { decide, dueItems, GRACE_MS, type DueItem } from "../../src/scheduler/due";
 import { Scheduler, type SchedulerDeps } from "../../src/scheduler/scheduler";
-import { indexed } from "../helpers";
+import { indexed, settle } from "../helpers";
 import { makeCtx, type TestCtx } from "../ui/ctx";
 
 const T = Date.UTC(2026, 9, 12, 7); // Mon 12 Oct 2026, 09:00 Berlin
@@ -287,5 +287,89 @@ describe("Scheduler when the publisher role changes (M3 P2)", () => {
       await scheduler.tick();
       expect(dispatched.sort()).toEqual([key(A, T), key(B, T)]);
     }
+  });
+});
+
+describe("Scheduler when the role flips on, off and on again (Task 2 follow-up)", () => {
+  it("keeps the gate closed until the latest reconcile is done, and dispatches each item once", async () => {
+    const S = "Social/Posts/S.md";
+    const c = await makeCtx({ notes: [note(S, T - 5 * MIN, { deliveries: { "bs/you": { status: "publishing" } } }), note(A, T), note(B, T)], now: T });
+    const gates: Array<() => void> = [];
+    const dispatched: string[] = [];
+    let publisher = false;
+    const scheduler = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => publisher,
+      autoPostLateMs: () => null,
+      publish: {
+        dispatch: async (i: DueItem) => void dispatched.push(i.key),
+        markOverdue: async () => undefined,
+        // Each reconcile blocks on its check until the test releases it; only the first one wins the write.
+        markCheckNeeded: (): Promise<boolean> =>
+          new Promise((resolve) => {
+            const first = gates.length === 0;
+            gates.push(() => resolve(first));
+          }),
+        resolveCheck: async () => undefined,
+      },
+      warn: () => undefined,
+    });
+    await scheduler.reconcile();
+    publisher = true;
+    const first = scheduler.becamePublisher();
+    await settle();
+    publisher = false;
+    publisher = true;
+    const second = scheduler.becamePublisher();
+    await settle();
+    expect(gates).toHaveLength(2);
+    gates[0]!();
+    expect(await first).toEqual({ checkNeeded: 1, overdue: 0, dispatched: 0 });
+    // The superseded reconcile must not reopen the gate while the latest one still runs.
+    expect(await scheduler.tick()).toEqual({ dispatched: [], overdue: [] });
+    expect(dispatched).toEqual([]);
+    gates[1]!();
+    expect(await second).toEqual({ checkNeeded: 0, overdue: 0, dispatched: 2 });
+    await scheduler.tick();
+    expect(dispatched.sort()).toEqual([key(A, T), key(B, T)]);
+  });
+
+  it("stops a tick's loop when a new reconcile starts mid-tick", async () => {
+    const S = "Social/Posts/S.md";
+    // The stuck entry makes the new reconcile await its check before it claims B.
+    const c = await makeCtx({ notes: [note(S, T - 5 * MIN, { deliveries: { "bs/you": { status: "publishing" } } }), note(A, T), note(B, T)], now: T });
+    const dispatched: string[] = [];
+    let reconciling: Promise<unknown> | undefined;
+    let publisher = true;
+    const scheduler: Scheduler = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => publisher,
+      autoPostLateMs: () => null,
+      publish: {
+        dispatch: async (i: DueItem) => {
+          dispatched.push(i.key);
+          if (!reconciling) {
+            // The role flips off and on during the tick: a new reconcile takes over the rest.
+            publisher = false;
+            publisher = true;
+            reconciling = scheduler.becamePublisher();
+          }
+        },
+        markOverdue: async () => undefined,
+        markCheckNeeded: async () => (await settle(), false),
+        resolveCheck: async () => undefined,
+      },
+      warn: () => undefined,
+    });
+    publisher = false;
+    await scheduler.reconcile();
+    publisher = true;
+    expect((await scheduler.tick()).dispatched).toHaveLength(1);
+    await reconciling;
+    expect(dispatched.sort()).toEqual([key(A, T), key(B, T)]);
   });
 });

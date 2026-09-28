@@ -3,6 +3,8 @@
  * (`crypto.randomUUID` is missing on older iOS WebViews, #27).
  */
 export function randomString(length: number, alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"): string {
+  // Rejection sampling needs 1..256 symbols; outside that range it would loop forever or skip symbols.
+  if (alphabet.length === 0 || alphabet.length > 256) throw new Error(`randomString needs an alphabet of 1 to 256 characters, got ${alphabet.length}`);
   const out: string[] = [];
   const limit = 256 - (256 % alphabet.length);
   const byte = new Uint8Array(1);

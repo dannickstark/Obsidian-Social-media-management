@@ -35,6 +35,12 @@ describe("ids", () => {
     expect(newDeviceId()).not.toBe(newDeviceId());
     expect(randomString(24)).toMatch(/^[a-z0-9]{24}$/);
   });
+
+  it("refuses an alphabet it cannot sample without bias", () => {
+    expect(() => randomString(4, "")).toThrow(/alphabet/);
+    expect(() => randomString(4, "a".repeat(257))).toThrow(/alphabet/);
+    expect(randomString(4, "ab".repeat(128))).toMatch(/^[ab]{4}$/);
+  });
 });
 
 describe("device name", () => {
