@@ -1,7 +1,8 @@
-import { Notice, type App, type TFile } from "obsidian";
+import { Menu, Notice, type App, type TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import { expandRows, type PostRow } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
+import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
 import { PLATFORM_META } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
@@ -115,6 +116,28 @@ export class PlannerActions {
       this.deps.writer.patchVariant(file, plan.previous),
     );
     return true;
+  }
+
+  async skip(row: PostRow): Promise<void> {
+    const file = row.variant.file;
+    if (row.channelId) await this.deps.writer.transitionDelivery(file, row.channelId, "skipped");
+    else await this.deps.writer.patchVariant(file, { status: "skipped" });
+    new Notice("Skipped.");
+  }
+
+  quickReschedule(event: MouseEvent, row: PostRow): void {
+    const now = this.deps.now();
+    const base = row.at ?? now;
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle("In 1 hour").onClick(() => void this.reschedule(row, { at: now + HOUR })));
+    menu.addItem((i) => i.setTitle("Tomorrow, same time").onClick(() => void this.reschedule(row, { at: Math.max(addLocalDays(base, 1), now + HOUR) })));
+    menu.addItem((i) =>
+      i.setTitle("Pick a date…").onClick(async () => {
+        const at = await pickDateTime(this.deps.app, "Reschedule", Math.max(base, now + DAY));
+        if (at !== null) await this.reschedule(row, { at });
+      }),
+    );
+    menu.showAtMouseEvent(event);
   }
 
   dragStart(event: DragEvent, row: PostRow): void {
