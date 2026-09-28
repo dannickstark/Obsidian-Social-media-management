@@ -431,6 +431,26 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect((await b.sync()).cancelled).toHaveLength(1);
   });
 
+  it("stop() ends a run in flight without a warning, and later calls send nothing (Task 9 fix round 1)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    const { b, warnings } = booker(c, fake, { t: T0 });
+    const release = fake.hold();
+    const run = b.sync();
+    await settle();
+    expect(fake.calls()).toBe(1);
+    b.stop();
+    fake.failWith(new NtfyError("server", "The ntfy server had a problem."));
+    release();
+    await run;
+    expect(warnings).toEqual([]);
+    fake.failWith(null);
+    expect(await b.sync()).toEqual({ booked: [], cancelled: [], leftStale: [], failed: [] });
+    await b.withdraw();
+    expect(fake.calls()).toBe(1);
+    expect(fake.cancelled).toEqual([]);
+  });
+
   it("withdraw waits at most 10 s for a hung run, then cancels what is booked", async () => {
     const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
     const fake = fakeClient();

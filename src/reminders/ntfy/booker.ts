@@ -54,11 +54,14 @@ export class NtfyBooker {
   private abandoned = 0;
   /** Reminder keys being published right now, by any run: a later run never books them a second time. */
   private readonly inFlight = new Set<string>();
+  /** Set by stop() on unload: nothing more is sent and nothing is shown. */
+  private halted = false;
 
   constructor(private readonly deps: BookerDeps) {}
 
   /** Single-flight: a call during a run (or a withdraw) gets that run's result. Never rejects. */
   sync(): Promise<SyncResult> {
+    if (this.halted) return Promise.resolve(emptyResult());
     return (this.running ??= this.track(this.run()));
   }
 
@@ -68,14 +71,16 @@ export class NtfyBooker {
    * can't cancel stay, marked stale, until their time. Ignores the failure pause: the user asked.
    */
   withdraw(): Promise<SyncResult> {
+    if (this.halted) return Promise.resolve(emptyResult());
     const prior = this.running;
     const task = (async () => {
       if (prior && !(await settlesWithin(prior, WITHDRAW_WAIT_MS))) this.abandoned++;
       const gen = this.generation;
       const forgotten = () => gen !== this.generation;
+      const halted = () => forgotten() || this.halted;
       const result = emptyResult();
       try {
-        if (await this.cancelAll(result, { left: Number.POSITIVE_INFINITY }, forgotten, forgotten)) this.warned = false;
+        if (await this.cancelAll(result, { left: Number.POSITIVE_INFINITY }, halted, forgotten)) this.warned = false;
       } catch (e) {
         if (!forgotten()) this.pause(e, result, "");
       }
@@ -92,6 +97,12 @@ export class NtfyBooker {
     this.deps.ledger.resetCancelSupport();
     this.pausedUntil = this.deps.now() + FORGET_HOLD_MS;
     this.warned = false;
+  }
+
+  /** The plugin unloads: a run in flight sends nothing more (checked before every request), and no warning shows. */
+  stop(): void {
+    this.halted = true;
+    this.abandoned++;
   }
 
   /** False once the server said it can't cancel pushes (Task 8 ruling): pushes should then link through Obsidian. */
@@ -250,7 +261,7 @@ export class NtfyBooker {
     const wait = e instanceof NtfyError && e.retryAfterMs ? Math.max(e.retryAfterMs, RETRY_MS) : RETRY_MS;
     this.pausedUntil = Math.max(this.pausedUntil, now + wait);
     if (key) result.failed.push(key);
-    if (this.warned) return;
+    if (this.warned || this.halted) return;
     this.warned = true;
     // Only NtfyError messages are shown: they are scrubbed of the topic and token by the client.
     const reason = e instanceof NtfyError ? e.message : "a reminder could not be prepared.";
@@ -259,7 +270,7 @@ export class NtfyBooker {
 }
 
 /** True when `task` settles within `ms`; never rejects. */
-function settlesWithin(task: Promise<unknown>, ms: number): Promise<boolean> {
+export function settlesWithin(task: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), ms)));
   return Promise.race([task.then(() => true, () => true), timeout]).finally(() => clearTimeout(timer));

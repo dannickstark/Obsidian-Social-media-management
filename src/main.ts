@@ -61,8 +61,11 @@ export default class OsmmPlugin extends Plugin {
   index!: SocialIndex;
   scheduler!: Scheduler;
   reminders!: ReminderService;
+  private desktopNotifier!: Notifier;
   /** The desktop notifier (M3 P6); `publish.notifier` is a fan-out to it and to the phone alerts. */
-  notifier!: Notifier;
+  get notifier(): Notifier {
+    return this.desktopNotifier;
+  }
   ntfy!: NtfyClient;
   phone!: NtfyBooker;
   readonly adapters = new AdapterRegistry();
@@ -138,7 +141,7 @@ export default class OsmmPlugin extends Plugin {
     });
 
     const ui = this.uiContext();
-    const notifier = (this.notifier = new Notifier({
+    const notifier = (this.desktopNotifier = new Notifier({
       ledger: new NotifiedLedger(this.app, () => Date.now()),
       enabled: () => this.device.notifications,
       channelName: (id) => this.channels.get(id)?.name ?? id,
@@ -184,6 +187,7 @@ export default class OsmmPlugin extends Plugin {
       now: () => Date.now(),
       warn: (message) => new Notice(message, 0),
     });
+    this.register(() => this.phone.stop());
     const alerts = new PhoneAlerts({
       enabled: () => this.device.ntfy.enabled && this.device.ntfy.results,
       isPublisher: () => this.publisher.isPublisher(),

@@ -5,6 +5,7 @@ import OsmmPlugin, { LINK_READY_TIMEOUT_MS } from "../src/main";
 import { formatDateTime } from "../src/model/dates";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
 import { NTFY } from "./reminders/ntfy/fixtures";
+import { WITHDRAW_WAIT_MS } from "../src/reminders/ntfy/booker";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
 
@@ -263,6 +264,106 @@ describe("OsmmPlugin", () => {
     expect((await plugin.phone.sync()).booked).toHaveLength(1);
     expect(JSON.parse(String(requestUrlMock.calls[1]!.body)).click).toMatch(/^obsidian:\/\/osmm-post\?/);
     plugin.unload();
+  });
+
+  describe("New topic, unload and the http warning (Task 9 fix round 1)", () => {
+    const tabOf = (plugin: OsmmPlugin) => (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    const newTopic = () => last("Topic").components[2] as ButtonComponent;
+    const confirm = () => (Modal.opened.at(-1)!.contentEl.querySelector("button.mod-cta") as HTMLButtonElement).click();
+
+    /** A publisher with phone reminders on and one assisted post whose reminder is booked. */
+    async function booked() {
+      const { app, plugin } = await loaded();
+      await writeNote(app as never, "Social/Posts/R.md", { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: formatDateTime(Date.now() + 2 * 3_600_000), reminders: [60] }, "Hi");
+      await indexed(plugin.index, () => plugin.index.variants().length === 1);
+      app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
+      plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+      requestUrlMock.queue.push(NTFY.scheduled);
+      await plugin.publisher.claim();
+      await settle(50);
+      expect(requestUrlMock.calls).toHaveLength(1);
+      Setting.all = [];
+      tabOf(plugin).display();
+      return { app, plugin };
+    }
+
+    it("books on the new topic even when the old push could not be cancelled", async () => {
+      const { app, plugin } = await booked();
+      requestUrlMock.queue.push(NTFY.methodNotAllowed);
+      const clicked = newTopic().click();
+      confirm();
+      await clicked;
+      expect(requestUrlMock.calls[1]!.method).toBe("DELETE");
+      const topic = app.secretStorage.getSecret("osmm-ntfy-topic")!;
+      expect(topic).not.toBe("osmm-oldtopic");
+      // Held for a minute after the change (M3 P13), then booked again on the new topic.
+      expect((await plugin.phone.sync()).booked).toEqual([]);
+      const now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
+      try {
+        requestUrlMock.queue.push(NTFY.scheduled);
+        expect((await plugin.phone.sync()).booked).toHaveLength(1);
+      } finally {
+        clock.mockRestore();
+      }
+      expect(JSON.parse(String(requestUrlMock.calls.at(-1)!.body)).topic).toBe(topic);
+      plugin.unload();
+    });
+
+    it("sets the new topic even when the cancels never finish", async () => {
+      const { app, plugin } = await booked();
+      vi.spyOn(plugin.phone, "withdraw").mockReturnValue(new Promise(() => undefined));
+      vi.useFakeTimers();
+      try {
+        const clicked = newTopic().click();
+        confirm();
+        await vi.advanceTimersByTimeAsync(WITHDRAW_WAIT_MS);
+        await clicked;
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(app.secretStorage.getSecret("osmm-ntfy-topic")).not.toBe("osmm-oldtopic");
+      plugin.unload();
+    });
+
+    it("sends nothing more after unload while a run is in flight", async () => {
+      const { app, plugin } = await loaded();
+      const post = (h: number) => ({ type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: formatDateTime(Date.now() + h * 3_600_000), reminders: [60] });
+      await writeNote(app as never, "Social/Posts/R.md", post(2), "Hi");
+      await writeNote(app as never, "Social/Posts/S.md", post(3), "Hi");
+      await indexed(plugin.index, () => plugin.index.variants().length === 2);
+      app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
+      plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+      vi.spyOn(plugin.phone, "sync").mockResolvedValue({ booked: [], cancelled: [], leftStale: [], failed: [] });
+      await plugin.publisher.claim();
+      await settle(20);
+      vi.mocked(plugin.phone.sync).mockRestore();
+      let release: (() => void) | undefined;
+      const publish = vi.spyOn(plugin.ntfy, "publish").mockResolvedValue({ id: "Zr0Jk2fA9c", at: 0 }).mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return { id: "Zr0Jk2fA9b", at: 0 };
+      });
+      const run = plugin.phone.sync();
+      await settle(20);
+      expect(publish).toHaveBeenCalledOnce();
+      plugin.unload();
+      release!();
+      await run;
+      await plugin.phone.sync();
+      expect(publish).toHaveBeenCalledOnce();
+    });
+
+    it("warns about a token on an http server whatever the scheme's case", async () => {
+      const { plugin } = await loaded();
+      plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+      Setting.all = [];
+      tabOf(plugin).display();
+      await (last("Access token").components[0] as TextComponent).change("tk_x");
+      await (last("Server").components[0] as TextComponent).change("HTTP://192.168.1.20:8080");
+      expect(last("Access token").desc).toContain("unencrypted");
+      plugin.unload();
+    });
   });
 
   it("tells the user at start-up when no device publishes (#26)", async () => {
