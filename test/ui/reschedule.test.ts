@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { Notice } from "../fakes/obsidian";
 import { makeCtx, TEST_NOW } from "./ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 
 describe("PlannerActions.reschedule", () => {
   it("writes the new time and restores it on undo", async () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const row = ctx.actions.rows().find((r) => r.key === "Social/Event X/Event X – Bluesky.md#bs/you")!;
     const target = TEST_NOW + 2 * 86_400_000;
+    const original = row.variant.scheduledAt;
     expect(await ctx.actions.reschedule(row, { at: target })).toBe(true);
-    await settle(5);
+    await indexed(index, () => index.getVariant(row.variant.path)?.scheduledAt === target);
     expect(index.getVariant(row.variant.path)?.scheduledAt).toBe(target);
     Notice.last!.noticeEl.querySelector("button")!.click();
-    await settle(5);
-    expect(index.getVariant(row.variant.path)?.scheduledAt).toBe(row.variant.scheduledAt);
+    await indexed(index, () => index.getVariant(row.variant.path)?.scheduledAt === original);
+    expect(index.getVariant(row.variant.path)?.scheduledAt).toBe(original);
   });
 
   it("does nothing when confirmation is declined", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeCtx } from "./ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 import { planTemplate, DEFAULT_TEMPLATES } from "../../src/planner/templates";
 import { Notice } from "../fakes/obsidian";
 
@@ -11,10 +11,10 @@ describe("applyTemplate", () => {
     const proposals = planTemplate(DEFAULT_TEMPLATES[0]!, campaign.anchorDate!, index.variantsOf(campaign.path));
     expect(proposals.length).toBeGreaterThan(0);
     await ctx.actions.applyTemplate(proposals);
-    await settle(5);
+    await indexed(index, () => proposals.every((p) => index.getVariant(p.variant.path)?.scheduledAt === p.to));
     for (const p of proposals) expect(index.getVariant(p.variant.path)?.scheduledAt).toBe(p.to);
     Notice.last!.noticeEl.querySelector("button")!.click();
-    await settle(5);
+    await indexed(index, () => proposals.every((p) => index.getVariant(p.variant.path)?.scheduledAt === p.from));
     for (const p of proposals) expect(index.getVariant(p.variant.path)?.scheduledAt).toBe(p.from);
   });
 });

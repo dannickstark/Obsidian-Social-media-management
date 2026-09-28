@@ -35,3 +35,25 @@ export function nextChange(index: SocialIndex): Promise<IndexChange> {
     });
   });
 }
+
+/**
+ * Wait for the index to reach a state where `predicate()` is true.
+ * Checks immediately, then again after every `index.onChange` event.
+ * Rejects after `timeoutMs` if the predicate never becomes true.
+ */
+export async function indexed(index: SocialIndex, predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  if (predicate()) return;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      off();
+      reject(new Error(`index did not reach expected state within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const off = index.onChange(() => {
+      if (predicate()) {
+        clearTimeout(timer);
+        off();
+        resolve();
+      }
+    });
+  });
+}

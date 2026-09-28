@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import QuickCreate, { validateQuickCreate } from "../../src/views/QuickCreate.svelte";
 import { osmmContext } from "../../src/ui/context";
 import { makeCtx } from "../ui/ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 
 describe("validateQuickCreate", () => {
   it("requires a title for campaigns and a channel for posts", () => {
@@ -21,7 +21,7 @@ describe("QuickCreate", () => {
     await fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Spring meetup" } });
     await fireEvent.input(screen.getByLabelText("Anchor date"), { target: { value: "2026-11-20" } });
     await fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
-    await settle(5);
+    await indexed(index, () => index.campaigns().length > 0);
     expect(index.campaigns().map((c) => c.title)).toEqual(["Spring meetup"]);
     expect(app.workspace.opened.at(-1)?.linktext).toBe("Social/Spring meetup/Spring meetup.md");
     expect(close).toHaveBeenCalled();

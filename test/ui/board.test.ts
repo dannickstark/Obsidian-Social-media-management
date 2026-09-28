@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { Notice } from "../fakes/obsidian";
 import { makeCtx, TEST_NOW } from "./ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 
 describe("board actions", () => {
   it("schedules a ready post", async () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const post = index.variants().find((x) => x.status === "ready")!;
     await ctx.actions.schedule(post, TEST_NOW + 86_400_000);
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "scheduled");
     const after = index.getVariant(post.path)!;
     expect(after.status).toBe("scheduled");
     expect(after.scheduledAt).toBe(TEST_NOW + 86_400_000);
@@ -25,13 +25,13 @@ describe("board actions", () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const post = index.variants().find((x) => x.status === "ready")!;
     await ctx.actions.schedule(post, TEST_NOW + 86_400_000);
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "scheduled");
     const scheduled = index.getVariant(post.path)!;
     await ctx.actions.unschedule(scheduled, "draft");
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "draft");
     const draft = index.getVariant(post.path)!;
     await ctx.actions.moveOnBoard(draft, "ready");
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "ready");
     const after = index.getVariant(post.path)!;
     expect(after.status).toBe("ready");
     expect(Object.values(after.deliveries).length).toBeGreaterThan(0);
@@ -42,10 +42,10 @@ describe("board actions", () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const post = index.variants().find((x) => x.status === "idea")!;
     await ctx.actions.setStatus(post, "ready");
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "ready");
     expect(index.getVariant(post.path)!.status).toBe("ready");
     Notice.last!.noticeEl.querySelector("button")!.click();
-    await settle(5);
+    await indexed(index, () => index.getVariant(post.path)?.status === "idea");
     expect(index.getVariant(post.path)!.status).toBe("idea");
   });
 });

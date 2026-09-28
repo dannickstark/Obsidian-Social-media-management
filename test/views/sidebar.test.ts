@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import Sidebar from "../../src/views/Sidebar.svelte";
 import { osmmContext } from "../../src/ui/context";
 import { makeCtx } from "../ui/ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 
 describe("Sidebar", () => {
   it("lists overdue posts, today's queue and campaign progress", async () => {
@@ -21,7 +21,7 @@ describe("Sidebar", () => {
     render(Sidebar, { context: osmmContext(ctx) });
     const buttons = screen.getAllByRole("button", { name: /^Skip/ });
     await fireEvent.click(buttons[0]!);
-    await settle(5);
+    await indexed(index, () => index.getVariant("Social/Event X/Event X – Instagram.md")?.deliveries["ig/acmestudio"]?.status === "skipped");
     expect(index.getVariant("Social/Event X/Event X – Instagram.md")?.deliveries["ig/acmestudio"]?.status).toBe("skipped");
   });
 });

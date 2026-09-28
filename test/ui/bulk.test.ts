@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Notice } from "../fakes/obsidian";
 import { makeCtx } from "./ctx";
-import { settle } from "../helpers";
+import { indexed } from "../helpers";
 
 describe("bulk actions", () => {
   it("shifts every selected post once and skips frozen ones", async () => {
@@ -9,12 +9,12 @@ describe("bulk actions", () => {
     // Selects "Event X – LinkedIn" (one channel published → skipped), "LinkedIn recap" and "Bluesky" (both moved).
     const rows = ctx.actions.rows().filter((r) => r.variant.path.includes("Event X – LinkedIn") || r.variant.path.includes("Bluesky"));
     const before = new Map(rows.map((r) => [r.variant.path, r.variant.scheduledAt!]));
+    const expectedAfterShift = (path: string, at: number) => (path.endsWith("Event X – LinkedIn.md") ? at : at + 86_400_000);
     const result = await ctx.actions.bulkShift(rows, 86_400_000);
-    await settle(5);
+    await indexed(index, () => [...before].every(([path, at]) => index.getVariant(path)?.scheduledAt === expectedAfterShift(path, at)));
     expect(result).toEqual({ moved: 2, skipped: 1 });
     for (const [path, at] of before) {
-      const expected = path.endsWith("Event X – LinkedIn.md") ? at : at + 86_400_000;
-      expect(index.getVariant(path)?.scheduledAt).toBe(expected);
+      expect(index.getVariant(path)?.scheduledAt).toBe(expectedAfterShift(path, at));
     }
   });
 
@@ -22,10 +22,11 @@ describe("bulk actions", () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const rows = ctx.actions.rows().filter((r) => r.variant.path.includes("Event X – LinkedIn") || r.variant.path.includes("Bluesky"));
     const before = new Map(rows.map((r) => [r.variant.path, r.variant.scheduledAt!]));
+    const expectedAfterShift = (path: string, at: number) => (path.endsWith("Event X – LinkedIn.md") ? at : at + 86_400_000);
     await ctx.actions.bulkShift(rows, 86_400_000);
-    await settle(5);
+    await indexed(index, () => [...before].every(([path, at]) => index.getVariant(path)?.scheduledAt === expectedAfterShift(path, at)));
     Notice.last!.noticeEl.querySelector("button")!.click();
-    await settle(5);
+    await indexed(index, () => [...before].every(([path, at]) => index.getVariant(path)?.scheduledAt === at));
     for (const [path, at] of before) {
       expect(index.getVariant(path)?.scheduledAt).toBe(at);
     }
@@ -35,7 +36,7 @@ describe("bulk actions", () => {
     const { ctx, index } = await makeCtx({ seed: true });
     const rows = ctx.actions.rows().filter((r) => r.variant.path.includes("OSMM launch") || r.variant.path.includes("Event X – LinkedIn.md"));
     const result = await ctx.actions.bulkSetStatus(rows, "draft");
-    await settle(5);
+    await indexed(index, () => index.getVariant("Social/OSMM launch/OSMM launch – Indie Hackers.md")?.status === "draft");
     expect(result).toEqual({ changed: 2, skipped: 1 });
     expect(index.getVariant("Social/Event X/Event X – LinkedIn.md")?.status).toBe("partial");
     expect(index.getVariant("Social/OSMM launch/OSMM launch – Indie Hackers.md")?.status).toBe("draft");
@@ -48,9 +49,9 @@ describe("bulk actions", () => {
       rows.map((r) => [r.variant.path, { status: r.variant.status, deliveries: JSON.parse(JSON.stringify(r.variant.deliveries)) }]),
     );
     await ctx.actions.bulkSetStatus(rows, "draft");
-    await settle(5);
+    await indexed(index, () => index.getVariant("Social/OSMM launch/OSMM launch – Indie Hackers.md")?.status === "draft");
     Notice.last!.noticeEl.querySelector("button")!.click();
-    await settle(5);
+    await indexed(index, () => [...before].every(([path, prev]) => index.getVariant(path)?.status === prev.status));
     for (const [path, prev] of before) {
       expect(index.getVariant(path)?.status).toBe(prev.status);
       expect(index.getVariant(path)?.deliveries).toEqual(prev.deliveries);
