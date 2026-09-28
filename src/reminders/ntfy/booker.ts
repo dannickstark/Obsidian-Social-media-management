@@ -234,6 +234,8 @@ export class NtfyBooker {
         const reserved = rebook.has(item.key);
         if (!reserved && budget.left === 0) continue;
         if (stopped() || !this.active()) return result;
+        // Re-review R1: `have` is a snapshot; an abandoned run may have recorded this push since (read live).
+        if (this.deps.ledger.get(item.key)) continue;
         if (!reserved) budget.left--;
         current = item.key;
         this.inFlight.add(item.key);
@@ -241,6 +243,10 @@ export class NtfyBooker {
           const message = await compose(item);
           const version = contentVersion(message);
           if (stopped() || !this.active()) return result;
+          if (this.deps.ledger.get(item.key)) {
+            if (!reserved) budget.left++;
+            continue;
+          }
           const sent = await this.deps.client.publish({ ...message, at: fireTime(item) });
           // Recorded even after a pause, an abandon or a role change, so it can be cancelled later; not after forget() or stop().
           if (forgotten()) return result;

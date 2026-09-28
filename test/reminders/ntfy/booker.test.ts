@@ -705,6 +705,32 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect([fake.calls(), warnings]).toEqual([2, []]);
   });
 
+  it("never publishes twice when an abandoned run records a push while the fresh run is busy with an earlier one (re-review R1)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    const { b } = booker(c, fake, now);
+    const releaseOld = fake.hold();
+    const old = b.sync();
+    await settle();
+    expect(fake.calls()).toBe(1);
+    await writeNote(c.app as never, B, fm(T0 + 5 * HOUR, { reminders: [60] }), "B");
+    await indexed(c.index, () => !!c.index.getVariant(B));
+    now.t += 61_000;
+    const releaseFresh = fake.hold();
+    const fresh = b.sync();
+    await settle();
+    expect(fake.calls()).toBe(2);
+    releaseOld();
+    await old;
+    releaseFresh();
+    const r = await fresh;
+    expect(r.booked).toEqual([key(B, T0 + 5 * HOUR, 60)]);
+    expect(fake.sent.filter((m) => m.at === T0 + 9 * HOUR)).toHaveLength(1);
+    expect(fake.calls()).toBe(2);
+    expect(new BookingLedger(c.app as never).get(key(A, T0 + 10 * HOUR, 60))?.messageId).toBe("m1");
+  });
+
   it("a push the server never answers times out, warns once and is booked again after the pause (final review 2)", async () => {
     const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
     const now = { t: T0 };

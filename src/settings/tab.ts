@@ -52,10 +52,14 @@ export class OsmmSettingTab extends PluginSettingTab {
     private readonly osmm: OsmmPlugin,
   ) {
     super(app, osmm);
+    // Re-review 3: a typed value is never lost. On unload there is no time to withdraw, so a pending edit is
+    // saved at once (its old bookings forgotten; pushes already booked on the old target still arrive).
     osmm.register(() => {
       this.unloaded = true;
       this.clearTargetTimer();
+      const edit = this.pendingTarget;
       this.pendingTarget = {};
+      this.commitTargetEdit(edit);
     });
   }
 
@@ -274,13 +278,17 @@ export class OsmmSettingTab extends PluginSettingTab {
           const ok = await confirmDialog(this.app, "Make a new random topic? Your phone must subscribe to it again. Reminders already booked on the old topic are cancelled where the server allows it.", "New topic");
           if (!ok) return;
           delete this.pendingTarget.topic;
-          // The cancels go to the old topic, so they run before it is replaced, for at most 10 s (Task 9 ruling).
-          await settlesWithin(osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
-          // Then drop what is left for the old topic (pushes it couldn't cancel, a late record of an abandoned
-          // run) so the new topic gets its own bookings, after the 60 s hold (M3 P13).
-          osmm.phone.forget();
-          osmm.secrets.set(SecretIds.ntfyTopic, randomTopic());
-          this.display();
+          // Re-review 2: after any Server/Topic edit still being applied, so the new topic is the one kept.
+          this.targetChain = this.targetChain.then(async () => {
+            // The cancels go to the old topic, so they run before it is replaced, for at most 10 s (Task 9 ruling).
+            await settlesWithin(osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
+            // Then drop what is left for the old topic (pushes it couldn't cancel, a late record of an abandoned
+            // run) so the new topic gets its own bookings, after the 60 s hold (M3 P13).
+            osmm.phone.forget();
+            osmm.secrets.set(SecretIds.ntfyTopic, randomTopic());
+          });
+          await this.targetChain;
+          if (!this.unloaded) this.display();
         }),
       );
 
@@ -337,18 +345,32 @@ export class OsmmSettingTab extends PluginSettingTab {
     const edit = this.pendingTarget;
     this.pendingTarget = {};
     if (this.unloaded || (edit.server === undefined && edit.topic === undefined)) return;
-    const osmm = this.osmm;
     this.targetChain = this.targetChain.then(async () => {
-      const server = edit.server !== undefined && edit.server !== normalizeServer(osmm.device.ntfy.server) ? edit.server : undefined;
-      const topic = edit.topic !== undefined && edit.topic !== osmm.secrets.get(SecretIds.ntfyTopic) ? edit.topic : undefined;
-      if (server === undefined && topic === undefined) return;
-      await settlesWithin(osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
-      if (this.unloaded) return;
-      osmm.phone.forget();
-      if (server !== undefined) osmm.setDevice({ ntfy: { ...osmm.device.ntfy, server } });
-      if (topic !== undefined) osmm.secrets.set(SecretIds.ntfyTopic, topic);
-      done();
+      if (!this.realTargetChange(edit)) return;
+      await settlesWithin(this.osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
+      // Applied even if the plugin unloaded meanwhile: the typed value is kept (re-review 3).
+      if (this.commitTargetEdit(edit) && !this.unloaded) done();
     });
+  }
+
+  /** The parts of `edit` that differ from the target in use. */
+  private realTargetChange(edit: TargetEdit): TargetEdit | null {
+    const osmm = this.osmm;
+    const server = edit.server !== undefined && edit.server !== normalizeServer(osmm.device.ntfy.server) ? edit.server : undefined;
+    const topic = edit.topic !== undefined && edit.topic !== osmm.secrets.get(SecretIds.ntfyTopic) ? edit.topic : undefined;
+    if (server === undefined && topic === undefined) return null;
+    return { ...(server !== undefined ? { server } : {}), ...(topic !== undefined ? { topic } : {}) };
+  }
+
+  /** Forgets the old target's bookings (60 s hold, M3 P13) and switches to the new target. False when nothing changed. */
+  private commitTargetEdit(edit: TargetEdit): boolean {
+    const change = this.realTargetChange(edit);
+    if (!change) return false;
+    const osmm = this.osmm;
+    osmm.phone.forget();
+    if (change.server !== undefined) osmm.setDevice({ ntfy: { ...osmm.device.ntfy, server: change.server } });
+    if (change.topic !== undefined) osmm.secrets.set(SecretIds.ntfyTopic, change.topic);
+    return true;
   }
 
   override hide(): void {

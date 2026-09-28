@@ -261,6 +261,52 @@ describe("OsmmPlugin", () => {
     plugin.unload();
   });
 
+  it("runs New topic after a Server/Topic edit still being applied, so the shown and stored topics agree (re-review 2)", async () => {
+    const { app, plugin } = await loaded();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
+    plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+    Setting.all = [];
+    tab.display();
+    let finishFirst!: () => void;
+    const first = new Promise<void>((resolve) => (finishFirst = resolve));
+    const empty = { booked: [], cancelled: [], leftStale: [], failed: [] };
+    vi.spyOn(plugin.phone, "withdraw")
+      .mockImplementationOnce(() => first.then(() => empty))
+      .mockResolvedValue(empty);
+    await (last("Topic").components[0] as TextComponent).change("osmm-typedtopic");
+    await blur(last("Topic"));
+    const clicked = (last("Topic").components[2] as ButtonComponent).click();
+    (Modal.opened.at(-1)!.contentEl.querySelector("button.mod-cta") as HTMLButtonElement).click();
+    await settle(20);
+    finishFirst();
+    await clicked;
+    await settle(20);
+    const stored = app.secretStorage.getSecret("osmm-ntfy-topic")!;
+    expect(stored).toMatch(/^osmm-[a-z0-9]{24}$/);
+    expect((last("Topic").components[0] as TextComponent).value).toBe(stored);
+    plugin.unload();
+  });
+
+  it("saves a Server/Topic edit still waiting for its pause when the plugin unloads (re-review 3)", async () => {
+    const { app, plugin } = await loaded();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
+    plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+    app.saveLocalStorage("osmm-ntfy-bookings", { "x.md#bs/you@1:10": { rowKey: "x.md#bs/you", minutes: 10, messageId: "m1", fireAt: Date.now() + 3_600_000, version: 1 } });
+    Setting.all = [];
+    tab.display();
+    await (last("Server").components[0] as TextComponent).change("https://push.example.org");
+    await (last("Topic").components[0] as TextComponent).change("osmm-typedtopic");
+    plugin.unload();
+    expect((app.loadLocalStorage("osmm-device") as { ntfy: { server: string } }).ntfy.server).toBe("https://push.example.org");
+    expect(app.secretStorage.getSecret("osmm-ntfy-topic")).toBe("osmm-typedtopic");
+    // The old target's bookings are forgotten, so the next start never cancels them on the new target.
+    expect(app.loadLocalStorage("osmm-ntfy-bookings")).toBeNull();
+  });
+
   it("points to the phone reminder setup after this device becomes the publisher without them (final review 3)", async () => {
     const { plugin } = await loaded();
     Notice.messages = [];
