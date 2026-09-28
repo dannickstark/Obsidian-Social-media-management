@@ -24,7 +24,7 @@ export interface OsmmSettings {
   autoPostLateMinutes: number;
   /** Null until the user picks a publisher device: nothing is dispatched or marked overdue meanwhile. */
   publisher: PublisherRecord | null;
-  /** Channels Claude may publish to without the approval question (#77). Everything else asks. */
+  /** Channels where Claude's publish_now skips the approval question (#77). Everything else asks, and push_update (an edit to a live post) always asks. */
   publishWithoutAsking: string[];
   channels: Channel[];
   channelGroups: ChannelGroup[];

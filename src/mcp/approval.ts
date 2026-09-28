@@ -19,7 +19,7 @@ export interface ApprovalView {
 export interface ApprovalGateDeps {
   /** Shows the question; `answer` may be called at most once that counts. */
   open(req: ApprovalRequest, answer: (a: ApprovalAnswer) => void): ApprovalView;
-  /** The per-channel setting "publish without asking" (default: ask). */
+  /** The per-channel setting "publish without asking" (default: ask). It covers publish_now only; updates to live posts always ask. */
   allowedWithoutAsking(channelId: string): boolean;
   timeoutMs?: number;
 }
@@ -44,7 +44,7 @@ export class ApprovalGate {
 
   request(req: ApprovalRequest): Promise<ApprovalAnswer> {
     if (this.disposed) return Promise.resolve({ approved: false, reason: CLOSED });
-    if (req.channels.length && req.channels.every((c) => this.deps.allowedWithoutAsking(c.id))) return Promise.resolve({ approved: true, how: "policy" });
+    if (req.action === "publish" && req.channels.length && req.channels.every((c) => this.deps.allowedWithoutAsking(c.id))) return Promise.resolve({ approved: true, how: "policy" });
     if (this.pending) return Promise.resolve({ approved: false, reason: BUSY });
     return new Promise((resolve) => {
       let done = false;

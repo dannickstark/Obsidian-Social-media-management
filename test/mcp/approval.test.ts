@@ -23,6 +23,13 @@ describe("ApprovalGate", () => {
     expect(opened).toBe(1);
   });
 
+  it("always asks before updating a live post, even for channels allowed without asking", async () => {
+    let opened = 0;
+    const gate = new ApprovalGate({ open: () => (opened++, { close: () => undefined }), allowedWithoutAsking: () => true, timeoutMs: 20 });
+    expect(await gate.request({ ...REQ, action: "update" })).toEqual({ approved: false, reason: TIMED_OUT });
+    expect(opened).toBe(1);
+  });
+
   it("never skips the question for a request without channels", async () => {
     let opened = 0;
     const gate = new ApprovalGate({ open: () => (opened++, { close: () => undefined }), allowedWithoutAsking: () => true, timeoutMs: 20 });

@@ -285,6 +285,18 @@ describe("push_update (#77)", () => {
     expect(c.log.entries).toEqual([expect.objectContaining({ channelId: "tg/event-x", result: "updated", url: "https://t.me/eventx/42" })]);
   });
 
+  it("always asks, even when the channel may publish without asking", async () => {
+    const silent = await setup([], { note: tgNote(live) });
+    allow(silent.c, "tg/event-x");
+    expect(await silent.c.call("push_update", { path: TG })).toMatchObject({ ok: false, approved: false, error: TIMED_OUT });
+    expect(silent.asked).toHaveLength(1);
+    expect(silent.update).not.toHaveBeenCalled();
+    const yes = await setup([{ approved: true, how: "asked" }], { note: tgNote(live) });
+    allow(yes.c, "tg/event-x");
+    expect(await yes.c.call("push_update", { path: TG })).toMatchObject({ ok: true, updated: ["tg/event-x"] });
+    expect(yes.asked).toHaveLength(1);
+  });
+
   it("logs a failed update as update_failed, never as a failed post (ruling P7)", async () => {
     const { c, update } = await setup([{ approved: true, how: "asked" }], { note: tgNote(live) });
     update.mockRejectedValueOnce(new Error("message is not modified"));

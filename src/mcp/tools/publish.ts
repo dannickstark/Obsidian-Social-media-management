@@ -58,7 +58,7 @@ export function registerPublishTools(registry: ToolRegistry, deps: McpToolDeps):
       name: "push_update",
       title: "Push an edit to a live post (asks the user in Obsidian)",
       description:
-        "Sends the current text of a post to the channels where it is already live (published or handed over to the platform), when the platform supports updates. Obsidian asks the user first, as for publish_now. Only call this when the user asked for it.",
+        "Sends the current text of a post to the channels where it is already live (published or handed over to the platform), when the platform supports updates. Obsidian always asks the user first (Approve or Deny; no answer within 2 minutes is a no), even for channels allowed to publish without asking. Only call this when the user asked for it.",
       input: z.object({ path: zPath, channels: zOnly, note: zNote }).strict(),
       annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
       run: async (a) => {
