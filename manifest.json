@@ -1,0 +1,10 @@
+{
+  "id": "osmm-social-planner",
+  "name": "Social Planner (OSMM)",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Plan, preview, schedule and publish social media posts and WordPress articles from your vault.",
+  "author": "dannickstark",
+  "authorUrl": "https://github.com/dannickstark",
+  "isDesktopOnly": false
+}
