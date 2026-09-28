@@ -62,9 +62,15 @@ export function titleChecks(input: ComposeInput, def: PlatformDef): Issue[] {
   return [];
 }
 
+/** Only http(s) links are ever safe to hand to a browser or platform. */
+const SAFE_URL_RE = /^https?:\/\//i;
+
 export function linkChecks(input: ComposeInput, def: PlatformDef): Issue[] {
   const { link } = def.capabilities.limits;
   const url = input.variant.url;
+  if (url && !SAFE_URL_RE.test(url)) {
+    return [{ level: "error", field: "url", code: "unsafe-url", message: "Use an http(s) link" }];
+  }
   if (link === "required" && !url) {
     return [{ level: "error", field: "url", code: "missing-url", message: `${label(def)} needs a link (url).` }];
   }
