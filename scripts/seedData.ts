@@ -1,4 +1,5 @@
 import { DAY, HOUR, formatDateTime } from "../src/model/dates";
+import { DEFAULT_TEMPLATES } from "../src/planner/templates";
 
 export interface SeedNote {
   path: string;
@@ -77,5 +78,5 @@ export function buildSeed(now: number, opts: { large?: boolean } = {}): { notes:
     }
   }
 
-  return { notes, settings: { schemaVersion: 1, rootFolder: "Social", channels: CHANNELS, channelGroups: GROUPS } };
+  return { notes, settings: { schemaVersion: 2, rootFolder: "Social", channels: CHANNELS, channelGroups: GROUPS, scheduleTemplates: DEFAULT_TEMPLATES } };
 }

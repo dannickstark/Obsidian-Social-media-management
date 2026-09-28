@@ -10,9 +10,12 @@ import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliv
 import { uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
+import { planTemplate, type TemplateProposal } from "../planner/templates";
 import type { OsmmSettings } from "../settings/settings";
-import { confirmDialog, pickDateTime } from "./dialogs";
+import type { OsmmContext } from "./context";
+import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
 import { formatShortDate, formatTime } from "./format";
+import TemplatePreview from "../views/TemplatePreview.svelte";
 
 export const VIEW_PLANNER = "osmm-planner";
 export const VIEW_SIDEBAR = "osmm-sidebar";
@@ -32,6 +35,9 @@ export interface ActionDeps {
 export class PlannerActions {
   private readonly hoverParent = { hoverPopover: null };
   private rowsCache: { revision: number; stagger: number; rows: PostRow[] } | undefined;
+
+  /** Set by the plugin so actions can open Svelte modals with the same context. */
+  context: OsmmContext | null = null;
 
   constructor(protected readonly deps: ActionDeps) {}
 
@@ -274,6 +280,25 @@ export class PlannerActions {
       channels: this.deps.channels.byPlatform(platform).map((c) => c.id),
     });
     this.openNote(created.path);
+  }
+
+  async applyTemplate(proposals: TemplateProposal[]): Promise<void> {
+    for (const p of proposals) await this.deps.writer.patchVariant(p.variant.file, { scheduledAt: p.to });
+    this.undoNotice(`Scheduled ${proposals.length} post${proposals.length === 1 ? "" : "s"} from the template.`, async () => {
+      for (const p of proposals) await this.deps.writer.patchVariant(p.variant.file, { scheduledAt: p.from });
+    });
+  }
+
+  openTemplatePreview(campaignPath: string, templateId: string): void {
+    const campaign = this.deps.index.getCampaign(campaignPath);
+    const template = this.deps.settings().scheduleTemplates.find((t) => t.id === templateId);
+    if (!campaign?.anchorDate) {
+      new Notice("Set anchor_date on the campaign first.");
+      return;
+    }
+    if (!template || !this.context) return;
+    const proposals = planTemplate(template, campaign.anchorDate, this.deps.index.variantsOf(campaignPath));
+    new SvelteModal(this.deps.app, `Apply "${template.name}"`, TemplatePreview, { proposals }, this.context).open();
   }
 
   async bulkTrash(rows: PostRow[]): Promise<number> {

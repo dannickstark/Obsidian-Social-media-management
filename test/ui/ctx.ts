@@ -66,5 +66,6 @@ export async function makeCtx(
     channels,
     actions,
   };
+  actions.context = ctx;
   return { app, ctx, index, writer, settings, now: nowStore };
 }

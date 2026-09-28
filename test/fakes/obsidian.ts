@@ -587,6 +587,27 @@ export class TextComponent {
   }
 }
 
+export class TextAreaComponent extends TextComponent {}
+
+export class ButtonComponent {
+  private cb: (() => unknown) | undefined;
+  text = "";
+  setButtonText(t: string): this {
+    this.text = t;
+    return this;
+  }
+  setCta(): this {
+    return this;
+  }
+  onClick(cb: () => unknown): this {
+    this.cb = cb;
+    return this;
+  }
+  async click(): Promise<void> {
+    await this.cb?.();
+  }
+}
+
 export class DropdownComponent {
   value = "";
   options: Record<string, string> = {};
@@ -614,7 +635,7 @@ export class Setting {
   name = "";
   desc = "";
   heading = false;
-  components: Array<TextComponent | DropdownComponent> = [];
+  components: Array<TextComponent | DropdownComponent | TextAreaComponent | ButtonComponent> = [];
   settingEl = document.createElement("div");
   constructor(containerEl: HTMLElement) {
     containerEl.appendChild(this.settingEl);
@@ -640,6 +661,18 @@ export class Setting {
   }
   addDropdown(cb: (c: DropdownComponent) => unknown): this {
     const c = new DropdownComponent();
+    this.components.push(c);
+    cb(c);
+    return this;
+  }
+  addTextArea(cb: (c: TextAreaComponent) => unknown): this {
+    const c = new TextAreaComponent();
+    this.components.push(c);
+    cb(c);
+    return this;
+  }
+  addButton(cb: (c: ButtonComponent) => unknown): this {
+    const c = new ButtonComponent();
     this.components.push(c);
     cb(c);
     return this;

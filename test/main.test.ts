@@ -35,7 +35,7 @@ describe("OsmmPlugin", () => {
     Setting.all = [];
     (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!.display();
     const byName = (n: string) => Setting.all.find((s) => s.name === n)!;
-    expect(Setting.all.map((s) => s.name)).toEqual(["General", "Root folder", "Week starts on", "Default reminders", "Default stagger"]);
+    expect(Setting.all.map((s) => s.name)).toEqual(["General", "Root folder", "Week starts on", "Default reminders", "Default stagger", "Schedule templates", "Launch"]);
     await (byName("Default reminders").components[0] as TextComponent).change("30, 5");
     await (byName("Week starts on").components[0] as DropdownComponent).change("0");
     expect(plugin.settings.defaultReminders).toEqual([30, 5]);

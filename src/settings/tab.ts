@@ -1,5 +1,6 @@
 import { normalizePath, PluginSettingTab, Setting, type App } from "obsidian";
 import type OsmmPlugin from "../main";
+import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
 import { parseMinutesList } from "./settings";
 
 export class OsmmSettingTab extends PluginSettingTab {
@@ -59,5 +60,21 @@ export class OsmmSettingTab extends PluginSettingTab {
           if (/^\d+$/.test(value.trim())) await this.osmm.updateSettings({ defaultStaggerMinutes: Number(value.trim()) });
         }),
       );
+
+    new Setting(containerEl).setName("Schedule templates").setHeading();
+    for (const template of s.scheduleTemplates) {
+      new Setting(containerEl)
+        .setName(template.name)
+        .setDesc("One step per line: T±days HH:mm platforms [label], e.g. T-7 09:00 linkedin,x Announce")
+        .addTextArea((t) =>
+          t.setValue(formatTemplateLines(template.steps)).onChange(async (value) => {
+            const { steps, errors } = parseTemplateLines(value);
+            if (errors.length) return;
+            await this.osmm.updateSettings({
+              scheduleTemplates: this.osmm.settings.scheduleTemplates.map((x) => (x.id === template.id ? { ...x, steps } : x)),
+            });
+          }),
+        );
+    }
   }
 }

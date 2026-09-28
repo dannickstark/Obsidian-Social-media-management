@@ -1,21 +1,32 @@
 <script lang="ts">
+  import { Menu } from "obsidian";
   import { PLATFORM_META } from "../model/platforms";
   import { campaignTable } from "../planner/campaignTable";
   import ChannelAvatar from "../ui/ChannelAvatar.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
+  import Timeline from "./Timeline.svelte";
 
   let { campaignPath }: { campaignPath: string } = $props();
   const { snapshot, settings, actions } = useOsmm();
   const table = $derived(campaignTable(campaignPath, $snapshot.variants, $settings.channels));
+  const campaign = $derived($snapshot.campaigns.find((c) => c.path === campaignPath));
   const STATUS: Record<string, string> = { idea: "Idea", draft: "Draft", ready: "Ready", scheduled: "Scheduled", partial: "Partly published", published: "Published", overdue: "Overdue", attention: "Needs attention", skipped: "Skipped" };
+
+  function templateMenu(event: MouseEvent): void {
+    const menu = new Menu();
+    for (const t of $settings.scheduleTemplates) menu.addItem((i) => i.setTitle(t.name).onClick(() => actions.openTemplatePreview(campaignPath, t.id)));
+    menu.showAtMouseEvent(event);
+  }
 </script>
 
 <section class="osmm-variants" aria-label="Platform variants">
   <header class="osmm-variants-head">
     <strong>Platform variants</strong>
     <span class="osmm-progress">{table.counts.created} created · {table.counts.published} published · {table.counts.overdue} overdue</span>
+    <span class="osmm-spacer"></span>
+    <button type="button" onclick={templateMenu}>Apply schedule template</button>
   </header>
   <table class="osmm-table">
     <thead>
@@ -42,4 +53,7 @@
       {/each}
     </tbody>
   </table>
+  {#if campaign?.anchorDate !== undefined}
+    <Timeline anchor={campaign.anchorDate} variants={table.rows.map((r) => r.variant)} />
+  {/if}
 </section>

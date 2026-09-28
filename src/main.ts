@@ -110,6 +110,7 @@ export default class OsmmPlugin extends Plugin {
         now: () => Date.now(),
       }),
     };
+    this.ui.actions.context = this.ui;
     return this.ui;
   }
 }
