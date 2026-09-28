@@ -156,6 +156,10 @@ export class Vault extends Events {
     super();
   }
 
+  getName(): string {
+    return "Test Vault";
+  }
+
   getFiles(): TFile[] {
     return [...this.files.values()].map((e) => e.file);
   }
@@ -635,6 +639,7 @@ export class Plugin extends Component {
   commands: Command[] = [];
   codeBlockProcessors = new Map<string, (source: string, el: HTMLElement, ctx: any) => unknown>();
   ribbon: Array<{ icon: string; title: string; cb: () => unknown }> = [];
+  protocolHandlers = new Map<string, (params: Record<string, string>) => unknown>();
   constructor(
     public app: App,
     public manifest: PluginManifest,
@@ -665,6 +670,9 @@ export class Plugin extends Component {
     this.codeBlockProcessors.set(lang, handler);
   }
   registerHoverLinkSource(_id: string, _info: { display: string; defaultMod: boolean }): void {}
+  registerObsidianProtocolHandler(action: string, handler: (params: Record<string, string>) => unknown): void {
+    this.protocolHandlers.set(action, handler);
+  }
 }
 
 export class PluginSettingTab {

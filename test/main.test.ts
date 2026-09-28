@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PublishDeps } from "../src/publish/actions";
 import type { Notifier } from "../src/reminders/notifier";
 import { App, Modal, Notice, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
-import OsmmPlugin from "../src/main";
+import OsmmPlugin, { LINK_READY_TIMEOUT_MS } from "../src/main";
 import { formatDateTime } from "../src/model/dates";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
 
@@ -274,5 +274,120 @@ describe("OsmmPlugin", () => {
     await app.vault.create("Social/q.md", "---\ntype: social-post\nplatform: x\n---\n");
     await settle(80);
     expect(fired).toBe(false);
+  });
+});
+
+describe("phone reminder links (#70)", () => {
+  it("opens the assisted flow from a phone reminder link once the index is ready (#70, review focus 5)", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(app as never, P, { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-12-01T09:00:00+01:00" }, "Hi");
+    await settle();
+    let ready: (() => unknown) | undefined;
+    app.workspace.onLayoutReady = (cb) => {
+      ready = cb;
+    };
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.updateSettings({ channels: [{ id: "bs/you", platform: "bluesky", name: "@you", kind: "account", avatarColor: "#c9c3b8", method: "assisted" }] as never });
+    Modal.opened = [];
+    const handler = (plugin as unknown as { protocolHandlers: Map<string, (p: Record<string, string>) => Promise<void>> }).protocolHandlers.get("osmm-post")!;
+    const opening = handler({ action: "osmm-post", vault: "Test Vault", path: P, channel: "bs/you" });
+    await settle(20);
+    expect(Modal.opened).toEqual([]);
+    await ready?.();
+    await opening;
+    expect(Modal.opened.at(-1)?.titleEl.textContent).toBe("Post");
+    plugin.unload();
+  });
+
+  it("does not reopen a post that is already out from a phone link", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(app as never, P, { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "published", deliveries: { "bs/you": { status: "published" } } }, "Hi");
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.ready;
+    Modal.opened = [];
+    Notice.messages = [];
+    await plugin.openFromLink({ path: P, channel: "bs/you", step: "3" });
+    await plugin.openFromLink({ path: P, channel: "bs/you" });
+    await plugin.openFromLink({ path: "Social/Posts/Gone.md", channel: "bs/you" });
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toEqual(["bs/you is already done for this post.", "Nothing left to post for this note.", "That post is no longer in this vault."]);
+    expect(plugin.index.getVariant(P)?.deliveries["bs/you"]?.status).toBe("published");
+    plugin.unload();
+  });
+
+  it("refuses a channel that is not on the note or whose delivery entry is unreadable, on both steps (M3 P7)", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(
+      app as never,
+      P,
+      { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-12-01T09:00:00+01:00", deliveries: { "bs/you": { status: "Handed-Over" } } },
+      "Hi",
+    );
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.ready;
+    Modal.opened = [];
+    Notice.messages = [];
+    const before = await app.vault.read(app.vault.getFileByPath(P)!);
+    for (const channel of ["bs/you", "li/other"]) {
+      await plugin.openFromLink({ path: P, channel, step: "3" });
+      await plugin.openFromLink({ path: P, channel });
+    }
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toEqual([
+      "bs/you can't be posted from this link: its delivery entry in the note can't be read. Fix it in the note first.",
+      "bs/you can't be posted from this link: its delivery entry in the note can't be read. Fix it in the note first.",
+      "li/other is not a channel of this post.",
+      "li/other is not a channel of this post.",
+    ]);
+    expect(await app.vault.read(app.vault.getFileByPath(P)!)).toBe(before);
+    plugin.unload();
+  });
+
+  it("re-validates the exact text before opening the flow (M2b P3)", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(app as never, P, { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-12-01T09:00:00+01:00" }, "x".repeat(400));
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.ready;
+    await plugin.updateSettings({ channels: [{ id: "bs/you", platform: "bluesky", name: "@you", kind: "account", avatarColor: "#c9c3b8", method: "assisted" }] as never });
+    Modal.opened = [];
+    Notice.messages = [];
+    await plugin.openFromLink({ path: P, channel: "bs/you" });
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toHaveLength(1);
+    plugin.unload();
+  });
+
+  it("gives up waiting for a cold start after a bound, and ignores links without a path or channel", async () => {
+    const app = new App();
+    app.workspace.onLayoutReady = () => undefined;
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    Modal.opened = [];
+    Notice.messages = [];
+    await plugin.openFromLink({ path: "Social/Posts/P.md" });
+    await plugin.openFromLink({ channel: "bs/you" });
+    expect(Notice.messages).toEqual([]);
+    vi.useFakeTimers();
+    try {
+      const opening = plugin.openFromLink({ path: "Social/Posts/P.md", channel: "bs/you" });
+      await vi.advanceTimersByTimeAsync(LINK_READY_TIMEOUT_MS);
+      await opening;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toEqual(["Social Planner is still starting. Tap the reminder again in a moment."]);
+    plugin.unload();
   });
 });

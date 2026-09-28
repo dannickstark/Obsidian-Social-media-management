@@ -20,7 +20,7 @@ import { isMobile, type ClipboardService, type CopyResult } from "./clipboard";
 import { effectiveDelivery } from "./eligibility";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
-import { PublishOrchestrator, type FailureInfo, type RunResult } from "./orchestrator";
+import { PublishOrchestrator, type FailureInfo, type PublishedInfo, type RunResult } from "./orchestrator";
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
 import { transition } from "../model/stateMachine";
 import { effectiveMethod } from "../platforms/registry";
@@ -47,6 +47,8 @@ export interface PublishDeps {
 export interface DeliveryNotifier {
   due(path: string, channelId: string): void;
   failed(info: FailureInfo): void;
+  /** An API publish went out (phone confirmations, #70). */
+  published?(info: PublishedInfo): void;
 }
 
 const SILENT: DeliveryNotifier = { due: () => undefined, failed: () => undefined };
@@ -73,6 +75,7 @@ export class PublishActions {
       now: () => deps.now(),
       delay: (ms) => deps.delay(ms),
       onFailure: (info) => this.notifier.failed(info),
+      onPublished: (info) => this.notifier.published?.(info),
       lateWindowMs: () => Math.max(GRACE_MS, autoPostLateMs(deps.settings()) ?? 0),
       defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
     });
@@ -241,6 +244,8 @@ export class PublishActions {
     void this.deps.log.append(
       state.published ? { at, path, channelId, result: "published", ...(state.url ? { url: state.url } : {}) } : { at, path, channelId, result: "failed", error },
     );
+    // M3 P8: a lookup that confirms the publish counts as an API publish for the phone confirmation.
+    if (state.published) this.notifier.published?.({ path, channelId, ...(state.url ? { url: state.url } : {}) });
   }
 
   target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {

@@ -13,10 +13,13 @@ import { SafeWriter } from "./model/writer";
 import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
 import { PublishActions } from "./publish/actions";
+import { assistedQueue } from "./publish/assistedFlow";
+import { effectiveDelivery } from "./publish/eligibility";
 import { ClipboardService } from "./publish/clipboard";
 import { VaultLog } from "./publish/vaultLog";
 import { PreviewGridView } from "./previews/PreviewGridView";
 import { NotifiedLedger } from "./reminders/ledger";
+import { POST_ACTION } from "./reminders/ntfy/content";
 import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
@@ -38,6 +41,9 @@ import { PlannerView } from "./views/PlannerView";
 import { SidebarView } from "./views/SidebarView";
 import CampaignTable from "./views/CampaignTable.svelte";
 
+/** How long a phone link waits for a cold start (index built, startup check done) before giving up. */
+export const LINK_READY_TIMEOUT_MS = 30_000;
+
 export default class OsmmPlugin extends Plugin {
   override settings!: OsmmSettings;
   settingsStore!: Writable<OsmmSettings>;
@@ -57,6 +63,9 @@ export default class OsmmPlugin extends Plugin {
   private started = false;
   /** Counts publisher-role changes, so start-up can tell whether its reconcile finished as the publisher. */
   private roleChanges = 0;
+  private markReady: () => void = () => undefined;
+  /** Resolves once the index is built and the scheduler runs; phone links wait for it (cold start). */
+  readonly ready: Promise<void> = new Promise((resolve) => (this.markReady = resolve));
   private ui: OsmmContext | undefined;
   /** Pending orchestrator retry delays, cleared on unload so no retry fires after the plugin is gone. */
   private readonly delays = new Set<number>();
@@ -188,6 +197,7 @@ export default class OsmmPlugin extends Plugin {
         ui.actions.actionNotice("No device publishes scheduled posts yet.", "Publish from this device", () => this.publisher.claim());
       }
       this.scheduler.start();
+      this.markReady();
       void this.scheduler.tick();
     });
 
@@ -198,6 +208,7 @@ export default class OsmmPlugin extends Plugin {
     this.registerView(VIEW_COMPOSER, (leaf) => new ComposerView(leaf, this.uiContext()));
 
     registerCommands(this);
+    this.registerObsidianProtocolHandler(POST_ACTION, (params) => this.openFromLink(params));
 
     this.registerMarkdownCodeBlockProcessor("social-variants", (_source, el, ctx) => {
       ctx.addChild(
@@ -230,6 +241,56 @@ export default class OsmmPlugin extends Plugin {
   setDevice(patch: Partial<Omit<DeviceSettings, "deviceId">>): void {
     this.device = { ...this.device, ...patch };
     saveDeviceSettings(this.app, this.device);
+  }
+
+  /**
+   * A tap on a phone reminder (#70): `obsidian://osmm-post?vault=…&path=…&channel=…[&step=3]`. Every parameter is
+   * untrusted: the note and channel must be in the index, nothing but the assisted flow is opened, and nothing is
+   * marked by the link itself. Waits (bounded) for a cold start.
+   */
+  async openFromLink(params: Record<string, string>): Promise<void> {
+    const path = typeof params.path === "string" ? params.path : "";
+    const channel = typeof params.channel === "string" ? params.channel : "";
+    if (!path || !channel) return;
+    let handle: number | undefined;
+    const timedOut = new Promise<boolean>((resolve) => {
+      handle = window.setTimeout(() => resolve(true), LINK_READY_TIMEOUT_MS);
+    });
+    const late = await Promise.race([this.ready.then(() => false), timedOut]).finally(() => window.clearTimeout(handle));
+    if (this.unloaded) return;
+    if (late) {
+      new Notice("Social Planner is still starting. Tap the reminder again in a moment.");
+      return;
+    }
+    const v = this.index.getVariant(path);
+    if (!v) {
+      new Notice("That post is no longer in this vault.");
+      return;
+    }
+    const name = this.channels.get(channel)?.name ?? channel;
+    // M3 P7: never open (let alone mark) a channel that is not listed, or whose entry is frozen.
+    if (!v.channels.includes(channel)) {
+      new Notice(`${name} is not a channel of this post.`);
+      return;
+    }
+    const d = effectiveDelivery(v, channel);
+    if (!d) {
+      new Notice(`${name} can't be posted from this link: its delivery entry in the note can't be read. Fix it in the note first.`);
+      return;
+    }
+    const publish = this.uiContext().publish;
+    if (params.step === "3") {
+      if (d.status === "published" || d.status === "skipped") {
+        new Notice(`${name} is already done for this post.`);
+        return;
+      }
+      publish.openAssisted(path, [channel], 3);
+      return;
+    }
+    // M2b P3: flush the editor and re-validate the exact text before the flow can copy or open anything.
+    if (assistedQueue(v, this.settings.defaultStaggerMinutes, [channel]).length && !(await publish.freshTarget(path, channel))) return;
+    if (this.unloaded) return;
+    publish.openAssisted(path, [channel]);
   }
 
   uiContext(): OsmmContext {

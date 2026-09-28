@@ -27,6 +27,12 @@ export interface FailureInfo {
   error: string;
 }
 
+export interface PublishedInfo {
+  path: string;
+  channelId: string;
+  url?: string;
+}
+
 export type RunResult =
   | { status: "published"; url: string }
   | { status: "failed"; kind: ErrorKind; error: string }
@@ -47,6 +53,8 @@ export interface OrchestratorDeps {
   delay(ms: number): Promise<void>;
   /** Called once when a delivery ends up failed or check_needed. */
   onFailure(info: FailureInfo): void;
+  /** Called once when a delivery is published through its API (phone confirmations, #70). */
+  onPublished?(info: PublishedInfo): void;
   /** Deliveries of one platform that may run at once (default 1). */
   concurrency?: number;
   /**
@@ -154,6 +162,15 @@ export class PublishOrchestrator {
     return this.timedLookup(() => adapter.lookup!({ variant: v, channel, delivery, text: items.join("\n\n"), items, media: content.media, secret }));
   }
 
+  /** A confirmation push must never change a publish's outcome (a throw here would read as an unknown outcome). */
+  private announcePublished(info: PublishedInfo): void {
+    try {
+      this.deps.onPublished?.(info);
+    } catch {
+      // The post is out; a failed confirmation is not worth more than that.
+    }
+  }
+
   /** Runs a lookup; an error, or no answer within the timeout, is "can't tell" (null). */
   private timedLookup(lookup: () => Promise<RemoteState | null>): Promise<RemoteState | null> {
     let handle: number | undefined;
@@ -214,6 +231,7 @@ export class PublishOrchestrator {
         FROM_PUBLISHING_OR_CHECK_NEEDED,
       );
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: res.url });
+      this.announcePublished({ path: p.path, channelId: p.channelId, url: res.url });
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       return { done: true, result: { status: "published", url: res.url } };
     } catch (e) {
@@ -265,6 +283,7 @@ export class PublishOrchestrator {
         FROM_CHECK_NEEDED,
       );
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: remote.url });
+      this.announcePublished({ path: p.path, channelId: p.channelId, ...(remote.url ? { url: remote.url } : {}) });
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       return { done: true, result: { status: "published", url: remote.url ?? "" } };
     }
