@@ -52,6 +52,13 @@ export interface WordPressFields {
   featuredImage?: string;
 }
 
+/** Per-image settings from `media_meta`, keyed by the link target used in `media:`. */
+export interface MediaMeta {
+  alt?: string;
+  /** Focal point, 0..1 from the left and from the top; adapters crop around it. */
+  focus?: [number, number];
+}
+
 export interface Variant {
   path: string;
   platform: Platform;
@@ -67,6 +74,7 @@ export interface Variant {
   staggerMinutes?: number;
   reminders?: number[];
   media: string[];
+  mediaMeta?: Record<string, MediaMeta>;
   deliveries: Record<string, Delivery>;
   wordpress?: WordPressFields;
 }

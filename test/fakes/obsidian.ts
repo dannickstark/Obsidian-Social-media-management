@@ -109,6 +109,7 @@ function parentOf(path: string): string {
 interface Entry {
   file: TFile;
   content: string;
+  binary?: ArrayBuffer;
 }
 
 export class Vault extends Events {
@@ -163,6 +164,29 @@ export class Vault extends Events {
     this.trigger("create", file);
     this.app.metadataCache.fileChanged(file, content);
     return file;
+  }
+
+  async createBinary(path: string, data: ArrayBuffer): Promise<TFile> {
+    const p = normalizePath(path);
+    if (this.files.has(p)) throw new Error("File already exists.");
+    const dir = parentOf(p);
+    if (!this.folders.has(dir)) throw new Error(`Folder ${dir} does not exist.`);
+    const file = new TFile(this);
+    setPath(file, p);
+    file.stat = { ctime: Date.now(), mtime: Date.now(), size: data.byteLength };
+    this.files.set(p, { file, content: "", binary: data.slice(0) });
+    this.trigger("create", file);
+    this.app.metadataCache.fileChanged(file, "");
+    return file;
+  }
+
+  async readBinary(file: TFile): Promise<ArrayBuffer> {
+    const entry = this.entry(file);
+    return entry.binary ? entry.binary.slice(0) : new TextEncoder().encode(entry.content).buffer;
+  }
+
+  getResourcePath(file: TFile): string {
+    return `app://local/${file.path}`;
   }
 
   async read(file: TFile): Promise<string> {
@@ -233,7 +257,8 @@ export class MetadataCache extends Events {
   getFirstLinkpathDest(linkpath: string, _sourcePath: string): TFile | null {
     const target = (linkpath.split("#")[0] ?? "").trim();
     if (!target) return null;
-    const withExt = target.endsWith(".md") ? target : `${target}.md`;
+    const name = target.split("/").pop() ?? target;
+    const withExt = /\.[a-z0-9]+$/i.test(name) ? target : `${target}.md`;
     const exact = this.app.vault.getFileByPath(withExt);
     if (exact) return exact;
     const base = withExt.split("/").pop();

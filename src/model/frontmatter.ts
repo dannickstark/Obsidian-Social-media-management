@@ -12,7 +12,7 @@ import {
   zUrl,
   zVariantStatus,
 } from "./schemas";
-import type { Campaign, Delivery, Issue, Parsed, Variant } from "./types";
+import type { Campaign, Delivery, Issue, MediaMeta, Parsed, Variant } from "./types";
 
 export type SocialKind = "campaign" | "post";
 
@@ -137,6 +137,51 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[]): Rec
   return deliveries;
 }
 
+function parseFocus(value: unknown): [number, number] | undefined {
+  const parts: unknown[] = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  if (parts.length !== 2) return undefined;
+  const nums = parts.map((p) => (typeof p === "number" ? p : typeof p === "string" && p.trim() ? Number(p) : Number.NaN));
+  return nums.every((n) => Number.isFinite(n) && n >= 0 && n <= 1) ? [nums[0]!, nums[1]!] : undefined;
+}
+
+function parseMediaMeta(raw: unknown, issues: Issue[]): Record<string, MediaMeta> | undefined {
+  if (isBlank(raw)) return undefined;
+  if (!isRecord(raw)) {
+    issues.push({ level: "warning", field: "media_meta", message: "media_meta must be a map of image → { alt, focus }" });
+    return undefined;
+  }
+  const out: Record<string, MediaMeta> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const target = linkTarget(key) ?? key;
+    const field = `media_meta.${target}`;
+    if (!isRecord(value)) {
+      issues.push({ level: "warning", field, message: "Each entry must be a map with alt and focus" });
+      continue;
+    }
+    const meta: MediaMeta = {};
+    if (typeof value.alt === "string" && value.alt.trim()) meta.alt = value.alt.trim();
+    if (!isBlank(value.focus)) {
+      const focus = parseFocus(value.focus);
+      if (focus) meta.focus = focus;
+      else issues.push({ level: "warning", field: `${field}.focus`, message: "focus must be two numbers between 0 and 1, e.g. 0.5, 0.3" });
+    }
+    out[target] = meta;
+  }
+  return out;
+}
+
+export function serializeMediaMeta(meta: Record<string, MediaMeta> | undefined): Record<string, unknown> | undefined {
+  const entries = Object.entries(meta ?? {})
+    .map(([target, m]) => {
+      const out: Record<string, unknown> = {};
+      if (m.alt) out.alt = m.alt;
+      if (m.focus) out.focus = m.focus.map((n) => Math.round(n * 100) / 100);
+      return [target, out] as const;
+    })
+    .filter(([, out]) => Object.keys(out).length > 0);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<Variant> {
   const issues: Issue[] = [];
   if (isBlank(fm.platform)) {
@@ -176,6 +221,9 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
     deliveries: parseDeliveries(fm.deliveries, channels, issues),
   };
 
+  const mediaMeta = parseMediaMeta(fm.media_meta, issues);
+  if (mediaMeta) variant.mediaMeta = mediaMeta;
+
   if (platform === "wordpress") {
     variant.wordpress = {
       slug: str(fm.slug),
@@ -208,7 +256,17 @@ export function serializeDeliveries(ds: Record<string, Delivery>): Record<string
 export type VariantPatch = Partial<
   Pick<
     Variant,
-    "channels" | "mode" | "status" | "scheduledAt" | "staggerMinutes" | "reminders" | "media" | "title" | "url" | "deliveries"
+    | "channels"
+    | "mode"
+    | "status"
+    | "scheduledAt"
+    | "staggerMinutes"
+    | "reminders"
+    | "media"
+    | "mediaMeta"
+    | "title"
+    | "url"
+    | "deliveries"
   >
 >;
 
@@ -222,6 +280,7 @@ export function variantFields(patch: VariantPatch): Record<string, unknown> {
   if ("staggerMinutes" in patch) out.stagger_minutes = patch.staggerMinutes;
   if ("reminders" in patch) out.reminders = patch.reminders;
   if ("media" in patch) out.media = patch.media?.map((m) => `[[${m}]]`);
+  if ("mediaMeta" in patch) out.media_meta = serializeMediaMeta(patch.mediaMeta);
   if ("title" in patch) out.title = patch.title;
   if ("url" in patch) out.url = patch.url;
   if ("deliveries" in patch) out.deliveries = patch.deliveries ? serializeDeliveries(patch.deliveries) : undefined;
