@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { campaignProgress, expandRows, overdueRows, upcomingRows } from "../index/queries";
+  import { campaignProgress, expandRows, heldForReview, overdueRows, upcomingRows } from "../index/queries";
   import { startOfLocalDay, addLocalDays } from "../model/dates";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
@@ -58,7 +58,10 @@
         <p class="osmm-progress">{channelName(r.channelId)}{error ? ` · ${error}` : ""}</p>
         <div class="osmm-row">
           <span class="osmm-spacer"></span>
-          {#if r.status === "failed"}
+          {#if r.status === "failed" && heldForReview(r.variant)}
+            <!-- Final review 8: a held note is posted only from the composer, after the user has looked at it. -->
+            <button type="button" aria-label={`Review ${r.variant.displayTitle}`} onclick={() => void composer.openComposer(r.variant.path)}>Review…</button>
+          {:else if r.status === "failed"}
             <button type="button" aria-label={`Post ${r.variant.displayTitle} on ${channelName(r.channelId)} again`} onclick={() => void publish.postNow(r.variant.path, [r.channelId!])}>Post again</button>
             <button type="button" aria-label={`Fix ${r.variant.displayTitle} on ${channelName(r.channelId)}`} onclick={() => void composer.openComposer(r.variant.path)}>Fix</button>
           {:else}

@@ -20,7 +20,7 @@
 
 <section class="osmm-panel" aria-label="Actions">
   <div class="osmm-chips">
-    <button type="button" class="mod-cta" disabled={blocked} onclick={() => void publish.postNow(variant.path)}>Post now</button>
+    <button type="button" class="mod-cta" disabled={blocked} onclick={() => void publish.postNow(variant.path, undefined, { fromComposer: true })}>Post now</button>
     <button type="button" disabled={blocked} onclick={() => publish.openAssisted(variant.path)}>Copy & open</button>
     {#if variant.channels.length > 1}<button type="button" onclick={forkMenu}>Fork for this page…</button>{/if}
     {#if variant.campaignPath}

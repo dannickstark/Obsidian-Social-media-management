@@ -351,7 +351,10 @@ export class ComposerActions {
     return result.ok;
   }
 
-  /** "Keep as draft" (shown as "Dismiss" when nothing is pending): no longer held, nothing left scheduled. */
+  /**
+   * The sidebar's "Keep as draft" button (always labelled so): no longer held, nothing left scheduled. When
+   * nothing is pending (every channel published or skipped) it only releases the hold, and the Notice says "Dismissed.".
+   */
   async keepClaudeDraft(v: IndexedVariant): Promise<boolean> {
     let dismissed = false;
     const result = await this.deps.planner.write(v.file, (fresh) => {

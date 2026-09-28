@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
+import ActionsBar from "../../src/composer/ActionsBar.svelte";
+import { osmmContext } from "../../src/ui/context";
+import Sidebar from "../../src/views/Sidebar.svelte";
 import { Notice } from "../fakes/obsidian";
 import { reminderSlots } from "../../src/reminders/reminders";
 import { dueItems } from "../../src/scheduler/due";
@@ -102,5 +106,40 @@ describe("notes written by Claude with Obsidian closed (#84)", () => {
     expect(await c.ctx.composer.keepClaudeDraft(c.index.getVariant(P)!)).toBe(true);
     const after = await fm(c);
     expect([after.review, after.status, after.deliveries]).toEqual([undefined, "draft", { "ma/you": { status: "draft" } }]);
+  });
+});
+
+describe("Post now on a held note (final review 8)", () => {
+  const heldAssisted = (over: Record<string, unknown> = {}) => offline({ mode: "assisted", ...over });
+
+  it("is refused outside the composer: the hold stays and nothing opens", async () => {
+    const c = await makeCtx({ seed: true, notes: [heldAssisted()] });
+    const open = vi.spyOn(c.ctx.publish, "openAssisted").mockReturnValue(true);
+    await c.ctx.publish.postNow(P, ["ma/you"]);
+    expect(Notice.messages.at(-1)).toBe("Approve it first in Written by Claude.");
+    expect(open).not.toHaveBeenCalled();
+    expect((await fm(c)).review).toBe("claude");
+  });
+
+  it("releases the hold from the composer's own Post now, then opens the assisted flow", async () => {
+    const c = await makeCtx({ seed: true, notes: [heldAssisted()] });
+    const open = vi.spyOn(c.ctx.publish, "openAssisted").mockReturnValue(true);
+    render(ActionsBar, { props: { variant: c.index.getVariant(P)! }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Post now" }));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(P, ["ma/you"]));
+    expect((await fm(c)).review).toBeUndefined();
+  });
+
+  it("offers Review… instead of Post again in Needs attention", async () => {
+    const c = await makeCtx({ seed: true, notes: [heldAssisted({ status: "attention", deliveries: { "ma/you": { status: "failed", error: "Boom" } } })] });
+    const compose = vi.spyOn(c.ctx.composer, "openComposer").mockResolvedValue();
+    const postNow = vi.spyOn(c.ctx.publish, "postNow");
+    render(Sidebar, { context: osmmContext(c.ctx) });
+    const attention = screen.getByRole("region", { name: /Needs attention/ });
+    const title = c.index.getVariant(P)!.displayTitle;
+    expect(within(attention).queryByRole("button", { name: `Post ${title} on @you@mastodon.social again` })).toBeNull();
+    await fireEvent.click(within(attention).getByRole("button", { name: `Review ${title}` }));
+    expect(compose).toHaveBeenCalledWith(P);
+    expect(postNow).not.toHaveBeenCalled();
   });
 });

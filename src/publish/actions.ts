@@ -3,7 +3,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import { openMarkdownView } from "../composer/session";
 import type { LoadedContent } from "../composer/content";
-import { heldForReview, LIVE_STATUSES } from "../index/queries";
+import { HELD_REFUSAL, heldForReview, LIVE_STATUSES } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseVariant } from "../model/frontmatter";
@@ -404,14 +404,19 @@ export class PublishActions {
    * opens the assisted flow. Ruling P3: flushes an open editor for `path` and re-validates the exact text
    * about to be sent first, from every entry point — refuses (Notice with the blocking issues) instead of
    * sending anything, whether by API or the assisted flow.
+   * `fromComposer`: the call comes from the composer's own Post now, the one place allowed to post a held note.
    */
-  async postNow(path: string, channelIds?: readonly string[]): Promise<void> {
+  async postNow(path: string, channelIds?: readonly string[], opts: { fromComposer?: boolean } = {}): Promise<void> {
     const fresh = await this.freshValidated(path);
     if (!fresh) return;
     const { v } = fresh;
-    // Fix round 1 (I3): the composer's own Post now is the one place still allowed to post a held note
-    // (the user is looking at it); doing so releases the hold, in a write of its own before anything sends
-    // (so the orchestrator's own held-note guard, m2, never sees it as still held).
+    // Fix round 1 (I3), final review 8: only the composer's own Post now may post a held note (the user is
+    // looking at it); doing so releases the hold, in a write of its own before anything sends (so the
+    // orchestrator's own held-note guard, m2, never sees it as still held). Every other entry point refuses.
+    if (heldForReview(v) && !opts.fromComposer) {
+      new Notice(HELD_REFUSAL);
+      return;
+    }
     if (heldForReview(v)) {
       const file = this.deps.index.getVariant(path)?.file;
       if (file) await this.deps.writer.updateVariant(file, (f) => (heldForReview(f) ? { fields: { review: undefined } } : {}));
