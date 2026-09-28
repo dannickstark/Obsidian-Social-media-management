@@ -69,6 +69,13 @@ describe("reminder pushes (#70, artboard 7)", () => {
     expect(asked).toBe(0);
   });
 
+  it("asks about cancelling for the reminder's own note (final review 7)", async () => {
+    const asked: string[] = [];
+    const d: ReminderContentDeps = { ...deps(), cancelSupported: (path) => (asked.push(path), false) };
+    const msg = await reminderMessage(item, d, { server: "https://ntfy.sh", topic: "osmm-abc", token: null });
+    expect([msg.click, asked]).toEqual([COPY_OPEN, [PATH]]);
+  });
+
   it("formats lead times and links", () => {
     expect([leadTime(10), leadTime(60), leadTime(90), leadTime(120)]).toEqual(["10 min", "1 h", "90 min", "2 h"]);
     expect(postUri("V", "a b.md", "x/y", 3)).toBe("obsidian://osmm-post?vault=V&path=a%20b.md&channel=x%2Fy&step=3");

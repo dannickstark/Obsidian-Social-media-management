@@ -16,11 +16,11 @@ export interface ReminderContentDeps {
   /** The pre-filled compose page for the delivery (mobile deep link first), or null when there is none. */
   targetUrl(path: string, channelId: string): Promise<string | null>;
   /**
-   * False once the server said it can't cancel pushes (Task 8 ruling): a booked push can then not be replaced
-   * when the note changes, so tapping it goes through Obsidian (resolved at tap time) instead of a baked URL.
-   * Default: true.
+   * False once the server said it can't cancel pushes (Task 8 ruling), or refused to cancel one of this note's
+   * (final review 7): a booked push can then not be replaced when the note changes, so tapping it goes through
+   * Obsidian (resolved at tap time) instead of a baked URL. Default: true.
    */
-  cancelSupported?(): boolean;
+  cancelSupported?(path: string): boolean;
 }
 
 export function obsidianUri(action: string, params: Record<string, string>): string {
@@ -54,7 +54,7 @@ export async function reminderMessage(item: ReminderItem, deps: ReminderContentD
   const v = deps.variant(item.path);
   const vault = deps.vaultName();
   const copyOpen = postUri(vault, item.path, item.channelId);
-  const prefilled = (deps.cancelSupported?.() ?? true) ? await deps.targetUrl(item.path, item.channelId) : null;
+  const prefilled = (deps.cancelSupported?.(item.path) ?? true) ? await deps.targetUrl(item.path, item.channelId) : null;
   const base = {
     title: `In ${leadTime(item.minutes)} · ${label(v)}`,
     message: `${item.title}\n${deps.channelName(item.channelId)} · ${formatTime(item.at)}`,

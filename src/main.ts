@@ -171,7 +171,7 @@ export default class OsmmPlugin extends Plugin {
         return target.mobileUrl ?? target.url;
       },
       // Task 8 ruling: once the server can't cancel, a push can't follow edits, so it links through Obsidian.
-      cancelSupported: () => this.phone.cancelSupported(),
+      cancelSupported: (path) => this.phone.cancelSupported(path),
     };
     this.phone = new NtfyBooker({
       rows: () => ui.actions.rows(),

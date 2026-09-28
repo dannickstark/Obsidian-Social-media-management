@@ -1,7 +1,7 @@
 import type { PostRow } from "../../index/queries";
 import { HOUR, MINUTE } from "../../model/dates";
 import { fireTime, REMINDER_WINDOW_MS, reminderSlots, type ReminderItem } from "../reminders";
-import type { Booking, BookingLedger } from "./bookings";
+import { contentVersion, type Booking, type BookingLedger } from "./bookings";
 import { NtfyError, type CancelOutcome, type NtfyClient, type NtfyMessage } from "./client";
 import { settlesWithin } from "../../util/time";
 
@@ -61,6 +61,8 @@ export class NtfyBooker {
   private readonly inFlight = new Set<string>();
   /** Set by stop() on unload: nothing more is sent and nothing is shown. */
   private halted = false;
+  /** The warning about a refused cancel of an edited push is shown once (final review 7). */
+  private refusalWarned = false;
 
   constructor(private readonly deps: BookerDeps) {}
 
@@ -124,9 +126,12 @@ export class NtfyBooker {
     this.abandoned++;
   }
 
-  /** False once the server said it can't cancel pushes (Task 8 ruling): pushes should then link through Obsidian. */
-  cancelSupported(): boolean {
-    return this.deps.ledger.cancelSupported();
+  /**
+   * False once the server said it can't cancel pushes (Task 8 ruling), or, for `path`, once it refused to cancel an
+   * edited push of that note (final review 7): those pushes should then link through Obsidian.
+   */
+  cancelSupported(path?: string): boolean {
+    return this.deps.ledger.cancelSupported() && !(path !== undefined && this.deps.ledger.cancelRefused(path));
   }
 
   private track(task: Promise<SyncResult>): Promise<SyncResult> {
@@ -163,12 +168,17 @@ export class NtfyBooker {
         return result;
       }
       const rows = this.deps.rows();
-      // M3 P9: a booking carries the note's mtime; a later edit means the pre-filled text is outdated.
-      const versions = new Map(rows.map((r) => [r.key, r.variant.file.stat.mtime]));
       const wanted = new Map<string, ReminderItem>();
       for (const item of reminderSlots(rows, now - REMINDER_WINDOW_MS, now + BOOKING_WINDOW_MS, now, (r) => this.deps.offsets(r))) {
         wanted.set(item.key, item);
       }
+      // Final review 6: a booking carries a hash of its push; when the push composed now differs, its text is outdated.
+      const composed = new Map<string, NtfyMessage>();
+      const compose = async (item: ReminderItem) => {
+        let message = composed.get(item.key);
+        if (!message) composed.set(item.key, (message = await this.deps.compose(item)));
+        return message;
+      };
       /** Cancelled for an edit: rebooked in this run, their request already counted with the cancel. */
       const rebook = new Set<string>();
       for (const found of this.deps.ledger.all()) {
@@ -189,11 +199,14 @@ export class NtfyBooker {
           b = { ...b, stale: false };
           this.deps.ledger.put(b);
         }
-        const version = versions.get(b.rowKey);
-        if (version === undefined || version === b.version) continue;
-        if (found.stale && !this.cancelSupported()) {
-          // A revived push the server can't cancel: a cancel would be futile.
+        const item = wanted.get(b.key)!;
+        const version = contentVersion(await compose(item));
+        if (version === b.version) continue;
+        if (!this.cancelSupported(item.path)) {
+          // The server can't (or wouldn't) cancel this note's pushes: a cancel would be futile.
+          if (stopped()) return result;
           this.deps.ledger.put({ ...b, version });
+          if (!found.stale) result.leftStale.push(b.key);
           continue;
         }
         if (budget.left < 2) continue;
@@ -209,6 +222,7 @@ export class NtfyBooker {
         } else {
           // The old push still arrives; don't send a second one, and don't try to cancel it again.
           if (outcome === "unsupported") this.deps.ledger.markCancelUnsupported();
+          else this.refused(item.path);
           this.deps.ledger.put({ ...b, version });
           result.leftStale.push(b.key);
           budget.left++;
@@ -224,8 +238,8 @@ export class NtfyBooker {
         current = item.key;
         this.inFlight.add(item.key);
         try {
-          const version = versions.get(rowKeyOf(item.key)) ?? 0;
-          const message = await this.deps.compose(item);
+          const message = await compose(item);
+          const version = contentVersion(message);
           if (stopped() || !this.active()) return result;
           const sent = await this.deps.client.publish({ ...message, at: fireTime(item) });
           // Recorded even after a pause, an abandon or a role change, so it can be cancelled later; not after forget() or stop().
@@ -241,6 +255,14 @@ export class NtfyBooker {
       if (!forgotten()) this.pause(e, result, current);
     }
     return result;
+  }
+
+  /** The server refused to cancel an edited push of this note: its later pushes link through Obsidian (final review 7). */
+  private refused(path: string): void {
+    this.deps.ledger.markCancelRefused(path);
+    if (this.refusalWarned || this.halted) return;
+    this.refusalWarned = true;
+    this.deps.warn("Phone reminders: the ntfy server refused to withdraw a reminder for an edited post, so its earlier push will still arrive. Later reminders for that post open through Obsidian.");
   }
 
   /** Records the answer to a cancel of a booking that no longer applies. */

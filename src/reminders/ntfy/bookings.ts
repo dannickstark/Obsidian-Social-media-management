@@ -1,5 +1,6 @@
 import type { App } from "obsidian";
 import { isRecord } from "../../model/frontmatter";
+import type { NtfyMessage } from "./client";
 
 /** One push this device booked on ntfy (#69: {deliveryId, offset, messageId, at}). */
 export interface Booking {
@@ -12,7 +13,10 @@ export interface Booking {
   messageId: string;
   /** When the push is due on the phone (epoch ms). */
   fireAt: number;
-  /** The note's mtime at booking time (M3 P9): a later edit means the booked text is stale. */
+  /**
+   * A hash of the push as booked (contentVersion; final review 6, replacing M3 P9's note mtime): when the push
+   * composed now differs, the booked one carries outdated text and is replaced.
+   */
   version: number;
   /** The push no longer applies but the server could not cancel it: it still arrives, so it is kept until its time. */
   stale?: boolean;
@@ -20,6 +24,25 @@ export interface Booking {
 
 const KEY = "osmm-ntfy-bookings";
 const CANCEL_UNSUPPORTED_KEY = "osmm-ntfy-cancel-unsupported";
+const CANCEL_REFUSED_KEY = "osmm-ntfy-cancel-refused";
+
+/**
+ * A stable 53-bit hash (cyrb53) of what a push shows and links to: title, text, click link and actions. Priority,
+ * tags and the delivery time are left out: a new time gives a new reminder key anyway.
+ */
+export function contentVersion(msg: Pick<NtfyMessage, "title" | "message" | "click" | "actions">): number {
+  const text = JSON.stringify([msg.title, msg.message, msg.click ?? null, msg.actions ?? []]);
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
 
 /** Device-local ledger of booked pushes (never the topic or the token), so a restart does not book twice. */
 export class BookingLedger {
@@ -81,8 +104,24 @@ export class BookingLedger {
     if (this.cancelSupported()) this.app.saveLocalStorage(CANCEL_UNSUPPORTED_KEY, true);
   }
 
+  /** Notes for which the server refused to cancel an edited push (final review 7); device-local, reset for a new target. */
+  cancelRefused(path: string): boolean {
+    return this.refusedPaths().includes(path);
+  }
+
+  markCancelRefused(path: string): void {
+    const paths = this.refusedPaths();
+    if (!paths.includes(path)) this.app.saveLocalStorage(CANCEL_REFUSED_KEY, [...paths, path]);
+  }
+
   resetCancelSupport(): void {
     if (this.app.loadLocalStorage(CANCEL_UNSUPPORTED_KEY) !== null) this.app.saveLocalStorage(CANCEL_UNSUPPORTED_KEY, null);
+    if (this.app.loadLocalStorage(CANCEL_REFUSED_KEY) !== null) this.app.saveLocalStorage(CANCEL_REFUSED_KEY, null);
+  }
+
+  private refusedPaths(): string[] {
+    const raw: unknown = this.app.loadLocalStorage(CANCEL_REFUSED_KEY);
+    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
   }
 
   private save(list: readonly Booking[]): void {

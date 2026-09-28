@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../../fakes/obsidian";
 import { formatDateTime } from "../../../src/model/dates";
-import { BookingLedger } from "../../../src/reminders/ntfy/bookings";
+import { BookingLedger, contentVersion } from "../../../src/reminders/ntfy/bookings";
 import { BOOKING_WINDOW_MS, NtfyBooker, RETRY_MS, WITHDRAW_WAIT_MS, type BookerDeps } from "../../../src/reminders/ntfy/booker";
 import { NtfyClient, NtfyError, REQUEST_TIMEOUT_MS, type CancelOutcome, type NtfyMessage } from "../../../src/reminders/ntfy/client";
 import { NTFY } from "./fixtures";
@@ -80,6 +80,8 @@ function fakeClient(opts: { cancel?: CancelOutcome } = {}) {
 
 function booker(c: TestCtx, fake: ReturnType<typeof fakeClient>, now: { t: number }, over: Partial<BookerDeps> = {}, app: App = c.app) {
   const warnings: string[] = [];
+  /** revise(path) changes the composed push for that note, as a real content edit would. */
+  const revisions = new Map<string, number>();
   const b = new NtfyBooker({
     rows: () => c.ctx.actions.rows(),
     offsets: (row) => row.variant.reminders ?? null,
@@ -87,12 +89,12 @@ function booker(c: TestCtx, fake: ReturnType<typeof fakeClient>, now: { t: numbe
     enabled: () => true,
     client: fake.client,
     ledger: new BookingLedger(app as never),
-    compose: async (item) => ({ title: `In ${item.minutes} min`, message: item.title }),
+    compose: async (item) => ({ title: `In ${item.minutes} min`, message: `${item.title}\n${c.index.getVariant(item.path)?.excerpt ?? ""}${revisions.has(item.path) ? ` (r${revisions.get(item.path)})` : ""}` }),
     now: () => now.t,
     warn: (m) => void warnings.push(m),
     ...over,
   });
-  return { b, warnings };
+  return { b, warnings, revise: (path: string) => void revisions.set(path, (revisions.get(path) ?? 0) + 1) };
 }
 
 describe("NtfyBooker (#69, fake clock)", () => {
@@ -258,11 +260,32 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect((await b.sync()).booked).toHaveLength(10);
   });
 
-  it("stores the note's mtime as the booking version", async () => {
+  it("stores a hash of the composed push as the booking version (final review 6)", async () => {
     const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
-    await booker(c, fakeClient(), { t: T0 }).b.sync();
-    const mtime = c.app.vault.getFileByPath(A)!.stat.mtime;
-    expect(new BookingLedger(c.app as never).all().map((x) => x.version)).toEqual([mtime]);
+    const fake = fakeClient();
+    await booker(c, fake, { t: T0 }).b.sync();
+    expect(new BookingLedger(c.app as never).all().map((x) => x.version)).toEqual([contentVersion(fake.sent[0]!)]);
+  });
+
+  it("does not rebook when only a delivery of another channel of the note changes (final review 6)", async () => {
+    const two = (extra: Record<string, unknown> = {}) => fm(T0 + 10 * HOUR, { reminders: [60], channels: ["bs/you", "bs/two"], ...extra });
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: two(), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    const { b } = booker(c, fake, now);
+    expect((await b.sync()).booked).toHaveLength(2);
+    const before = c.app.vault.getFileByPath(A)!.stat.mtime;
+    const file = await writeNote(c.app as never, A, two({ deliveries: { "bs/two": { status: "awaiting_you" } } }), "A");
+    file.stat = { ...file.stat, mtime: Math.max(file.stat.mtime, before + 1000) };
+    await indexed(c.index, () => c.index.getVariant(A)?.deliveries["bs/two"]?.status === "awaiting_you");
+    const mine = new BookingLedger(c.app as never).get(key(A, T0 + 10 * HOUR, 60))!;
+    const other = new BookingLedger(c.app as never).all().find((x) => x.rowKey === `${A}#bs/two`)!.key;
+    now.t += 30_000;
+    const r = await b.sync();
+    // bs/two now waits for the user (no reminder); bs/you's push is unchanged, so it is neither cancelled nor rebooked.
+    expect([r.cancelled, r.booked, r.leftStale]).toEqual([[other], [], []]);
+    expect(fake.sent).toHaveLength(2);
+    expect(new BookingLedger(c.app as never).all()).toEqual([mine]);
   });
 
   it("cancels and rebooks a push when the note was edited since booking (M3 P9, server cancels)", async () => {
@@ -271,15 +294,15 @@ describe("NtfyBooker (#69, fake clock)", () => {
     const now = { t: T0 };
     const { b } = booker(c, fake, now);
     await b.sync();
-    const file = await writeNote(c.app as never, A, fm(T0 + 10 * HOUR, { reminders: [60] }), "A, edited");
-    file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
+    await writeNote(c.app as never, A, fm(T0 + 10 * HOUR, { reminders: [60] }), "A, edited");
     await indexed(c.index, () => c.index.getVariant(A)?.excerpt.includes("edited") === true);
     now.t += 30_000;
     const r = await b.sync();
     expect([r.cancelled, r.booked, r.leftStale]).toEqual([[key(A, T0 + 10 * HOUR, 60)], [key(A, T0 + 10 * HOUR, 60)], []]);
     expect(fake.cancelled).toEqual(["m1"]);
     expect(fake.sent).toHaveLength(2);
-    expect(new BookingLedger(c.app as never).all().map((x) => [x.messageId, x.version])).toEqual([["m2", file.stat.mtime]]);
+    expect(fake.sent[1]!.message).toContain("edited");
+    expect(new BookingLedger(c.app as never).all().map((x) => [x.messageId, x.version])).toEqual([["m2", contentVersion(fake.sent[1]!)]]);
     expect((await b.sync()).booked).toEqual([]);
   });
 
@@ -289,13 +312,13 @@ describe("NtfyBooker (#69, fake clock)", () => {
     const now = { t: T0 };
     const { b } = booker(c, fake, now);
     await b.sync();
-    const file = await writeNote(c.app as never, A, fm(T0 + 10 * HOUR, { reminders: [60] }), "A, edited");
-    file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
+    await writeNote(c.app as never, A, fm(T0 + 10 * HOUR, { reminders: [60] }), "A, edited");
     await indexed(c.index, () => c.index.getVariant(A)?.excerpt.includes("edited") === true);
     now.t += 30_000;
     const r = await b.sync();
     expect([r.cancelled, r.booked, r.leftStale]).toEqual([[], [], [key(A, T0 + 10 * HOUR, 60)]]);
-    expect(new BookingLedger(c.app as never).all().map((x) => [x.messageId, x.version])).toEqual([["m1", file.stat.mtime]]);
+    const edited = contentVersion({ title: "In 60 min", message: `${c.index.getVariant(A)!.displayTitle}\nA, edited` });
+    expect(new BookingLedger(c.app as never).all().map((x) => [x.messageId, x.version])).toEqual([["m1", edited]]);
     now.t += 30_000;
     const again = await b.sync();
     expect([again.cancelled, again.booked, again.leftStale]).toEqual([[], [], []]);
@@ -375,14 +398,11 @@ describe("NtfyBooker (#69, fake clock)", () => {
     const notes = Array.from({ length: 15 }, (_, i) => ({ path: `Social/Posts/N${i}.md`, frontmatter: fm(T0 + (i + 2) * HOUR), body: `N${i}` }));
     const c = await makeCtx({ notes });
     const fake = fakeClient();
-    const { b } = booker(c, fake, { t: T0 });
+    const { b, revise } = booker(c, fake, { t: T0 });
     await b.sync();
     await b.sync();
     expect(fake.sent).toHaveLength(30);
-    for (const n of notes) {
-      const file = c.app.vault.getFileByPath(n.path)!;
-      file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
-    }
+    for (const n of notes) revise(n.path);
     for (let run = 0; run < 3; run++) {
       const r = await b.sync();
       expect(r.cancelled).toHaveLength(10);
@@ -412,13 +432,12 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect(fake.sent).toHaveLength(2);
     // The server can't cancel: no futile cancel of the revived push, only its version is brought up to date.
     expect(fake.cancelled).toEqual(["m1", "m2"]);
-    const mtime = c.app.vault.getFileByPath(A)!.stat.mtime;
     const ledger = new BookingLedger(c.app as never).all();
     expect(ledger.map((x) => [x.key, x.messageId, x.stale === true])).toEqual([
       [key(A, T0 + 10 * HOUR, 60), "m1", false],
       [key(A, T0 + 11 * HOUR, 60), "m2", true],
     ]);
-    expect(ledger[0]!.version).toBe(mtime);
+    expect(ledger[0]!.version).toBe(contentVersion(fake.sent[0]!));
   });
 
   it("stops publishing as soon as this device loses the role mid-run", async () => {
@@ -542,10 +561,9 @@ describe("NtfyBooker (#69, fake clock)", () => {
     const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
     const fake = fakeClient();
     const now = { t: T0 };
-    const { b } = booker(c, fake, now);
+    const { b, revise } = booker(c, fake, now);
     await b.sync();
-    const file = c.app.vault.getFileByPath(A)!;
-    file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
+    revise(A);
     const release = fake.holdCancel();
     now.t += 30_000;
     const r1 = b.sync();
@@ -569,10 +587,9 @@ describe("NtfyBooker (#69, fake clock)", () => {
     const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
     const fake = fakeClient({ cancel: "gone" });
     const now = { t: T0 };
-    const { b } = booker(c, fake, now);
+    const { b, revise } = booker(c, fake, now);
     await b.sync();
-    const file = c.app.vault.getFileByPath(A)!;
-    file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
+    revise(A);
     now.t += 30_000;
     expect((await b.sync()).booked).toEqual([key(A, T0 + 10 * HOUR, 60)]);
     await writeNote(c.app as never, A, fm(T0 + 11 * HOUR, { reminders: [60] }), "A");
@@ -581,6 +598,34 @@ describe("NtfyBooker (#69, fake clock)", () => {
     expect([r.cancelled, r.leftStale]).toEqual([[key(A, T0 + 10 * HOUR, 60)], []]);
     expect(new BookingLedger(c.app as never).all().map((x) => x.key)).toEqual([key(A, T0 + 11 * HOUR, 60)]);
     expect(b.cancelSupported()).toBe(true);
+  });
+
+  it("keeps an edited push the server refused to cancel, warns once and links that note's later pushes through Obsidian (final review 7)", async () => {
+    const c = await makeCtx({
+      notes: [
+        { path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" },
+        { path: B, frontmatter: fm(T0 + 20 * HOUR, { reminders: [60] }), body: "B" },
+      ],
+    });
+    const fake = fakeClient({ cancel: "refused" });
+    const now = { t: T0 };
+    const { b, warnings, revise } = booker(c, fake, now);
+    await b.sync();
+    revise(A);
+    now.t += 30_000;
+    const r = await b.sync();
+    expect([r.cancelled, r.booked, r.leftStale]).toEqual([[], [], [key(A, T0 + 10 * HOUR, 60)]]);
+    expect([b.cancelSupported(A), b.cancelSupported(B), b.cancelSupported()]).toEqual([false, true, true]);
+    expect(warnings).toEqual(["Phone reminders: the ntfy server refused to withdraw a reminder for an edited post, so its earlier push will still arrive. Later reminders for that post open through Obsidian."]);
+    // A later edit of the same note: no futile cancel, only the version is brought up to date. B still cancels.
+    revise(A);
+    revise(B);
+    now.t += 30_000;
+    const again = await b.sync();
+    expect([again.cancelled, again.booked, again.leftStale]).toEqual([[], [], [key(A, T0 + 10 * HOUR, 60), key(B, T0 + 20 * HOUR, 60)]]);
+    expect(fake.cancelled).toEqual(["m1", "m2"]);
+    expect(warnings).toHaveLength(1);
+    expect((await b.sync()).leftStale).toEqual([]);
   });
 
   it("keeps a push the server refused to cancel as stale, without flagging cancel as unsupported", async () => {

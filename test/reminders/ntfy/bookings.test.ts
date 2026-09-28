@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { App } from "../../fakes/obsidian";
-import { BookingLedger, type Booking } from "../../../src/reminders/ntfy/bookings";
+import { BookingLedger, contentVersion, type Booking } from "../../../src/reminders/ntfy/bookings";
+import type { NtfyMessage } from "../../../src/reminders/ntfy/client";
 
 const b = (key: string, fireAt: number, version = 999): Booking => ({
   key,
@@ -76,5 +77,37 @@ describe("BookingLedger", () => {
     expect(new BookingLedger(app as never).cancelSupported()).toBe(false);
     ledger.resetCancelSupport();
     expect(new BookingLedger(app as never).cancelSupported()).toBe(true);
+  });
+
+  it("remembers on this device the notes whose pushes the server refused to cancel, until reset (final review 7)", () => {
+    const app = new App();
+    const ledger = new BookingLedger(app as never);
+    expect(ledger.cancelRefused("a.md")).toBe(false);
+    ledger.markCancelRefused("a.md");
+    ledger.markCancelRefused("a.md");
+    ledger.clear();
+    expect([new BookingLedger(app as never).cancelRefused("a.md"), new BookingLedger(app as never).cancelRefused("b.md")]).toEqual([true, false]);
+    expect(app.loadLocalStorage("osmm-ntfy-cancel-refused")).toEqual(["a.md"]);
+    ledger.resetCancelSupport();
+    expect(new BookingLedger(app as never).cancelRefused("a.md")).toBe(false);
+  });
+});
+
+describe("contentVersion (final review 6)", () => {
+  const msg = { title: "In 1 h · Bluesky", message: "Hi\n@you · 10:00", click: "https://bsky.app/intent/compose?text=Hi", actions: [{ action: "view" as const, label: "Open note", url: "obsidian://open?vault=V&file=a.md" }] };
+
+  it("is a stable number for the same push content", () => {
+    expect(contentVersion(msg)).toBe(contentVersion({ ...msg, actions: [...msg.actions] }));
+    expect(Number.isSafeInteger(contentVersion(msg))).toBe(true);
+  });
+
+  it("changes with the title, the text, the click link or the actions, and ignores the rest", () => {
+    const v = contentVersion(msg);
+    expect(contentVersion({ ...msg, title: "In 10 min · Bluesky" })).not.toBe(v);
+    expect(contentVersion({ ...msg, message: "Hi!\n@you · 10:00" })).not.toBe(v);
+    expect(contentVersion({ ...msg, click: "https://bsky.app/intent/compose?text=Hi%21" })).not.toBe(v);
+    expect(contentVersion({ ...msg, actions: [] })).not.toBe(v);
+    const full: NtfyMessage = { ...msg, priority: 5, tags: ["osmm"], at: 123 };
+    expect(contentVersion(full)).toBe(v);
   });
 });
