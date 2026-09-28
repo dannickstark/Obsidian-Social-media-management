@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatDateTime } from "../../src/model/dates";
-import { dueReminders } from "../../src/reminders/reminders";
+import { dueReminders, fireTime, reminderSlots } from "../../src/reminders/reminders";
 import { ReminderService } from "../../src/reminders/service";
 import type { Notifier } from "../../src/reminders/notifier";
 import type { ReminderItem } from "../../src/reminders/reminders";
@@ -46,6 +46,38 @@ describe("dueReminders", () => {
       minutes: 60,
       title: "Hi",
     });
+  });
+
+  it("pins the reminder key format (`<row key>@<post time>:<minutes>`) so ledger entries already recorded keep matching after the refactor", async () => {
+    const c = await makeCtx({ notes: [note()] });
+    const key = dueReminders(c.ctx.actions.rows(), AT - 60 * MIN, AT - 61 * MIN, () => [60])[0]!.key;
+    expect(key).toBe(`${P}#bs/you@${AT}:60`);
+  });
+});
+
+describe("reminderSlots", () => {
+  it("lists every reminder due in a window, for posts still ahead", async () => {
+    const c = await makeCtx({ notes: [note({ reminders: [60, 10] })] });
+    const rows = c.ctx.actions.rows();
+    const items = reminderSlots(rows, AT - 72 * 60 * MIN, AT + MIN, AT - 72 * 60 * MIN, (r) => r.variant.reminders ?? null);
+    expect(items.map((i) => [i.minutes, fireTime(i)])).toEqual([
+      [60, AT - 60 * MIN],
+      [10, AT - 10 * MIN],
+    ]);
+    expect(reminderSlots(rows, AT - 30 * MIN, AT + 72 * 60 * MIN, AT - 30 * MIN, () => [60, 10]).map((i) => i.minutes)).toEqual([10]);
+  });
+
+  it("never reminds about an unreadable delivery entry", async () => {
+    const c = await makeCtx({ notes: [note({ deliveries: { "bs/you": { status: "Scheduled!" } } })] });
+    const rows = c.ctx.actions.rows();
+    expect(dueReminders(rows, AT - 60 * MIN, AT - 61 * MIN, () => [60])).toEqual([]);
+    expect(reminderSlots(rows, 0, AT, 0, () => [60, 10])).toEqual([]);
+  });
+
+  it("keeps the same key format as dueReminders (byte-identical, so an existing NotifiedLedger entry still matches)", async () => {
+    const c = await makeCtx({ notes: [note()] });
+    const rows = c.ctx.actions.rows();
+    expect(reminderSlots(rows, AT - 61 * MIN, AT - 60 * MIN, AT - 61 * MIN, () => [60])[0]!.key).toBe(`${P}#bs/you@${AT}:60`);
   });
 });
 

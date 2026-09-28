@@ -14,26 +14,41 @@ export interface ReminderItem {
 /** Reminders missed by more than this (Obsidian closed, laptop asleep) are not shown. */
 export const REMINDER_WINDOW_MS = 5 * MINUTE;
 
+export function fireTime(item: Pick<ReminderItem, "at" | "minutes">): number {
+  return item.at - item.minutes * MINUTE;
+}
+
 /**
- * Reminders whose time fell between the previous tick and now. `offsets` gives the minutes-before list
- * for a row, or null for rows that will post by themselves.
+ * Reminders whose time falls in (from, to], for scheduled posts after `postAfter`. `offsets` gives the
+ * minutes-before list for a row, or null for rows that post by themselves. Unreadable delivery entries are
+ * frozen: they never remind (desktop or phone).
  */
+export function reminderSlots(
+  rows: readonly PostRow[],
+  from: number,
+  to: number,
+  postAfter: number,
+  offsets: (row: PostRow) => readonly number[] | null,
+): ReminderItem[] {
+  const out: ReminderItem[] = [];
+  for (const row of rows) {
+    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= postAfter || unreadableRow(row)) continue;
+    for (const minutes of offsets(row) ?? []) {
+      if (minutes <= 0) continue;
+      const fireAt = row.at - minutes * MINUTE;
+      if (fireAt <= from || fireAt > to) continue;
+      out.push({ key: `${row.key}@${row.at}:${minutes}`, path: row.variant.path, channelId: row.channelId, at: row.at, minutes, title: row.variant.displayTitle });
+    }
+  }
+  return out.sort((a, b) => fireTime(a) - fireTime(b) || a.key.localeCompare(b.key));
+}
+
+/** Desktop: reminders whose time fell between the previous tick and now, never older than 5 minutes. */
 export function dueReminders(
   rows: readonly PostRow[],
   now: number,
   previous: number | null,
   offsets: (row: PostRow) => readonly number[] | null,
 ): ReminderItem[] {
-  const from = Math.max(previous ?? Number.NEGATIVE_INFINITY, now - REMINDER_WINDOW_MS);
-  const out: ReminderItem[] = [];
-  for (const row of rows) {
-    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= now || unreadableRow(row)) continue;
-    for (const minutes of offsets(row) ?? []) {
-      if (minutes <= 0) continue;
-      const fireAt = row.at - minutes * MINUTE;
-      if (fireAt <= from || fireAt > now) continue;
-      out.push({ key: `${row.key}@${row.at}:${minutes}`, path: row.variant.path, channelId: row.channelId, at: row.at, minutes, title: row.variant.displayTitle });
-    }
-  }
-  return out.sort((a, b) => a.at - a.minutes * MINUTE - (b.at - b.minutes * MINUTE) || a.key.localeCompare(b.key));
+  return reminderSlots(rows, Math.max(previous ?? Number.NEGATIVE_INFINITY, now - REMINDER_WINDOW_MS), now, now, offsets);
 }
