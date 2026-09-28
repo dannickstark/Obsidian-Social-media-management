@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
-import { WorkspaceLeaf } from "../fakes/obsidian";
+import { MarkdownView, WorkspaceLeaf } from "../fakes/obsidian";
 import { ComposerView } from "../../src/composer/ComposerView";
 import { composerSession } from "../../src/composer/session";
 import { VIEW_COMPOSER } from "../../src/ui/actions";
@@ -72,7 +72,67 @@ describe("Composer shell", () => {
     session.path.set(LI);
     session.path.set(BS);
     await settle(60);
-    expect(get(session.body)).toContain("Event X is back on the 12th");
+    expect(get(session.body).path).toBe(BS);
+    expect(get(session.body).text).toContain("Event X is back on the 12th");
+    session.dispose();
+  });
+
+  it("never shows or checks the previous note's body while the next one is loading", async () => {
+    const c = await makeCtx({ seed: true });
+    const checked: Array<[string, string]> = [];
+    const counted: Array<[string, string]> = [];
+    const check = c.ctx.composer.check.bind(c.ctx.composer);
+    const count = c.ctx.composer.counters.bind(c.ctx.composer);
+    vi.spyOn(c.ctx.composer, "check").mockImplementation((v, content) => {
+      checked.push([v.path, content.body]);
+      return check(v, content);
+    });
+    vi.spyOn(c.ctx.composer, "counters").mockImplementation((v, content, ch) => {
+      counted.push([v.path, content.body]);
+      return count(v, content, ch);
+    });
+    const view = await openView(c, BS);
+    await vi.waitFor(() => expect(view.contentEl.textContent).toContain("Event X is back on the 12th"));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const read = c.app.vault.cachedRead.bind(c.app.vault);
+    vi.spyOn(c.app.vault, "cachedRead").mockImplementation(async (file) => {
+      if (file.path === LI) await gate;
+      return read(file);
+    });
+    await view.showVariant(LI);
+    await settle(30);
+    expect(view.contentEl.textContent).not.toContain("Event X is back on the 12th");
+    expect(view.contentEl.textContent).toContain("Loading…");
+    expect(within(view.contentEl).queryByRole("region", { name: "Checks" })).toBeNull();
+    release();
+    await vi.waitFor(() => expect(view.contentEl.textContent).toContain("I almost didn't host Event X."));
+    expect(view.contentEl.textContent).not.toContain("Loading…");
+    for (const [path, body] of [...checked, ...counted]) {
+      if (path === LI) expect(body).not.toContain("Event X is back on the 12th");
+      if (path === BS) expect(body).not.toContain("I almost didn't host");
+    }
+    expect(checked.some(([path]) => path === LI)).toBe(true);
+  });
+
+  it("prefers the open editor's buffer over the file on disk", async () => {
+    const c = await makeCtx({ seed: true });
+    const leaf = new WorkspaceLeaf(c.app);
+    const md = new MarkdownView(leaf);
+    md.file = c.app.vault.getFileByPath(BS);
+    md.editor = { getValue: () => "---\ntype: social-post\n---\nNewer words, not saved yet" };
+    leaf.view = md;
+    leaf.viewType = "markdown";
+    c.app.workspace.leaves.push(leaf);
+    const session = composerSession(c.app as never, c.index);
+    session.path.set(BS);
+    await settle(10);
+    expect(get(session.body)).toEqual({ path: BS, text: "Newer words, not saved yet" });
+    await c.writer.run(c.app.vault.getFileByPath(BS)! as never, (fm) => {
+      fm.stagger_minutes = 5;
+    });
+    await settle(30);
+    expect(get(session.body).text).toBe("Newer words, not saved yet");
     session.dispose();
   });
 

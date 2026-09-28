@@ -9,6 +9,17 @@
   const options = $derived($settings.channels.filter((c) => c.platform === variant.platform));
   const groups = $derived($settings.channelGroups.filter((g) => g.channelIds.some((id) => options.some((c) => c.id === id))));
   const unknown = $derived(variant.channels.filter((id) => !options.some((c) => c.id === id)));
+  const stagger = $derived(variant.staggerMinutes ?? $settings.defaultStaggerMinutes);
+
+  /** An emptied field is not a request for 0 minutes: put the current value back and write nothing. */
+  function onStagger(input: HTMLInputElement): void {
+    const raw = input.value.trim();
+    if (raw === "") {
+      input.value = String(stagger);
+      return;
+    }
+    void composer.setStagger(variant, Number(raw));
+  }
 </script>
 
 <section class="osmm-panel" aria-label="Post as">
@@ -36,8 +47,8 @@
         type="number"
         min="0"
         max="1440"
-        value={variant.staggerMinutes ?? $settings.defaultStaggerMinutes}
-        onchange={(e) => void composer.setStagger(variant, Number(e.currentTarget.value))} />
+        value={stagger}
+        onchange={(e) => onStagger(e.currentTarget)} />
     </label>
   {/if}
 </section>

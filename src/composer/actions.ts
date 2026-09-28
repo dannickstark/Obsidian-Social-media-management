@@ -220,21 +220,23 @@ export class ComposerActions {
     this.deps.planner.afterWrite(result, `Removed ${target} from the post.`);
   }
 
-  setAlt(v: IndexedVariant, target: string, alt: string): Promise<void> {
-    return this.patchMediaMeta(v, target, { alt: alt.trim() }, "Alt text saved.");
+  async setAlt(v: IndexedVariant, target: string, alt: string): Promise<void> {
+    await this.patchMediaMeta(v, target, { alt: alt.trim() }, "Alt text saved.");
   }
 
-  setFocus(v: IndexedVariant, target: string, focus: [number, number]): Promise<void> {
+  /** Resolves true when the focal point was written. */
+  setFocus(v: IndexedVariant, target: string, focus: [number, number]): Promise<boolean> {
     return this.patchMediaMeta(v, target, { focus }, "Focal point saved.");
   }
 
-  private async patchMediaMeta(v: IndexedVariant, target: string, patch: MediaMeta, message: string): Promise<void> {
+  private async patchMediaMeta(v: IndexedVariant, target: string, patch: MediaMeta, message: string): Promise<boolean> {
     const result = await this.deps.planner.write(v.file, (fresh) => {
       const next: MediaMeta = { ...fresh.mediaMeta?.[target], ...patch };
       if (!next.alt) delete next.alt;
       return { fields: { mediaMeta: { ...fresh.mediaMeta, [target]: next } } };
     });
     this.deps.planner.afterWrite(result, message);
+    return result.ok;
   }
 
   async toggleChannel(v: IndexedVariant, channel: Channel, on: boolean): Promise<boolean> {

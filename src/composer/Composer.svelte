@@ -11,13 +11,13 @@
   import MediaPanel from "./MediaPanel.svelte";
   import PostAs from "./PostAs.svelte";
   import SchedulePanel from "./SchedulePanel.svelte";
-  import type { ComposerSession } from "./session";
+  import type { ComposerSession, SessionBody } from "./session";
 
   let { session, openVariant }: { session: ComposerSession; openVariant: (path: string) => void } = $props();
   const { snapshot, composer } = useOsmm();
 
   let path = $state<string | null>(null);
-  let body = $state("");
+  let body = $state<SessionBody>({ path: null, text: "" });
   $effect(() => session.path.subscribe((p) => (path = p)));
   $effect(() => session.body.subscribe((b) => (body = b)));
 
@@ -28,22 +28,26 @@
     variant?.campaignPath ? $snapshot.variants.filter((v) => v.campaignPath === variant.campaignPath).sort(byPlatform) : variant ? [variant] : [],
   );
 
-  let media = $state<MediaInfo[]>([]);
-  let featured = $state<MediaInfo | undefined>(undefined);
+  /** Media of the note at `path`; like the body, only used while it belongs to the current variant. */
+  let loadedMedia = $state<{ path: string; media: MediaInfo[]; featured: MediaInfo | undefined } | null>(null);
   $effect(() => {
     const v = variant;
     if (!v) return;
     let cancelled = false;
     void composer.content.load(v).then((c) => {
       if (cancelled) return;
-      media = c.media;
-      featured = c.featured;
+      loadedMedia = { path: v.path, media: c.media, featured: c.featured };
     });
     return () => {
       cancelled = true;
     };
   });
-  const content = $derived({ body, media, featured });
+  /** Body and media of the current variant, or null while either still belongs to the previous note. */
+  const content = $derived(
+    variant && body.path === variant.path && loadedMedia?.path === variant.path
+      ? { body: body.text, media: loadedMedia.media, featured: loadedMedia.featured }
+      : null,
+  );
 
   const variantChannels = $derived(variant ? composer.channelsOf(variant) : []);
   let previewChannelId = $state("");
@@ -52,9 +56,9 @@
   });
   const previewChannel = $derived(variantChannels.find((c) => c.id === previewChannelId) ?? variantChannels[0]);
   let width = $state<"mobile" | "desktop">("mobile");
-  const model = $derived(variant ? composer.preview(variant, content, previewChannel) : null);
-  const issues = $derived(variant ? composer.check(variant, content) : []);
-  const counterList = $derived(variant ? composer.counters(variant, content, previewChannel) : []);
+  const model = $derived(variant && content ? composer.preview(variant, content, previewChannel) : null);
+  const issues = $derived(variant && content ? composer.check(variant, content) : []);
+  const counterList = $derived(variant && content ? composer.counters(variant, content, previewChannel) : []);
 </script>
 
 {#if !variant}
@@ -70,35 +74,39 @@
         </button>
       {/each}
     </div>
-    <div class="osmm-composer-main">
-      <section class="osmm-composer-preview" aria-label="Preview">
-        <div class="osmm-row">
-          {#if variantChannels.length > 1}
-            <label class="osmm-row">
-              Preview as
-              <select bind:value={previewChannelId}>
-                {#each variantChannels as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
-              </select>
-            </label>
-          {/if}
-          <span class="osmm-spacer"></span>
-          <div class="osmm-segmented" role="group" aria-label="Preview width">
-            <button type="button" class:is-active={width === "mobile"} aria-pressed={width === "mobile"} onclick={() => (width = "mobile")}>Mobile</button>
-            <button type="button" class:is-active={width === "desktop"} aria-pressed={width === "desktop"} onclick={() => (width = "desktop")}>Desktop</button>
+    {#if !content}
+      <p class="osmm-progress" role="status">Loading…</p>
+    {:else}
+      <div class="osmm-composer-main">
+        <section class="osmm-composer-preview" aria-label="Preview">
+          <div class="osmm-row">
+            {#if variantChannels.length > 1}
+              <label class="osmm-row">
+                Preview as
+                <select bind:value={previewChannelId}>
+                  {#each variantChannels as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+                </select>
+              </label>
+            {/if}
+            <span class="osmm-spacer"></span>
+            <div class="osmm-segmented" role="group" aria-label="Preview width">
+              <button type="button" class:is-active={width === "mobile"} aria-pressed={width === "mobile"} onclick={() => (width = "mobile")}>Mobile</button>
+              <button type="button" class:is-active={width === "desktop"} aria-pressed={width === "desktop"} onclick={() => (width = "desktop")}>Desktop</button>
+            </div>
           </div>
-        </div>
-        <div class="osmm-phone" data-width={width}>
-          {#if model}<Preview {model} {width} />{/if}
-        </div>
-      </section>
-      <aside class="osmm-composer-side" aria-label="Composer panels">
-        <p class="osmm-progress">{PLATFORM_META[variant.platform].label} · {VARIANT_STATUS_LABEL[variant.status]}</p>
-        <PostAs {variant} />
-        <Checks {variant} {issues} counters={counterList} />
-        <SchedulePanel {variant} {issues} />
-        <MediaPanel {variant} {media} />
-        <ActionsBar {variant} />
-      </aside>
-    </div>
+          <div class="osmm-phone" data-width={width}>
+            {#if model}<Preview {model} {width} />{/if}
+          </div>
+        </section>
+        <aside class="osmm-composer-side" aria-label="Composer panels">
+          <p class="osmm-progress">{PLATFORM_META[variant.platform].label} · {VARIANT_STATUS_LABEL[variant.status]}</p>
+          <PostAs {variant} />
+          <Checks {variant} {issues} counters={counterList} />
+          <SchedulePanel {variant} {issues} />
+          <MediaPanel {variant} media={content.media} />
+          <ActionsBar {variant} />
+        </aside>
+      </div>
+    {/if}
   </div>
 {/if}

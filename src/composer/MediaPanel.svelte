@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { IndexedVariant } from "../index/socialIndex";
   import { cropRect, feedRatio, focusFromPoint } from "../media/crop";
   import { platformDef } from "../platforms/registry";
@@ -14,12 +15,39 @@
   const size = (n?: number) => (n === undefined ? "" : n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
   const clamp = (n: number) => Math.min(1, Math.max(0, Math.round(n * 100) / 100));
 
+  /** Focal points nudged with the arrow keys but not written yet, by media target. */
+  let pendingFocus = $state<Record<string, [number, number]>>({});
+  /** Debounced writes of the nudged focal points: one write (and one undo notice) per burst of key presses. */
+  const nudgeTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; write: () => void }>();
+  const NUDGE_DEBOUNCE_MS = 400;
+  const focusOf = (m: MediaInfo): [number, number] | undefined => pendingFocus[m.target] ?? m.focus;
+
+  const samePoint = (a?: [number, number], b?: [number, number]) => !!a && !!b && a[0] === b[0] && a[1] === b[1];
+  $effect(() => {
+    for (const m of media) {
+      if (!nudgeTimers.has(m.target) && samePoint(pendingFocus[m.target], m.focus)) delete pendingFocus[m.target];
+    }
+  });
+
+  function cancelNudge(target: string): void {
+    const pending = nudgeTimers.get(target);
+    if (pending) clearTimeout(pending.timer);
+    nudgeTimers.delete(target);
+  }
+
+  onDestroy(() => {
+    for (const [target, pending] of [...nudgeTimers]) {
+      cancelNudge(target);
+      pending.write();
+    }
+  });
+
   /** The crop box the current platform's feed shows, as CSS percentages of the thumbnail. */
   function cropBox(m: MediaInfo): string | null {
     if (m.kind !== "image" || !m.width || !m.height) return null;
     const ratio = feedRatio(rules, { width: m.width, height: m.height });
     if (!ratio) return null;
-    const r = cropRect({ width: m.width, height: m.height }, ratio, m.focus);
+    const r = cropRect({ width: m.width, height: m.height }, ratio, focusOf(m));
     return `left:${(r.x / m.width) * 100}%;top:${(r.y / m.height) * 100}%;width:${(r.width / m.width) * 100}%;height:${(r.height / m.height) * 100}%`;
   }
 
@@ -27,11 +55,13 @@
     if (event.detail === 0) return; // keyboard activation (Enter/Space); arrow keys nudge instead
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
     if (box.width === 0 || box.height === 0) return;
+    cancelNudge(m.target);
+    delete pendingFocus[m.target];
     void composer.setFocus(variant, m.target, focusFromPoint(event.clientX, event.clientY, box));
   }
 
   function nudgeFocus(event: KeyboardEvent, m: MediaInfo): void {
-    const [x, y] = m.focus ?? [0.5, 0.5];
+    const [x, y] = focusOf(m) ?? [0.5, 0.5];
     const moves: Record<string, [number, number]> = {
       ArrowLeft: [x - 0.05, y],
       ArrowRight: [x + 0.05, y],
@@ -41,7 +71,21 @@
     const next = moves[event.key];
     if (!next) return;
     event.preventDefault();
-    void composer.setFocus(variant, m.target, [clamp(next[0]), clamp(next[1])]);
+    const focus: [number, number] = [clamp(next[0]), clamp(next[1])];
+    pendingFocus[m.target] = focus;
+    cancelNudge(m.target);
+    const v = variant;
+    const write = () => {
+      void composer.setFocus(v, m.target, focus).then((ok) => {
+        // On success the entry is dropped once the saved focus comes back in `media`; on failure, show the saved one.
+        if (!ok && !nudgeTimers.has(m.target) && samePoint(pendingFocus[m.target], focus)) delete pendingFocus[m.target];
+      });
+    };
+    const timer = setTimeout(() => {
+      nudgeTimers.delete(m.target);
+      write();
+    }, NUDGE_DEBOUNCE_MS);
+    nudgeTimers.set(m.target, { timer, write });
   }
 
   async function onDrop(event: DragEvent): Promise<void> {

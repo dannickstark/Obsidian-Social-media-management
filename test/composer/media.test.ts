@@ -74,6 +74,37 @@ describe("media attach", () => {
     expect(c.index.getVariant(IG)!.mediaMeta).toEqual({ "crowd.png": { alt: "Makers at laptops", focus: [0.55, 0.5] } });
   });
 
+  it("accumulates quick arrow-key nudges into one write and one undo notice", async () => {
+    const c = await makeCtx({ seed: true });
+    await attach(c, image("crowd.png"));
+    await indexed(c.index, () => c.index.getVariant(IG)!.media.includes("crowd.png"));
+    await renderPanel(c);
+    const setFocus = vi.spyOn(c.ctx.composer, "setFocus");
+    const notices = Notice.messages.length;
+    const btn = screen.getByRole("button", { name: "Set the focal point of crowd.png" });
+    await fireEvent.keyDown(btn, { key: "ArrowRight" });
+    await fireEvent.keyDown(btn, { key: "ArrowRight" });
+    await fireEvent.keyDown(btn, { key: "ArrowDown" });
+    await indexed(c.index, () => c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus !== undefined);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(setFocus).toHaveBeenCalledTimes(1);
+    expect(setFocus.mock.calls[0]![2]).toEqual([0.6, 0.55]);
+    expect(c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus).toEqual([0.6, 0.55]);
+    expect(Notice.messages.slice(notices).filter((m) => m.startsWith("Focal point saved"))).toHaveLength(1);
+  });
+
+  it("still saves a nudge when the panel closes before the debounce ends", async () => {
+    const c = await makeCtx({ seed: true });
+    await attach(c, image("crowd.png"));
+    await indexed(c.index, () => c.index.getVariant(IG)!.media.includes("crowd.png"));
+    const v = c.index.getVariant(IG)!;
+    const { unmount } = render(MediaPanel, { props: { variant: v, media: await c.ctx.composer.media.inspect(v) }, context: osmmContext(c.ctx) });
+    await fireEvent.keyDown(screen.getByRole("button", { name: "Set the focal point of crowd.png" }), { key: "ArrowUp" });
+    unmount();
+    await indexed(c.index, () => c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus !== undefined);
+    expect(c.index.getVariant(IG)!.mediaMeta?.["crowd.png"]?.focus).toEqual([0.5, 0.45]);
+  });
+
   it("does not move the focal point on a keyboard-activated click, but does on a real mouse click", async () => {
     const c = await makeCtx({ seed: true });
     await attach(c, image("crowd.png"));

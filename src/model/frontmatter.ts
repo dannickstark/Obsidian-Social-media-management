@@ -159,7 +159,11 @@ function parseMediaMeta(raw: unknown, issues: Issue[]): Record<string, MediaMeta
       continue;
     }
     const meta: MediaMeta = {};
-    if (typeof value.alt === "string" && value.alt.trim()) meta.alt = value.alt.trim();
+    if (typeof value.alt === "string") {
+      if (value.alt.trim()) meta.alt = value.alt.trim();
+    } else if (!isBlank(value.alt)) {
+      issues.push({ level: "warning", field: `${field}.alt`, message: "alt must be text, e.g. alt: Makers at laptops" });
+    }
     if (!isBlank(value.focus)) {
       const focus = parseFocus(value.focus);
       if (focus) meta.focus = focus;

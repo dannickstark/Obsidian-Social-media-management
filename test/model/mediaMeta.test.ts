@@ -27,6 +27,12 @@ describe("media_meta", () => {
     ]);
   });
 
+  it("warns about alt text that isn't text instead of dropping it silently", () => {
+    const r = parseVariant({ ...base, media_meta: { "a.png": { alt: 42, focus: [0.5, 0.5] }, "b.png": { alt: null } } }, "p.md");
+    expect(r.value?.mediaMeta).toEqual({ "a.png": { focus: [0.5, 0.5] }, "b.png": {} });
+    expect(r.issues).toEqual([{ level: "warning", field: "media_meta.a.png.alt", message: "alt must be text, e.g. alt: Makers at laptops" }]);
+  });
+
   it("serializes with rounded focus and drops empty entries", () => {
     expect(variantFields({ mediaMeta: { "a.png": { alt: "A", focus: [0.123, 0.5] }, "b.png": {} } })).toEqual({
       media_meta: { "a.png": { alt: "A", focus: [0.12, 0.5] } },

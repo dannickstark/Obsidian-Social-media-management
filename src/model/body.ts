@@ -78,6 +78,18 @@ function xWeight(grapheme: string): number {
   return light ? 1 : 2;
 }
 
+/** `@user@domain` (not an email: nothing word-like before the first `@`). Mastodon counts it as `@user`. */
+const REMOTE_MENTION_RE = /(^|[^\w@])(@\w+)@(?:[a-z0-9-]+\.)+[a-z]{2,}/gi;
+
+/** Common generic TLDs; with the country codes below, what X links without `https://`. */
+const GENERIC_TLDS =
+  "com net org edu gov mil int info biz name pro mobi xyz app dev page online site tech store shop blog news cloud design art club live space website world today link social events community studio agency email";
+const COUNTRY_TLDS =
+  "ac ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo br bs bt bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg er es et eu fi fj fk fm fo fr ga gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st su sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug uk us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw";
+const TLDS = [...GENERIC_TLDS.split(" "), ...COUNTRY_TLDS.split(" ")].sort((a, b) => b.length - a.length).join("|");
+/** A domain without a scheme (`example.com`, `sub.example.co.uk/path`), not part of an email or a longer word. */
+const BARE_DOMAIN_RE = new RegExp(`(^|[^\\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+(?:${TLDS})(?![\\w-])(?:/[^\\s]*)?)`, "gi");
+
 export function countChars(text: string, counter: CharCounter = "graphemes"): number {
   if (counter === "graphemes") return [...segmenter.segment(text)].length;
   let total = 0;
@@ -85,8 +97,13 @@ export function countChars(text: string, counter: CharCounter = "graphemes"): nu
     total += 23;
     return "";
   });
-  // Mastodon: graphemes, and every URL counts 23 no matter its length.
-  if (counter === "mastodon") return total + [...segmenter.segment(withoutUrls)].length;
-  for (const { segment } of segmenter.segment(withoutUrls)) total += xWeight(segment);
+  // Mastodon: graphemes, every URL counts 23 no matter its length, and `@user@domain` counts as `@user`.
+  if (counter === "mastodon") return total + [...segmenter.segment(withoutUrls.replace(REMOTE_MENTION_RE, "$1$2"))].length;
+  // X also shortens bare domains to a 23-character t.co link.
+  const withoutDomains = withoutUrls.replace(BARE_DOMAIN_RE, (_m, lead: string) => {
+    total += 23;
+    return lead;
+  });
+  for (const { segment } of segmenter.segment(withoutDomains)) total += xWeight(segment);
   return total;
 }

@@ -482,6 +482,15 @@ export class ItemView extends Component {
   async onClose(): Promise<void> {}
 }
 
+/** An open note in the editor. Tests set `file` and `editor` directly. */
+export class MarkdownView extends ItemView {
+  file: TFile | null = null;
+  editor: { getValue(): string } = { getValue: () => "" };
+  override getViewType(): string {
+    return "markdown";
+  }
+}
+
 export class MarkdownRenderChild extends Component {
   constructor(public containerEl: HTMLElement) {
     super();

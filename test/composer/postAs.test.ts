@@ -41,4 +41,14 @@ describe("PostAs", () => {
     await indexed(index, () => index.getVariant(LI)!.staggerMinutes === 30);
     expect(index.getVariant(LI)!.staggerMinutes).toBe(30);
   });
+
+  it("ignores an emptied stagger field instead of writing 0", async () => {
+    const { ctx, index } = await makeCtx({ seed: true });
+    const setStagger = vi.spyOn(ctx.composer, "setStagger");
+    render(PostAs, { props: { variant: index.getVariant(LI)! }, context: osmmContext(ctx) });
+    await fireEvent.change(screen.getByLabelText("Minutes between channels"), { target: { value: "" } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setStagger).not.toHaveBeenCalled();
+    expect(index.getVariant(LI)!.staggerMinutes).toBe(15);
+  });
 });

@@ -44,6 +44,29 @@ describe("counting helpers", () => {
     expect(countFor("Read https://example.com/very/long/path now", platformDef("bluesky"))).toBe(43);
   });
 
+  it.each([
+    ["Hi @alice@mastodon.social!", 10],
+    ["@alice@mastodon.social and @bob@example.co.uk", 15],
+    ["Hi @bob", 7],
+    ["Mail bob@example.com", 20],
+    ["Follow https://mastodon.social/@alice", 30],
+  ])("Mastodon counts a remote mention by its username only: %j → %i", (text, n) => {
+    expect(countFor(text, platformDef("mastodon"))).toBe(n);
+  });
+
+  it.each([
+    ["See example.com", 27],
+    ["Go sub.example.co.uk/path now", 30],
+    ["Visit https://a.com and b.org", 57],
+    ["RSVP → example.com/event-x", 31],
+    ["end of example.com.", 31],
+    ["Node.js rocks", 13],
+    ["mail bob@example.com", 20],
+    ["version 1.2.3", 13],
+  ])("X counts a bare domain as 23 like a URL: %j → %i", (text, n) => {
+    expect(countFor(text, platformDef("x"))).toBe(n);
+  });
+
   it("finds hashtags and urls", () => {
     expect(hashtags("Ship it #buildinpublic #Obsidian_md and #2026 but not a#b")).toEqual(["buildinpublic", "Obsidian_md", "2026"]);
     expect(urlsIn("See https://example.com/x, and http://a.b/c?d=1.")).toEqual(["https://example.com/x", "http://a.b/c?d=1"]);

@@ -1,30 +1,52 @@
-import type { App, Editor, MarkdownFileInfo, MarkdownView } from "obsidian";
+import { MarkdownView, type App, type Editor, type MarkdownFileInfo } from "obsidian";
 import { writable, type Readable, type Writable } from "svelte/store";
 import type { SocialIndex } from "../index/socialIndex";
 import { bodyOf } from "../model/body";
 
+/** A note body, tagged with the path it was read from so a view never mixes one note's text with another note. */
+export interface SessionBody {
+  path: string | null;
+  text: string;
+}
+
 export interface ComposerSession {
   path: Writable<string | null>;
-  body: Readable<string>;
+  body: Readable<SessionBody>;
   dispose(): void;
 }
 
 /**
- * The body the composer previews: read from the vault when the note changes, and taken from the
- * editor buffer (debounced) while the user types, so the preview follows keystrokes, not saves.
+ * The body the composer previews: read when the note changes (from an open editor on that note if there is
+ * one, otherwise from the vault), and taken from the editor buffer (debounced) while the user types, so the
+ * preview follows keystrokes, not saves.
  */
 export function composerSession(app: App, index: SocialIndex, debounceMs = 100): ComposerSession {
   const path = writable<string | null>(null);
-  const body = writable("");
+  const body = writable<SessionBody>({ path: null, text: "" });
   let current: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let token = 0;
 
+  /** The editor of an open Markdown view showing `p`: its buffer can be newer than the file on disk. */
+  const openEditor = (p: string): Editor | null => {
+    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && view.file?.path === p) return view.editor;
+    }
+    return null;
+  };
+
   const load = async (): Promise<void> => {
     const mine = ++token;
-    const file = current ? app.vault.getFileByPath(current) : null;
-    const text = file ? bodyOf(await app.vault.cachedRead(file)) : "";
-    if (mine === token) body.set(text);
+    const p = current;
+    const editor = p ? openEditor(p) : null;
+    let text = "";
+    if (editor) text = bodyOf(editor.getValue());
+    else {
+      const file = p ? app.vault.getFileByPath(p) : null;
+      text = file ? bodyOf(await app.vault.cachedRead(file)) : "";
+    }
+    if (mine === token) body.set({ path: p, text });
   };
 
   const unsubscribe = path.subscribe((p) => {
@@ -38,11 +60,12 @@ export function composerSession(app: App, index: SocialIndex, debounceMs = 100):
 
   const ref = app.workspace.on("editor-change", (editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
     if (!current || info.file?.path !== current) return;
+    const p = current;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       token++; // a vault read still in flight must not overwrite what was just typed
-      body.set(bodyOf(editor.getValue()));
+      body.set({ path: p, text: bodyOf(editor.getValue()) });
     }, debounceMs);
   });
 
