@@ -731,3 +731,27 @@ export async function requestUrl(req: RequestUrlParam | string): Promise<Request
 export function setIcon(el: HTMLElement, name: string): void {
   el.dataset.icon = name;
 }
+
+export class SecretComponent {
+  static last: SecretComponent | null = null;
+  value = "";
+  private cb: ((v: string) => unknown) | undefined;
+  constructor(
+    public app: App,
+    public containerEl: HTMLElement,
+  ) {
+    SecretComponent.last = this;
+  }
+  setValue(v: string): this {
+    this.value = v;
+    return this;
+  }
+  onChange(cb: (v: string) => unknown): this {
+    this.cb = cb;
+    return this;
+  }
+  async change(v: string): Promise<void> {
+    this.value = v;
+    await this.cb?.(v);
+  }
+}

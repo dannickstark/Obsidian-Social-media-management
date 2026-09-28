@@ -1,9 +1,14 @@
 import { normalizePath, PluginSettingTab, Setting, type App } from "obsidian";
 import type OsmmPlugin from "../main";
 import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
+import { mountSvelte, type Mounted } from "../ui/mount";
+import { osmmContext } from "../ui/context";
+import ChannelsSection from "./ChannelsSection.svelte";
 import { parseMinutesList } from "./settings";
 
 export class OsmmSettingTab extends PluginSettingTab {
+  private channelsUi: Mounted | null = null;
+
   constructor(
     app: App,
     private readonly osmm: OsmmPlugin,
@@ -61,6 +66,13 @@ export class OsmmSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl).setName("Channels").setHeading();
+    const host = document.createElement("div");
+    host.className = "osmm";
+    containerEl.appendChild(host);
+    this.channelsUi?.destroy();
+    this.channelsUi = mountSvelte(host, ChannelsSection, {}, osmmContext(this.osmm.uiContext()));
+
     new Setting(containerEl).setName("Schedule templates").setHeading();
     for (const template of s.scheduleTemplates) {
       new Setting(containerEl)
@@ -76,5 +88,10 @@ export class OsmmSettingTab extends PluginSettingTab {
           }),
         );
     }
+  }
+
+  override hide(): void {
+    this.channelsUi?.destroy();
+    this.channelsUi = null;
   }
 }
