@@ -133,6 +133,7 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     if (typeof value.error === "string" && value.error) d.error = value.error;
     const attempts = take(zCount, value.attempts, `${field}.attempts`, issues, "warning");
     if (attempts !== undefined) d.attempts = attempts;
+    if (typeof value.reason === "string" && value.reason.trim()) d.reason = value.reason.trim();
     if (!channels.includes(id)) {
       issues.push({ level: "warning", field, message: `Delivery for ${id}, which is not in channels` });
     }
@@ -254,6 +255,7 @@ export function serializeDelivery(d: Delivery): Record<string, unknown> {
   if (d.remoteId) out.remote_id = d.remoteId;
   if (d.error) out.error = d.error;
   if (d.attempts !== undefined) out.attempts = d.attempts;
+  if (d.reason) out.reason = d.reason;
   return out;
 }
 

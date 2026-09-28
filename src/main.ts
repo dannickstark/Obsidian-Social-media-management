@@ -11,6 +11,9 @@ import { NoteFactory } from "./model/factory";
 import { SafeWriter } from "./model/writer";
 import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
+import { PublishActions } from "./publish/actions";
+import { ClipboardService } from "./publish/clipboard";
+import { MemoryLog } from "./publish/log";
 import { PreviewGridView } from "./previews/PreviewGridView";
 import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
@@ -33,6 +36,7 @@ export default class OsmmPlugin extends Plugin {
   channels!: ChannelRegistry;
   index!: SocialIndex;
   readonly adapters = new AdapterRegistry();
+  readonly log = new MemoryLog();
   private unloaded = false;
   private ui: OsmmContext | undefined;
 
@@ -120,6 +124,19 @@ export default class OsmmPlugin extends Plugin {
         settings: () => this.settings,
         now: () => Date.now(),
       });
+      const publish = new PublishActions({
+        app: this.app,
+        writer: this.writer,
+        index: this.index,
+        channels: this.channels,
+        planner: actions,
+        composer,
+        adapters: this.adapters,
+        clipboard: new ClipboardService(this.app),
+        log: this.log,
+        settings: () => this.settings,
+        now: () => Date.now(),
+      });
       this.ui = {
         app: this.app,
         settings: this.settingsStore,
@@ -129,8 +146,10 @@ export default class OsmmPlugin extends Plugin {
         channels: this.channels,
         actions,
         composer,
+        publish,
       };
       actions.context = this.ui;
+      publish.context = this.ui;
     }
     return this.ui;
   }

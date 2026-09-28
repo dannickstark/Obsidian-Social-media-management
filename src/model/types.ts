@@ -34,6 +34,8 @@ export interface Delivery {
   remoteId?: string;
   error?: string;
   attempts?: number;
+  /** Why the delivery was skipped (optional, from the assisted flow). */
+  reason?: string;
 }
 
 export interface Campaign {

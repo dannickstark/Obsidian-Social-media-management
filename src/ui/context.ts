@@ -5,6 +5,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import type { IndexSnapshot } from "../index/stores";
 import type { ViewState } from "../planner/viewState";
+import type { PublishActions } from "../publish/actions";
 import type { OsmmSettings } from "../settings/settings";
 import type { PlannerActions } from "./actions";
 
@@ -19,6 +20,7 @@ export interface OsmmContext {
   channels: ChannelRegistry;
   actions: PlannerActions;
   composer: ComposerActions;
+  publish: PublishActions;
 }
 
 export function osmmContext(ctx: OsmmContext): Map<unknown, unknown> {

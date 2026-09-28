@@ -7,11 +7,14 @@ import { SocialIndex } from "../../src/index/socialIndex";
 import { indexStore } from "../../src/index/stores";
 import { NoteFactory } from "../../src/model/factory";
 import { SafeWriter } from "../../src/model/writer";
+import { DEFAULT_VIEW_STATE } from "../../src/planner/viewState";
 import { AdapterRegistry } from "../../src/platforms/registry";
+import { PublishActions } from "../../src/publish/actions";
+import { ClipboardService } from "../../src/publish/clipboard";
+import { MemoryLog } from "../../src/publish/log";
 import { migrateSettings, type OsmmSettings } from "../../src/settings/settings";
 import { PlannerActions } from "../../src/ui/actions";
 import type { OsmmContext } from "../../src/ui/context";
-import { DEFAULT_VIEW_STATE } from "../../src/planner/viewState";
 import { settle, writeNote } from "../helpers";
 
 export const TEST_NOW = Date.UTC(2026, 9, 8, 8); // Thu 8 Oct 2026, 10:00 Berlin
@@ -23,6 +26,8 @@ export interface TestCtx {
   writer: SafeWriter;
   settings: Writable<OsmmSettings>;
   now: Writable<number>;
+  adapters: AdapterRegistry;
+  log: MemoryLog;
 }
 
 export async function makeCtx(
@@ -50,15 +55,9 @@ export async function makeCtx(
   await index.build();
   index.start();
   const nowStore = writable(now);
-  const actions = new PlannerActions({
-    app: app as never,
-    writer,
-    factory,
-    channels,
-    index,
-    settings: () => get(settings),
-    now: () => get(nowStore),
-  });
+  const clock = () => get(nowStore);
+  const actions = new PlannerActions({ app: app as never, writer, factory, channels, index, settings: () => get(settings), now: clock });
+  const adapters = new AdapterRegistry();
   const composer = new ComposerActions({
     app: app as never,
     writer,
@@ -66,9 +65,23 @@ export async function makeCtx(
     channels,
     index,
     planner: actions,
-    adapters: new AdapterRegistry(),
+    adapters,
     settings: () => get(settings),
-    now: () => get(nowStore),
+    now: clock,
+  });
+  const log = new MemoryLog();
+  const publish = new PublishActions({
+    app: app as never,
+    writer,
+    index,
+    channels,
+    planner: actions,
+    composer,
+    adapters,
+    clipboard: new ClipboardService(app as never),
+    log,
+    settings: () => get(settings),
+    now: clock,
   });
   const ctx: OsmmContext = {
     app: app as never,
@@ -79,7 +92,9 @@ export async function makeCtx(
     channels,
     actions,
     composer,
+    publish,
   };
   actions.context = ctx;
-  return { app, ctx, index, writer, settings, now: nowStore };
+  publish.context = ctx;
+  return { app, ctx, index, writer, settings, now: nowStore, adapters, log };
 }
