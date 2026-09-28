@@ -11,8 +11,9 @@ import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
-import { PlannerActions } from "./ui/actions";
+import { PlannerActions, VIEW_PLANNER } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
+import { PlannerView, activateView } from "./views/PlannerView";
 
 export default class OsmmPlugin extends Plugin {
   override settings!: OsmmSettings;
@@ -58,6 +59,11 @@ export default class OsmmPlugin extends Plugin {
       this.index.start();
       await this.index.build();
     });
+
+    this.registerView(VIEW_PLANNER, (leaf) => new PlannerView(leaf, this.uiContext()));
+    this.registerHoverLinkSource(VIEW_PLANNER, { display: "Social planner", defaultMod: true });
+    this.addRibbonIcon("calendar-days", "Open social planner", () => void activateView(this.app, VIEW_PLANNER, "tab"));
+    this.addCommand({ id: "open-planner", name: "Open planner", callback: () => void activateView(this.app, VIEW_PLANNER, "tab") });
   }
 
   /** Called by Obsidian when data.json was changed on disk, e.g. synced from another device. */
