@@ -1,0 +1,13 @@
+# Social Planner (OSMM) for Claude Code
+
+The `/osmm:social` skill plans, drafts, checks and schedules social media campaigns in your Obsidian vault, through the Social Planner (OSMM) plugin's local MCP server.
+
+## Install
+1. In a terminal: `claude plugin marketplace add dannickstark/Obsidian-Social-media-management`
+2. Then: `claude plugin install osmm@osmm-social-planner`
+3. In Obsidian: **Settings → Social Planner → Claude Code**, turn on **MCP server on this device**, click **Copy setup command** and run it in a terminal. This connects Claude Code to your vault; the command contains a secret token, so don't share it.
+
+## Use
+In Claude Code, type `/osmm:social` followed by what you want, for example `/osmm:social plan the Event X launch for LinkedIn, X and Mastodon`. Claude reads the campaign and your voice profile, proposes a plan, drafts each post, checks it with the plugin and schedules it after you agree. It never publishes unless you ask, and Obsidian asks you to approve before anything goes out.
+
+When Obsidian is closed, run Claude Code inside your vault folder: the skill then writes the notes directly, and Obsidian shows them under **Written by Claude** for you to approve the next time it opens.

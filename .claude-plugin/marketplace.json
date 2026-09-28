@@ -1,0 +1,12 @@
+{
+  "name": "osmm-social-planner",
+  "description": "Claude Code plugin for the Social Planner (OSMM) Obsidian plugin: the /social skill, platform playbooks and the voice profile.",
+  "owner": { "name": "dannickstark" },
+  "plugins": [
+    {
+      "name": "osmm",
+      "source": "./claude-plugin",
+      "description": "Plan, draft, check and schedule social media campaigns in your Obsidian vault from one conversation (/osmm:social)."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "osmm",
+  "displayName": "Social Planner (OSMM)",
+  "version": "0.1.0",
+  "description": "The /social skill for the Social Planner (OSMM) Obsidian plugin: turns one conversation into a planned, checked and scheduled social campaign, with platform playbooks and your voice profile.",
+  "author": { "name": "dannickstark", "url": "https://github.com/dannickstark" },
+  "homepage": "https://github.com/dannickstark/Obsidian-Social-media-management",
+  "repository": "https://github.com/dannickstark/Obsidian-Social-media-management",
+  "license": "MIT",
+  "keywords": ["obsidian", "social-media", "content-calendar", "scheduling", "mcp"]
+}

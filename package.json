@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "tsx scripts/seed.ts",
-    "version": "node scripts/version-bump.mjs && git add manifest.json versions.json"
+    "version": "node scripts/version-bump.mjs && git add manifest.json versions.json claude-plugin/.claude-plugin/plugin.json"
   },
   "license": "MIT",
   "devDependencies": {

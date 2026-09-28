@@ -10,3 +10,8 @@ writeFileSync("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
 const versions = JSON.parse(readFileSync("versions.json", "utf8"));
 versions[target] = manifest.minAppVersion;
 writeFileSync("versions.json", `${JSON.stringify(versions, null, 2)}\n`);
+
+const pluginPath = "claude-plugin/.claude-plugin/plugin.json";
+const claudePlugin = JSON.parse(readFileSync(pluginPath, "utf8"));
+claudePlugin.version = target;
+writeFileSync(pluginPath, `${JSON.stringify(claudePlugin, null, 2)}\n`);
