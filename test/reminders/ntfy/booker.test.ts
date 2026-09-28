@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "../../fakes/obsidian";
 import { formatDateTime } from "../../../src/model/dates";
 import { BookingLedger } from "../../../src/reminders/ntfy/bookings";
-import { BOOKING_WINDOW_MS, NtfyBooker, RETRY_MS, type BookerDeps } from "../../../src/reminders/ntfy/booker";
+import { BOOKING_WINDOW_MS, NtfyBooker, RETRY_MS, WITHDRAW_WAIT_MS, type BookerDeps } from "../../../src/reminders/ntfy/booker";
 import { NtfyError, type NtfyMessage } from "../../../src/reminders/ntfy/client";
 import { PublisherService } from "../../../src/settings/publisher";
 import { migrateSettings } from "../../../src/settings/settings";
-import { indexed, writeNote } from "../../helpers";
+import { indexed, settle, writeNote } from "../../helpers";
 import { makeCtx, type TestCtx } from "../../ui/ctx";
 
 const MIN = 60_000;
@@ -30,19 +30,36 @@ function fakeClient(opts: { cancel?: "cancelled" | "unsupported" } = {}) {
   const cancelled: string[] = [];
   let calls = 0;
   let fail: Error | null = null;
+  let cancelFail: Error | null = null;
+  let gate: Promise<void> | null = null;
+  let onPublish: () => void = () => {};
   return {
     sent,
     cancelled,
     calls: () => calls,
     failWith: (e: Error | null) => void (fail = e),
+    failCancelWith: (e: Error | null) => void (cancelFail = e),
+    /** Holds the next publishes until the returned function is called. */
+    hold: () => {
+      let release!: () => void;
+      gate = new Promise<void>((r) => (release = r));
+      return () => {
+        gate = null;
+        release();
+      };
+    },
+    afterPublish: (f: () => void) => void (onPublish = f),
     client: {
       publish: async (m: NtfyMessage) => {
         calls++;
+        if (gate) await gate;
         if (fail) throw fail;
         sent.push(m);
+        onPublish();
         return { id: `m${sent.length}`, at: m.at ?? 0 };
       },
       cancel: async (id: string) => {
+        if (cancelFail) throw cancelFail;
         cancelled.push(id);
         return opts.cancel ?? ("cancelled" as const);
       },
@@ -114,7 +131,12 @@ describe("NtfyBooker (#69, fake clock)", () => {
     await indexed(c.index, () => c.index.getVariant(A)?.scheduledAt === T0 + 11 * HOUR);
     const r = await b.sync();
     expect([r.leftStale, r.booked]).toEqual([[key(A, T0 + 10 * HOUR, 60)], [key(A, T0 + 11 * HOUR, 60)]]);
-    expect(new BookingLedger(c.app as never).size()).toBe(1);
+    // The old push still arrives: its entry stays, marked stale, until its time has passed.
+    expect(new BookingLedger(c.app as never).all().map((x) => [x.key, x.stale === true])).toEqual([
+      [key(A, T0 + 10 * HOUR, 60), true],
+      [key(A, T0 + 11 * HOUR, 60), false],
+    ]);
+    expect(b.cancelSupported()).toBe(false);
   });
 
   it("cancels pushes for a post published or skipped early", async () => {
@@ -283,5 +305,140 @@ describe("NtfyBooker (#69, fake clock)", () => {
     now.t += 1_001;
     expect((await b.sync()).booked).toHaveLength(2);
     expect(fake.calls()).toBe(2);
+  });
+
+  it("stops a run when forget() is called mid-run: no more publishes, nothing written after the clear (M3 P13)", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    const { b } = booker(c, fake, now);
+    const release = fake.hold();
+    const running = b.sync();
+    await settle();
+    expect(fake.calls()).toBe(1);
+    b.forget();
+    release();
+    const r = await running;
+    expect(r.booked).toEqual([]);
+    expect(fake.calls()).toBe(1);
+    expect(new BookingLedger(c.app as never).size()).toBe(0);
+  });
+
+  it("keeps bookings it could not cancel while offline and cancels them on a later withdraw", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    const { b, warnings } = booker(c, fake, now);
+    await b.sync();
+    fake.failCancelWith(new NtfyError("unreachable", "Couldn't reach the ntfy server.", 10 * MIN));
+    const r = await b.withdraw();
+    expect([r.cancelled, r.failed]).toEqual([[], [key(A, T0 + 10 * HOUR, 60)]]);
+    expect(new BookingLedger(c.app as never).size()).toBe(2);
+    expect(warnings).toEqual(["Phone reminders: Couldn't reach the ntfy server. Trying again in 10 min."]);
+    await b.withdraw();
+    expect(warnings).toHaveLength(1);
+    fake.failCancelWith(null);
+    expect((await b.withdraw()).cancelled).toEqual([key(A, T0 + 10 * HOUR, 60), key(A, T0 + 10 * HOUR, 10)]);
+    expect(new BookingLedger(c.app as never).size()).toBe(0);
+  });
+
+  it("retries a role-loss withdrawal on later runs once the pause is over", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    const now = { t: T0 };
+    let publisher = true;
+    const { b } = booker(c, fake, now, { isPublisher: () => publisher });
+    await b.sync();
+    publisher = false;
+    fake.failCancelWith(new NtfyError("unreachable", "Couldn't reach the ntfy server."));
+    expect((await b.sync()).failed).toHaveLength(1);
+    fake.failCancelWith(null);
+    now.t += 30_000;
+    expect((await b.sync()).cancelled).toEqual([]);
+    now.t = T0 + RETRY_MS + 1;
+    expect((await b.sync()).cancelled).toHaveLength(2);
+    expect(new BookingLedger(c.app as never).size()).toBe(0);
+  });
+
+  it("counts version cancels against the budget and rebooks every one of them in the same run (M3 P9)", async () => {
+    const notes = Array.from({ length: 15 }, (_, i) => ({ path: `Social/Posts/N${i}.md`, frontmatter: fm(T0 + (i + 2) * HOUR), body: `N${i}` }));
+    const c = await makeCtx({ notes });
+    const fake = fakeClient();
+    const { b } = booker(c, fake, { t: T0 });
+    await b.sync();
+    await b.sync();
+    expect(fake.sent).toHaveLength(30);
+    for (const n of notes) {
+      const file = c.app.vault.getFileByPath(n.path)!;
+      file.stat = { ...file.stat, mtime: file.stat.mtime + 1000 };
+    }
+    const third = await b.sync();
+    expect(third.cancelled).toHaveLength(20);
+    expect(third.booked).toEqual(third.cancelled);
+    const fourth = await b.sync();
+    expect(fourth.cancelled).toHaveLength(10);
+    expect(fourth.booked).toEqual(fourth.cancelled);
+    expect(new BookingLedger(c.app as never).size()).toBe(30);
+    expect((await b.sync()).booked).toEqual([]);
+  });
+
+  it("keeps an uncancellable push that is no longer wanted and revives it when wanted again", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR, { reminders: [60] }), body: "A" }] });
+    const fake = fakeClient({ cancel: "unsupported" });
+    const now = { t: T0 };
+    const { b } = booker(c, fake, now);
+    await b.sync();
+    await writeNote(c.app as never, A, fm(T0 + 11 * HOUR, { reminders: [60] }), "A");
+    await indexed(c.index, () => c.index.getVariant(A)?.scheduledAt === T0 + 11 * HOUR);
+    await b.sync();
+    expect(fake.cancelled).toEqual(["m1"]);
+    await b.sync();
+    expect(fake.cancelled).toEqual(["m1"]);
+    await writeNote(c.app as never, A, fm(T0 + 10 * HOUR, { reminders: [60] }), "A");
+    await indexed(c.index, () => c.index.getVariant(A)?.scheduledAt === T0 + 10 * HOUR);
+    const r = await b.sync();
+    expect(r.booked).toEqual([]);
+    expect(fake.sent).toHaveLength(2);
+    const ledger = new BookingLedger(c.app as never).all();
+    expect(ledger.map((x) => [x.key, x.messageId, x.stale === true])).toEqual([
+      [key(A, T0 + 10 * HOUR, 60), "m1", false],
+      [key(A, T0 + 11 * HOUR, 60), "m2", true],
+    ]);
+  });
+
+  it("stops publishing as soon as this device loses the role mid-run", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    let publisher = true;
+    const { b } = booker(c, fake, { t: T0 }, { isPublisher: () => publisher });
+    fake.afterPublish(() => void (publisher = false));
+    expect((await b.sync()).booked).toHaveLength(1);
+    expect(fake.calls()).toBe(1);
+    expect((await b.sync()).cancelled).toHaveLength(1);
+  });
+
+  it("withdraw waits at most 10 s for a hung run, then cancels what is booked", async () => {
+    const c = await makeCtx({ notes: [{ path: A, frontmatter: fm(T0 + 10 * HOUR), body: "A" }] });
+    const fake = fakeClient();
+    let enabled = true;
+    const { b } = booker(c, fake, { t: T0 }, { enabled: () => enabled });
+    fake.afterPublish(() => void fake.hold());
+    const hung = b.sync();
+    await settle();
+    await settle();
+    expect(fake.calls()).toBe(2);
+    enabled = false;
+    vi.useFakeTimers();
+    try {
+      const withdrawn = b.withdraw();
+      await vi.advanceTimersByTimeAsync(WITHDRAW_WAIT_MS - 1);
+      expect(fake.cancelled).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await withdrawn).cancelled).toEqual([key(A, T0 + 10 * HOUR, 60)]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(fake.cancelled).toEqual(["m1"]);
+    void hung;
   });
 });

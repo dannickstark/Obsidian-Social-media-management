@@ -14,9 +14,12 @@ export interface Booking {
   fireAt: number;
   /** The note's mtime at booking time (M3 P9): a later edit means the booked text is stale. */
   version: number;
+  /** The push no longer applies but the server could not cancel it: it still arrives, so it is kept until its time. */
+  stale?: boolean;
 }
 
 const KEY = "osmm-ntfy-bookings";
+const CANCEL_UNSUPPORTED_KEY = "osmm-ntfy-cancel-unsupported";
 
 /** Device-local ledger of booked pushes (never the topic or the token), so a restart does not book twice. */
 export class BookingLedger {
@@ -28,7 +31,7 @@ export class BookingLedger {
     const out: Booking[] = [];
     for (const [key, v] of Object.entries(raw)) {
       if (!isRecord(v)) continue;
-      const { rowKey, minutes, messageId, fireAt, version } = v;
+      const { rowKey, minutes, messageId, fireAt, version, stale } = v;
       if (
         typeof rowKey === "string" &&
         typeof minutes === "number" &&
@@ -36,7 +39,7 @@ export class BookingLedger {
         typeof fireAt === "number" &&
         typeof version === "number"
       ) {
-        out.push({ key, rowKey, minutes, messageId, fireAt, version });
+        out.push(stale === true ? { key, rowKey, minutes, messageId, fireAt, version, stale } : { key, rowKey, minutes, messageId, fireAt, version });
       }
     }
     return out.sort((a, b) => a.fireAt - b.fireAt || a.key.localeCompare(b.key));
@@ -69,10 +72,25 @@ export class BookingLedger {
     if (this.app.loadLocalStorage(KEY) !== null) this.app.saveLocalStorage(KEY, null);
   }
 
+  /** False once the server answered a cancel with "unsupported" (M3 P9 / Task 8); device-local, reset for a new target. */
+  cancelSupported(): boolean {
+    return this.app.loadLocalStorage(CANCEL_UNSUPPORTED_KEY) !== true;
+  }
+
+  markCancelUnsupported(): void {
+    if (this.cancelSupported()) this.app.saveLocalStorage(CANCEL_UNSUPPORTED_KEY, true);
+  }
+
+  resetCancelSupport(): void {
+    if (this.app.loadLocalStorage(CANCEL_UNSUPPORTED_KEY) !== null) this.app.saveLocalStorage(CANCEL_UNSUPPORTED_KEY, null);
+  }
+
   private save(list: readonly Booking[]): void {
     if (!list.length) return this.clear();
     const out: Record<string, Omit<Booking, "key">> = {};
-    for (const { key, rowKey, minutes, messageId, fireAt, version } of list) out[key] = { rowKey, minutes, messageId, fireAt, version };
+    for (const { key, rowKey, minutes, messageId, fireAt, version, stale } of list) {
+      out[key] = stale ? { rowKey, minutes, messageId, fireAt, version, stale } : { rowKey, minutes, messageId, fireAt, version };
+    }
     this.app.saveLocalStorage(KEY, out);
   }
 }

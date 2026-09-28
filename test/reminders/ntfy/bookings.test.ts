@@ -56,4 +56,25 @@ describe("BookingLedger", () => {
       "version",
     ]);
   });
+
+  it("keeps a stale mark (an uncancellable push still due) and revives without it", () => {
+    const app = new App();
+    const ledger = new BookingLedger(app as never);
+    ledger.put({ ...b("s@1:10", 5), stale: true });
+    expect(new BookingLedger(app as never).get("s@1:10")?.stale).toBe(true);
+    ledger.put({ ...b("s@1:10", 5), stale: false });
+    expect(new BookingLedger(app as never).get("s@1:10")).toEqual(b("s@1:10", 5));
+    expect(Object.keys((app.loadLocalStorage("osmm-ntfy-bookings") as Record<string, object>)["s@1:10"]!)).not.toContain("stale");
+  });
+
+  it("remembers on this device that the server can't cancel, until reset", () => {
+    const app = new App();
+    const ledger = new BookingLedger(app as never);
+    expect(ledger.cancelSupported()).toBe(true);
+    ledger.markCancelUnsupported();
+    ledger.clear();
+    expect(new BookingLedger(app as never).cancelSupported()).toBe(false);
+    ledger.resetCancelSupport();
+    expect(new BookingLedger(app as never).cancelSupported()).toBe(true);
+  });
 });
