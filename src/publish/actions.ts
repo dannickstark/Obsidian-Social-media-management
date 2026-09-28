@@ -1,13 +1,15 @@
-import { Notice, type App } from "obsidian";
+import { getFrontMatterInfo, Notice, parseYaml, type App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import { openMarkdownView } from "../composer/session";
 import type { LoadedContent } from "../composer/content";
-import type { SocialIndex } from "../index/socialIndex";
+import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
+import { bodyOf, excerpt } from "../model/body";
+import { isRecord, parseVariant } from "../model/frontmatter";
 import { PLATFORM_META } from "../model/platforms";
 import type { Channel, Issue, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
-import type { AssistedTarget, ClipItem } from "../platforms/types";
+import type { AssistedTarget, ClipItem, MediaInfo } from "../platforms/types";
 import type { AdapterRegistry } from "../platforms/registry";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
@@ -55,24 +57,48 @@ export interface DeliveryNotifier {
   published?(info: PublishedInfo): void;
 }
 
-/** What a send would post; an approved plan is only sent while this is unchanged (P3 for approvals). */
+/**
+ * What a send would post: every field an adapter receives besides the delivery itself (title, link, body,
+ * resolved media with alt text and focus, WordPress fields). An approved plan is only sent while this is
+ * unchanged (M2b P3 for approvals), and the approval question shows each of these fields.
+ */
 export function sendDigest(v: Variant, content: LoadedContent): string {
-  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, v.media, v.mediaMeta ?? {}, v.wordpress ?? null]);
+  const media = (m: MediaInfo | undefined) => (m ? [m.target, m.path ?? null, m.alt ?? null, m.focus ?? null] : null);
+  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, content.media.map(media), media(content.featured), v.wordpress ?? null]);
 }
 
-export interface SendPlan {
+/** One labelled line of the approval question ("Link", "Image 1", "Slug" …). */
+export interface ShownField {
+  label: string;
+  value: string;
+}
+
+/** What the approval question shows: the title as the planner shows it, each part of the text in full, and every other field that is sent. */
+interface Shown {
+  title: string;
+  /** The text as the platform receives it, part by part (one item unless it is a thread). */
+  items: string[];
+  details: ShownField[];
+}
+
+export interface SendPlan extends Shown {
   path: string;
   queue: string[];
   api: string[];
   assisted: string[];
+  /** Each queued channel's delivery status, as the user reads it ("scheduled", "waiting for you"). */
+  statuses: Record<string, string>;
+  /** Queued channels the user is posting by hand right now (awaiting_you). */
+  waiting: string[];
   /** The text as the platform receives it, for the approval dialog. */
   text: string;
   digest: string;
 }
 
-export interface UpdatePlan {
+export interface UpdatePlan extends Shown {
   path: string;
   channels: string[];
+  statuses: Record<string, string>;
   text: string;
   digest: string;
 }
@@ -412,23 +438,54 @@ export class PublishActions {
   }
 
   /**
-   * Ruling P6: a note Claude wrote while Obsidian was closed (`review: claude`) waits for the user's review.
-   * Read from the note's frontmatter until the variant model parses `review` (Task 10).
+   * Fix round 1 (C1): flush the open editor, then read the note back from disk and parse its frontmatter
+   * there, so the digest, the split and the title shown all come from what is on disk now, never from an
+   * index that may lag behind the flush. Ruling P6: a note Claude wrote while Obsidian was closed
+   * (`review: claude`) waits for the user's review. Then M2b P3: re-validate the exact text.
    */
-  private heldForReview(path: string): boolean {
-    const file = this.deps.index.getVariant(path)?.file;
-    const fm: unknown = file ? this.deps.app.metadataCache.getFileCache(file)?.frontmatter : undefined;
-    return typeof fm === "object" && fm !== null && (fm as Record<string, unknown>).review === "claude";
+  private async freshChecked(path: string): Promise<{ v: IndexedVariant; content: LoadedContent } | SendRefusal> {
+    const indexed = this.deps.index.getVariant(path);
+    if (!indexed) return { refuse: GONE };
+    const editor = openMarkdownView(this.deps.app, path);
+    if (editor) await editor.save();
+    const raw = await this.deps.app.vault.read(indexed.file);
+    const info = getFrontMatterInfo(raw);
+    const fm: unknown = info.exists ? parseYaml(info.frontmatter) : null;
+    const parsed = isRecord(fm) ? parseVariant(fm, path) : null;
+    if (!isRecord(fm) || !parsed?.value) return { refuse: GONE };
+    if (fm.review === "claude") return { refuse: HELD };
+    const body = bodyOf(raw);
+    const v: IndexedVariant = { ...indexed, ...parsed.value, file: indexed.file, issues: parsed.issues, displayTitle: parsed.value.title ?? (excerpt(body) || indexed.file.basename) };
+    const content = { ...(await this.deps.composer.content.load(v)), body };
+    const errors = this.deps.composer.check(v, content).filter((i) => i.level === "error");
+    if (errors.length) return { refuse: BLOCKING, issues: errors };
+    return { v, content };
   }
 
-  /** Flush, then re-validate the exact text (M2b P3); a refusal when it's gone or has blocking issues. */
-  private async freshChecked(path: string): Promise<{ v: Variant; content: LoadedContent } | SendRefusal> {
-    const fresh = await this.freshContent(path);
-    if (!fresh) return { refuse: GONE };
-    if (this.heldForReview(path)) return { refuse: HELD };
-    const errors = this.deps.composer.check(fresh.v, fresh.content).filter((i) => i.level === "error");
-    if (errors.length) return { refuse: BLOCKING, issues: errors };
-    return fresh;
+  /** Fix round 1 (I1, I2): everything the approval question shows, from the same fresh read as the digest. */
+  private shown(v: IndexedVariant, content: LoadedContent): Shown {
+    const details: ShownField[] = [];
+    const add = (label: string, value: string | undefined) => {
+      if (value) details.push({ label, value });
+    };
+    const image = (m: MediaInfo) =>
+      [m.target, m.alt ? `alt text: ${m.alt}` : "no alt text", ...(m.focus ? [`focus: ${m.focus[0]}, ${m.focus[1]}`] : [])].join(", ");
+    add("Title", v.title);
+    add("Link", v.url);
+    content.media.forEach((m, i) => add(`${m.kind === "video" ? "Video" : "Image"} ${i + 1}`, image(m)));
+    if (v.wordpress) {
+      add("Slug", v.wordpress.slug);
+      add("Categories", v.wordpress.categories.join(", "));
+      add("Tags", v.wordpress.tags.join(", "));
+      add("Excerpt", v.wordpress.excerpt);
+      add("Featured image", content.featured ? image(content.featured) : v.wordpress.featuredImage);
+    }
+    return { title: v.displayTitle, items: postItems(content.body, platformDef(v.platform)), details };
+  }
+
+  private statusOf(v: Variant, id: string): string {
+    const status = effectiveDelivery(v, id)?.status ?? "draft";
+    return status === "awaiting_you" ? "waiting for you" : status.replace(/_/g, " ");
   }
 
   /** MCP publish_now, before asking (#77): flush, re-validate the exact text, and fix what would be sent. */
@@ -438,7 +495,19 @@ export class PublishActions {
     const queue = assistedQueue(fresh.v, this.deps.settings().defaultStaggerMinutes, channelIds);
     if (!queue.length) return { refuse: NOTHING };
     const { api, assisted } = this.split(fresh.v, queue);
-    return { path, queue, api, assisted, text: postText(fresh.content.body, platformDef(fresh.v.platform)), digest: sendDigest(fresh.v, fresh.content) };
+    const statuses = Object.fromEntries(queue.map((id) => [id, this.statusOf(fresh.v, id)]));
+    const waiting = queue.filter((id) => effectiveDelivery(fresh.v, id)?.status === "awaiting_you");
+    return {
+      path,
+      queue,
+      api,
+      assisted,
+      statuses,
+      waiting,
+      ...this.shown(fresh.v, fresh.content),
+      text: postText(fresh.content.body, platformDef(fresh.v.platform)),
+      digest: sendDigest(fresh.v, fresh.content),
+    };
   }
 
   /**
@@ -471,7 +540,8 @@ export class PublishActions {
     const channels = v.channels.filter((id) => (!channelIds || channelIds.includes(id)) && !unreadable(v, id) && LIVE.has(v.deliveries[id]?.status ?? "") && !!v.deliveries[id]?.remoteId);
     if (!channels.length) return { refuse: "No channel of this post is live on the platform with a known id." };
     if (!this.deps.adapters.get(v.platform)?.update) return { refuse: `${PLATFORM_META[v.platform].label} posts can't be updated from Obsidian yet.` };
-    return { path, channels, text: postText(content.body, platformDef(v.platform)), digest: sendDigest(v, content) };
+    const statuses = Object.fromEntries(channels.map((id) => [id, this.statusOf(v, id)]));
+    return { path, channels, statuses, ...this.shown(v, content), text: postText(content.body, platformDef(v.platform)), digest: sendDigest(v, content) };
   }
 
   /** After approval: re-validates and compares with what was approved, then updates each live channel. Ruling P7: a failure logs `update_failed`. */

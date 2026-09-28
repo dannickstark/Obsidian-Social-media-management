@@ -95,6 +95,9 @@ interface Prepared {
   redact(text: string): string;
   /** Final review Minor 6: no retry may be scheduled past this time. */
   deadline: number;
+  /** What `items` and `media` were built from; `accept` checks it with the claimed frontmatter. */
+  content: LoadedContent;
+  accept?: (v: Variant, content: LoadedContent) => boolean;
 }
 
 /**
@@ -115,8 +118,10 @@ export class PublishOrchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
   /**
-   * `accept` (publish_now after approval, #77): checked against the exact text this run loads and sends; the
-   * run is refused, before any claim, when it no longer matches what the user approved (M2b P3).
+   * `accept` (publish_now after approval, #77; fix round 1 C1): checked inside every claim, retries included,
+   * against the freshly claimed frontmatter and the exact content this run sends. When it no longer matches
+   * what the user approved, nothing is claimed or sent: a first attempt is refused as it stands, a retry
+   * leaves the delivery `failed` with a message that says why (M2b P3).
    */
   async run(path: string, channelId: string, accept?: (v: Variant, content: LoadedContent) => boolean): Promise<RunResult> {
     const v = this.deps.index.getVariant(path);
@@ -126,7 +131,6 @@ export class PublishOrchestrator {
     const adapter = this.deps.adapters.get(v.platform);
     if (!adapter?.publish) return { status: "refused", reason: `There is no ${PLATFORM_META[v.platform].label} API adapter yet; use Copy & open.` };
     const content = await this.deps.content.load(v);
-    if (accept && !accept(v, content)) return { status: "refused", reason: "The post changed after it was approved, so nothing was sent." };
     const def = platformDef(v.platform);
     const secretId = channel.secretId;
     const start = this.deps.now();
@@ -136,6 +140,8 @@ export class PublishOrchestrator {
     const deadline = (due !== undefined && due <= start && start - due <= window ? due : start) + window;
     const job: Prepared = {
       deadline,
+      content,
+      ...(accept ? { accept } : {}),
       path,
       file: v.file,
       channelId,
@@ -204,8 +210,15 @@ export class PublishOrchestrator {
   }
 
   private async attempt(p: Prepared, attempt: number): Promise<Attempt> {
-    const claim = await this.claim(p.file, p.channelId, attempt === 1);
-    if ("refuse" in claim) return { done: true, result: { status: "refused", reason: claim.refuse } };
+    const claim = await this.claim(p, attempt === 1);
+    if ("refuse" in claim) {
+      if (claim.changed) {
+        // The retry was not sent: the delivery stays failed, and the user hears why.
+        void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "failed", error: claim.refuse });
+        this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: "needs_user", error: claim.refuse });
+      }
+      return { done: true, result: { status: "refused", reason: claim.refuse } };
+    }
     // Only the run that won the claim marks it, so a refused concurrent run never clears the mark.
     const key = inFlightKey(p.path, p.channelId);
     this.inFlight.add(key);
@@ -304,13 +317,19 @@ export class PublishOrchestrator {
   }
 
   /** Writes `publishing` + timestamp before any network call; the plan runs on fresh frontmatter, so nothing is claimed twice. */
-  private async claim(file: TFile, channelId: string, first: boolean): Promise<{ variant: Variant; delivery: Delivery } | { refuse: string }> {
-    const box: { variant?: Variant; delivery?: Delivery } = {};
+  private async claim(p: Prepared, first: boolean): Promise<{ variant: Variant; delivery: Delivery } | { refuse: string; changed?: true }> {
+    const { file, channelId } = p;
+    const box: { variant?: Variant; delivery?: Delivery; changed?: true } = {};
     const result = await this.deps.writer.updateVariant(file, (fresh) => {
       const d = effectiveDelivery(fresh, channelId);
       if (!d) return { refuse: "Its delivery entry can't be read, or the channel is not on this post." };
       if (!(first ? CLAIMABLE.has(d.status) : d.status === "failed")) {
         return { refuse: d.status === "publishing" ? "It is already being published." : `It is ${d.status.replace(/_/g, " ")}.` };
+      }
+      if (p.accept && !p.accept(fresh, p.content)) {
+        if (first) return { refuse: CHANGED_FIRST };
+        box.changed = true;
+        return { deliveries: { [channelId]: { ...d, error: CHANGED_RETRY } } };
       }
       const from = VIA_SCHEDULED.has(d.status) ? transition(d, "scheduled") : d;
       const next = transition(from, "publishing", { at: this.deps.now(), attempts: (d.attempts ?? 0) + 1 });
@@ -320,6 +339,7 @@ export class PublishOrchestrator {
       return { deliveries: { [channelId]: next } };
     });
     if ("refuse" in result) return result;
+    if (box.changed) return { refuse: CHANGED_RETRY, changed: true };
     return { variant: box.variant!, delivery: box.delivery! };
   }
 
@@ -348,6 +368,9 @@ export class PublishOrchestrator {
 function inFlightKey(path: string, channelId: string): string {
   return `${path}\n${channelId}`;
 }
+
+const CHANGED_FIRST = "The post changed after it was approved, so nothing was sent.";
+const CHANGED_RETRY = "The post changed after it was approved, so the retry was not sent. Publish it again to send the new version.";
 
 const FROM_PUBLISHING: ReadonlySet<DeliveryStatus> = new Set(["publishing"]);
 const FROM_CHECK_NEEDED: ReadonlySet<DeliveryStatus> = new Set(["check_needed"]);

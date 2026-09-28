@@ -1,11 +1,19 @@
 import { z } from "zod";
 import { PLATFORM_META } from "../../model/platforms";
-import { clip, findPost, noPost, zPath } from "../common";
+import type { SendPlan } from "../../publish/actions";
+import { findPost, noPost, zPath } from "../common";
 import type { McpToolDeps } from "../deps";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 
 const API_HOW = "posts through the API now";
 const ASSISTED_HOW = "opens the assisted flow in Obsidian; you post it";
+
+const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
+
+function withoutWaiting(plan: SendPlan): SendPlan {
+  const keep = (id: string) => !plan.waiting.includes(id);
+  return { ...plan, queue: plan.queue.filter(keep), api: plan.api.filter(keep), assisted: plan.assisted.filter(keep) };
+}
 
 const zOnly = z.array(z.string().trim().min(1).max(80)).max(30).optional().describe("Only these channel ids; default: every channel still to post");
 const zNote = z.string().trim().max(500).optional().describe("One sentence for the user, shown in the approval question");
@@ -30,15 +38,20 @@ export function registerPublishTools(registry: ToolRegistry, deps: McpToolDeps):
         if (blocked) return fail(blocked);
         const answer = await deps.approvals.request({
           action: "publish",
-          title: v.displayTitle,
+          title: plan.title,
           path: v.path,
           platformLabel: PLATFORM_META[v.platform].label,
-          channels: plan.queue.map((id) => ({ id, name: nameOf(id), how: plan.api.includes(id) ? API_HOW : ASSISTED_HOW })),
-          text: clip(plan.text, 4_000),
+          channels: plan.queue.map((id) => ({ id, name: nameOf(id), how: plan.api.includes(id) ? API_HOW : ASSISTED_HOW, status: plan.statuses[id] ?? "" })),
+          text: plan.text,
+          items: plan.items,
+          details: plan.details,
           ...(a.note ? { note: a.note } : {}),
         });
         if (!answer.approved) return fail(answer.reason, undefined, { approved: false });
-        const sent = await deps.publish.sendApproved(plan);
+        // Ruling m2: the channel setting never sends a channel the user is posting by hand right now.
+        const approved = answer.how === "policy" ? withoutWaiting(plan) : plan;
+        if (!approved.queue.length) return fail(ALL_WAITING, undefined, { approved: true });
+        const sent = await deps.publish.sendApproved(approved);
         if ("refuse" in sent) return fail(sent.refuse, sent.issues, { approved: true });
         return ok({
           approved: true,
@@ -70,11 +83,13 @@ export function registerPublishTools(registry: ToolRegistry, deps: McpToolDeps):
         if (blocked) return fail(blocked);
         const answer = await deps.approvals.request({
           action: "update",
-          title: v.displayTitle,
+          title: plan.title,
           path: v.path,
           platformLabel: PLATFORM_META[v.platform].label,
-          channels: plan.channels.map((id) => ({ id, name: nameOf(id), how: "replaces the live text" })),
-          text: clip(plan.text, 4_000),
+          channels: plan.channels.map((id) => ({ id, name: nameOf(id), how: "replaces the live text", status: plan.statuses[id] ?? "" })),
+          text: plan.text,
+          items: plan.items,
+          details: plan.details,
           ...(a.note ? { note: a.note } : {}),
         });
         if (!answer.approved) return fail(answer.reason, undefined, { approved: false });

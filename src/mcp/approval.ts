@@ -3,9 +3,14 @@ export interface ApprovalRequest {
   title: string;
   path: string;
   platformLabel: string;
-  channels: Array<{ id: string; name: string; how: string }>;
-  /** The exact text as the platform receives it (clipped for display). */
+  /** `status`: the delivery's status as the user reads it ("scheduled", "waiting for you"). */
+  channels: Array<{ id: string; name: string; how: string; status: string }>;
+  /** The exact text as the platform receives it, in full. */
   text: string;
+  /** The same text part by part ("Post 1 of 3" for a thread), in full. */
+  items: string[];
+  /** Every other field that is sent, one labelled line each (title, link, images and alt text, WordPress fields). */
+  details: Array<{ label: string; value: string }>;
   /** Claude's one-line reason, shown to the user. */
   note?: string;
 }

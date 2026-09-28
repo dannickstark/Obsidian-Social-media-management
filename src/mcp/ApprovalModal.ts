@@ -26,11 +26,26 @@ class ApprovalModal extends Modal {
     c.addClass("osmm", "osmm-approval");
     const n = req.channels.length;
     c.append(el("p", `${req.title} · ${req.platformLabel} · ${n} channel${n === 1 ? "" : "s"} · now`, "osmm-approval-summary"));
+    c.append(el("h3", "Where", "osmm-approval-heading"));
     const list = el("ul", undefined, "osmm-approval-channels");
-    for (const ch of req.channels) list.append(el("li", `${ch.name}: ${ch.how}`));
+    for (const ch of req.channels) list.append(el("li", `${ch.name}: ${ch.how} (${ch.status})`));
     c.append(list);
+    if (req.details.length) {
+      const rows = el("dl", undefined, "osmm-approval-details");
+      for (const d of req.details) rows.append(el("dt", d.label), el("dd", d.value));
+      c.append(rows);
+    }
     if (req.note) c.append(el("p", `Claude's note: ${req.note}`, "osmm-approval-note"));
-    c.append(el("pre", req.text, "osmm-approval-text"));
+    c.append(el("h3", "Text that will be posted", "osmm-approval-heading"));
+    const items = req.items.length ? req.items : [req.text];
+    items.forEach((item, i) => {
+      const label = items.length > 1 ? `Post ${i + 1} of ${items.length}` : "Text that will be posted";
+      if (items.length > 1) c.append(el("p", label, "osmm-approval-part"));
+      const pre = el("pre", item, "osmm-approval-text");
+      pre.setAttribute("aria-label", label);
+      pre.tabIndex = 0;
+      c.append(pre);
+    });
     const reason = el("textarea");
     reason.placeholder = "Why not? (optional, sent to Claude)";
     reason.setAttribute("aria-label", "Reason for saying no, sent to Claude");

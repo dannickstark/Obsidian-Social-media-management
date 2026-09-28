@@ -78,3 +78,8 @@ body.is-phone .osmm-composer-main { padding: 8px; }
 .osmm-approval-note { color: var(--text-muted); font-style: italic; }
 .osmm-approval-text { max-height: 40vh; overflow: auto; white-space: pre-wrap; padding: 8px; border-radius: var(--radius-s); background: var(--background-secondary); font-family: var(--font-text); }
 .osmm-approval textarea { width: 100%; margin-top: 8px; }
+.osmm-approval-heading { margin: 12px 0 4px; font-size: var(--font-ui-medium); }
+.osmm-approval-details { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 8px; }
+.osmm-approval-details dt { color: var(--text-muted); }
+.osmm-approval-details dd { margin: 0; overflow-wrap: anywhere; }
+.osmm-approval-part { margin: 8px 0 2px; color: var(--text-muted); font-size: var(--font-ui-small); }

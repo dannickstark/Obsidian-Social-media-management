@@ -8,8 +8,10 @@ const REQ: ApprovalRequest = {
   title: "Doors open",
   path: "Social/Posts/Tg.md",
   platformLabel: "Telegram",
-  channels: [{ id: "tg/event-x", name: "Event X channel", how: "posts through the API now" }],
+  channels: [{ id: "tg/event-x", name: "Event X channel", how: "posts through the API now", status: "scheduled" }],
   text: "Doors open at 18:00",
+  items: ["Doors open at 18:00"],
+  details: [],
   note: "The user asked to post it now.",
 };
 
@@ -18,7 +20,7 @@ describe("ApprovalGate", () => {
     let opened = 0;
     const gate = new ApprovalGate({ open: () => (opened++, { close: () => undefined }), allowedWithoutAsking: (id) => id === "tg/event-x", timeoutMs: 20 });
     expect(await gate.request(REQ)).toEqual({ approved: true, how: "policy" });
-    const two = { ...REQ, channels: [...REQ.channels, { id: "li/me", name: "Me", how: "x" }] };
+    const two = { ...REQ, channels: [...REQ.channels, { id: "li/me", name: "Me", how: "x", status: "scheduled" }] };
     expect(await gate.request(two)).toEqual({ approved: false, reason: TIMED_OUT });
     expect(opened).toBe(1);
   });
@@ -109,7 +111,7 @@ describe("approval modal", () => {
     expect(modal.titleEl.textContent).toBe("Claude wants to publish");
     const text = modal.contentEl.textContent ?? "";
     expect(text).toContain("Doors open · Telegram · 1 channel · now");
-    expect(text).toContain("Event X channel: posts through the API now");
+    expect(text).toContain("Event X channel: posts through the API now (scheduled)");
     expect(text).toContain("Doors open at 18:00");
     expect(text).toContain("The user asked to post it now.");
     expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
@@ -121,6 +123,49 @@ describe("approval modal", () => {
     buttons(modal).find((b) => b.textContent === "Approve")!.click();
     expect(answers).toEqual([{ approved: true, how: "asked" }]);
     expect(modal.isOpen).toBe(false);
+  });
+
+  it("shows where, every part of the text in full, and every labelled detail (fix round 1: I1, I2, m2)", () => {
+    const long = "b".repeat(4500);
+    openApprovalModal(
+      new App() as never,
+      {
+        ...REQ,
+        channels: [...REQ.channels, { id: "li/me", name: "Me", how: "opens the assisted flow in Obsidian; you post it", status: "waiting for you" }],
+        text: `Part one\n\n${long}`,
+        items: ["Part one", long],
+        details: [
+          { label: "Link", value: "https://eventx.berlin/" },
+          { label: "Image 1", value: "cover.png, alt text: The venue at night" },
+          { label: "Slug", value: "event-x-recap" },
+        ],
+      },
+      () => undefined,
+    );
+    const modal = Modal.opened.at(-1)!;
+    const c = modal.contentEl;
+    const headings = [...c.querySelectorAll("h3")].map((h) => h.textContent);
+    expect(headings).toEqual(expect.arrayContaining(["Where", "Text that will be posted"]));
+    expect(c.textContent).toContain("Me: opens the assisted flow in Obsidian; you post it (waiting for you)");
+    const parts = [...c.querySelectorAll("pre")];
+    expect(parts.map((p) => p.getAttribute("aria-label"))).toEqual(["Post 1 of 2", "Post 2 of 2"]);
+    expect(parts[1]!.textContent).toBe(long);
+    expect(c.textContent).toContain("Post 1 of 2");
+    const rows = [...c.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+    expect(rows).toEqual([
+      ["Link", "https://eventx.berlin/"],
+      ["Image 1", "cover.png, alt text: The venue at night"],
+      ["Slug", "event-x-recap"],
+    ]);
+    modal.close();
+  });
+
+  it("labels a single text block", () => {
+    openApprovalModal(new App() as never, REQ, () => undefined);
+    const modal = Modal.opened.at(-1)!;
+    expect([...modal.contentEl.querySelectorAll("pre")].map((p) => p.getAttribute("aria-label"))).toEqual(["Text that will be posted"]);
+    expect(modal.contentEl.querySelector("dl")).toBeNull();
+    modal.close();
   });
 
   it("titles an update differently", () => {

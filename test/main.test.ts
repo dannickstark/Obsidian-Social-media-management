@@ -846,7 +846,7 @@ describe("Claude Code server (#73)", () => {
     const { plugin } = await loaded();
     expect(plugin.tools.names()).toEqual(expect.arrayContaining(["publish_now", "push_update"]));
     const before = Modal.opened.length;
-    const req = { action: "publish" as const, title: "T", path: "p.md", platformLabel: "Telegram", channels: [{ id: "tg/x", name: "X", how: "posts through the API now" }], text: "hi" };
+    const req = { action: "publish" as const, title: "T", path: "p.md", platformLabel: "Telegram", channels: [{ id: "tg/x", name: "X", how: "posts through the API now", status: "scheduled" }], text: "hi", items: ["hi"], details: [] };
     const answer = plugin.approvals.request(req);
     expect(Modal.opened.length).toBe(before + 1);
     expect(Modal.opened.at(-1)!.titleEl.textContent).toBe("Claude wants to publish");
