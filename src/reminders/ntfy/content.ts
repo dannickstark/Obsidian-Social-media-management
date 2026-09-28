@@ -45,7 +45,7 @@ const label = (v: { platform: Platform } | undefined) => (v ? PLATFORM_META[v.pl
 
 /**
  * Artboard 7 / #70. Tapping the push opens the pre-filled page; the buttons open the assisted flow in
- * Obsidian (which copies the text and opens the page), open the note, and snooze. An ntfy `http` action
+ * Obsidian (which copies the text and opens the page), open the note, and snooze (the snoozed push links through Obsidian). An ntfy `http` action
  * runs on the phone without credentials, so with an access token the third button is Done instead
  * (the token must never travel inside a notification). Tags are prefixed so ntfy never turns them into
  * emoji (M3 P10).
@@ -74,7 +74,9 @@ export async function reminderMessage(item: ReminderItem, deps: ReminderContentD
         url: `${target.server}/`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: target.topic, ...base, actions, delay: `${SNOOZE_MINUTES}m` }),
+        // A snoozed re-post is never in the booking ledger, so it can't be rebooked when the note changes:
+        // it always links through Obsidian (resolved at tap time), never to a baked pre-filled URL.
+        body: JSON.stringify({ topic: target.topic, ...base, click: copyOpen, actions, delay: `${SNOOZE_MINUTES}m` }),
         clear: true,
       };
   return { ...base, actions: [...actions, third] };

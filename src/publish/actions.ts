@@ -245,7 +245,12 @@ export class PublishActions {
       state.published ? { at, path, channelId, result: "published", ...(state.url ? { url: state.url } : {}) } : { at, path, channelId, result: "failed", error },
     );
     // M3 P8: a lookup that confirms the publish counts as an API publish for the phone confirmation.
-    if (state.published) this.notifier.published?.({ path, channelId, ...(state.url ? { url: state.url } : {}) });
+    if (!state.published) return;
+    try {
+      this.notifier.published?.({ path, channelId, ...(state.url ? { url: state.url } : {}) });
+    } catch {
+      // The post is out and recorded; a failed confirmation must not turn the check into an error.
+    }
   }
 
   target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {

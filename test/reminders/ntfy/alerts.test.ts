@@ -91,4 +91,28 @@ describe("PhoneAlerts", () => {
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["bs/you"]?.status === "published");
     expect(seen).toEqual([{ path: P, channelId: "bs/you", url: "https://bsky.app/profile/you/post/2" }]);
   });
+
+  it("still settles a lookup-confirmed publish when the confirmation throws", async () => {
+    const P = "Social/Posts/P.md";
+    const c = await makeCtx({
+      notes: [
+        {
+          path: P,
+          frontmatter: { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: formatDateTime(TEST_NOW - 3_600_000), deliveries: { "bs/you": { status: "check_needed", error: "Obsidian closed." } } },
+          body: "Hi",
+        },
+      ],
+    });
+    c.adapters.register({ platform: "bluesky", lookup: async () => ({ published: true, url: "https://bsky.app/profile/you/post/2", remoteId: "2" }) });
+    c.ctx.publish.notifier = {
+      due: () => undefined,
+      failed: () => undefined,
+      published: () => {
+        throw new Error("notifier broke");
+      },
+    };
+    await expect(c.ctx.publish.resolveCheck(P, "bs/you")).resolves.toBeUndefined();
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["bs/you"]?.status === "published");
+    expect(c.log.entries.at(-1)).toMatchObject({ result: "published", url: "https://bsky.app/profile/you/post/2" });
+  });
 });

@@ -30,9 +30,10 @@ describe("reminder pushes (#70, artboard 7)", () => {
     });
   });
 
-  it("snoozes by re-posting the same push 10 minutes later", async () => {
+  it("snoozes by re-posting the same push 10 minutes later, linked through Obsidian", async () => {
     const msg = await reminderMessage(item, deps(), { server: "https://ntfy.sh", topic: "osmm-abc", token: null });
     const snooze = msg.actions![2]!;
+    expect((snooze as { body: string }).body).not.toContain("shareActive");
     expect(snooze).toMatchObject({ action: "http", label: "Snooze 10 min", url: "https://ntfy.sh/", method: "POST", headers: { "Content-Type": "application/json" }, clear: true });
     expect(JSON.parse((snooze as { body: string }).body)).toEqual({
       topic: "osmm-abc",
@@ -40,7 +41,8 @@ describe("reminder pushes (#70, artboard 7)", () => {
       message: "Event X is back\nAcme Studio · 18:00",
       priority: 4,
       tags: ["osmm", "osmm-linkedin"],
-      click: "https://www.linkedin.com/feed/?shareActive=true&text=Hi",
+      // A snoozed re-post is never in the booking ledger and can't be rebooked: it links through Obsidian.
+      click: COPY_OPEN,
       actions: msg.actions!.slice(0, 2),
       delay: "10m",
     });

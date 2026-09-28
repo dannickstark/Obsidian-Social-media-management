@@ -208,7 +208,9 @@ export default class OsmmPlugin extends Plugin {
     this.registerView(VIEW_COMPOSER, (leaf) => new ComposerView(leaf, this.uiContext()));
 
     registerCommands(this);
-    this.registerObsidianProtocolHandler(POST_ACTION, (params) => this.openFromLink(params));
+    this.registerObsidianProtocolHandler(POST_ACTION, (params) =>
+      this.openFromLink(params).catch((e: unknown) => void new Notice(`Couldn't open the post from the phone link: ${e instanceof Error ? e.message : String(e)}`)),
+    );
 
     this.registerMarkdownCodeBlockProcessor("social-variants", (_source, el, ctx) => {
       ctx.addChild(
@@ -282,6 +284,10 @@ export default class OsmmPlugin extends Plugin {
     if (params.step === "3") {
       if (d.status === "published" || d.status === "skipped") {
         new Notice(`${name} is already done for this post.`);
+        return;
+      }
+      if (d.status === "publishing") {
+        new Notice(`${name} is being published right now.`);
         return;
       }
       publish.openAssisted(path, [channel], 3);

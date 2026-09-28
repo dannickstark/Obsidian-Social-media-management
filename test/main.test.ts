@@ -351,6 +351,33 @@ describe("phone reminder links (#70)", () => {
     plugin.unload();
   });
 
+  it("refuses Done while the delivery is being published", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(app as never, P, { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-12-01T09:00:00+01:00", deliveries: { "bs/you": { status: "publishing" } } }, "Hi");
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.ready;
+    Modal.opened = [];
+    Notice.messages = [];
+    await plugin.openFromLink({ path: P, channel: "bs/you", step: "3" });
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toEqual(["bs/you is being published right now."]);
+    plugin.unload();
+  });
+
+  it("reports a phone link that fails instead of leaving the rejection unhandled", async () => {
+    const { plugin } = await loaded();
+    vi.spyOn(plugin, "openFromLink").mockRejectedValue(new Error("boom"));
+    Notice.messages = [];
+    const handler = (plugin as unknown as { protocolHandlers: Map<string, (p: Record<string, string>) => unknown> }).protocolHandlers.get("osmm-post")!;
+    await handler({ action: "osmm-post", path: "p.md", channel: "bs/you" });
+    await settle();
+    expect(Notice.messages).toEqual(["Couldn't open the post from the phone link: boom"]);
+    plugin.unload();
+  });
+
   it("re-validates the exact text before opening the flow (M2b P3)", async () => {
     const app = new App();
     const P = "Social/Posts/P.md";
