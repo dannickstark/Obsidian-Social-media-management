@@ -44,6 +44,7 @@ describe("OsmmPlugin", () => {
       "Publishing",
       "Post late items automatically",
       "Late window (minutes)",
+      "Desktop notifications on this device",
       "Channels",
       "Schedule templates",
       "Launch",

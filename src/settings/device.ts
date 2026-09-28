@@ -4,14 +4,16 @@ import { isRecord } from "../model/frontmatter";
 /** Settings that must never sync between devices (stored in vault-scoped localStorage). */
 export interface DeviceSettings {
   deviceId: string;
+  /** Desktop notifications on this device (spec §4.3: each device fires its own if enabled). */
+  notifications: boolean;
 }
 
 const KEY = "osmm-device";
 
 export function loadDeviceSettings(app: App): DeviceSettings {
   const raw: unknown = app.loadLocalStorage(KEY);
-  if (isRecord(raw) && typeof raw.deviceId === "string") return { deviceId: raw.deviceId };
-  const created: DeviceSettings = { deviceId: crypto.randomUUID() };
+  if (isRecord(raw) && typeof raw.deviceId === "string") return { deviceId: raw.deviceId, notifications: raw.notifications !== false };
+  const created: DeviceSettings = { deviceId: crypto.randomUUID(), notifications: true };
   saveDeviceSettings(app, created);
   return created;
 }

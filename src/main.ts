@@ -15,6 +15,9 @@ import { PublishActions } from "./publish/actions";
 import { ClipboardService } from "./publish/clipboard";
 import { MemoryLog } from "./publish/log";
 import { PreviewGridView } from "./previews/PreviewGridView";
+import { NotifiedLedger } from "./reminders/ledger";
+import { Notifier } from "./reminders/notifier";
+import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
 import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
@@ -37,6 +40,7 @@ export default class OsmmPlugin extends Plugin {
   channels!: ChannelRegistry;
   index!: SocialIndex;
   scheduler!: Scheduler;
+  reminders!: ReminderService;
   readonly adapters = new AdapterRegistry();
   readonly log = new MemoryLog();
   private unloaded = false;
@@ -67,6 +71,23 @@ export default class OsmmPlugin extends Plugin {
     this.index = new SocialIndex(this.app);
     this.register(() => this.index.stop());
 
+    const ui = this.uiContext();
+    const notifier = new Notifier({
+      ledger: new NotifiedLedger(this.app, () => Date.now()),
+      enabled: () => this.device.notifications,
+      channelName: (id) => this.channels.get(id)?.name ?? id,
+      noteTitle: (path) => this.index.getVariant(path)?.displayTitle ?? path,
+      openAssisted: (path, ids) => void ui.publish.openAssisted(path, ids),
+      openComposer: (path) => void ui.composer.openComposer(path),
+    });
+    ui.publish.notifier = notifier;
+    this.reminders = new ReminderService({
+      rows: () => ui.actions.rows(),
+      channels: this.channels,
+      adapters: this.adapters,
+      settings: () => this.settings,
+      notifier,
+    });
     this.scheduler = new Scheduler({
       index: this.index,
       settings: () => this.settings,
@@ -74,7 +95,8 @@ export default class OsmmPlugin extends Plugin {
       // M3 (#26) replaces this with the publisher-device setting; until then every device publishes.
       isPublisher: () => true,
       autoPostLateMs: () => autoPostLateMs(this.settings),
-      publish: this.uiContext().publish,
+      publish: ui.publish,
+      onTick: (now, previous) => void this.reminders.tick(now, previous),
       warn: (message) => new Notice(message, 0),
     });
     this.register(() => this.scheduler.stop());

@@ -4,6 +4,7 @@ import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
 import { mountSvelte, type Mounted } from "../ui/mount";
 import { osmmContext } from "../ui/context";
 import ChannelsSection from "./ChannelsSection.svelte";
+import { saveDeviceSettings } from "./device";
 import { parseMinutesList } from "./settings";
 
 export class OsmmSettingTab extends PluginSettingTab {
@@ -84,6 +85,16 @@ export class OsmmSettingTab extends PluginSettingTab {
         t.setValue(String(s.autoPostLateMinutes)).onChange(async (value) => {
           const n = Number(value.trim());
           if (Number.isInteger(n) && n >= 1 && n <= 240) await this.osmm.updateSettings({ autoPostLateMinutes: n });
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Desktop notifications on this device")
+      .setDesc("Reminders before assisted posts, when a post is due, and when publishing fails. Stored on this device only.")
+      .addToggle((t) =>
+        t.setValue(this.osmm.device.notifications).onChange((value) => {
+          this.osmm.device = { ...this.osmm.device, notifications: value };
+          saveDeviceSettings(this.app, this.osmm.device);
         }),
       );
 
