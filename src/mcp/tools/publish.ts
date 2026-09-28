@@ -1,14 +1,12 @@
 import { z } from "zod";
 import { PLATFORM_META } from "../../model/platforms";
-import type { SendPlan } from "../../publish/actions";
+import { ALL_WAITING, type SendPlan } from "../../publish/actions";
 import { findPost, noPost, zPath } from "../common";
 import type { McpToolDeps } from "../deps";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 
 const API_HOW = "posts through the API now";
 const ASSISTED_HOW = "opens the assisted flow in Obsidian; you post it";
-
-const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
 
 function withoutWaiting(plan: SendPlan): SendPlan {
   const keep = (id: string) => !plan.waiting.includes(id);
@@ -51,7 +49,7 @@ export function registerPublishTools(registry: ToolRegistry, deps: McpToolDeps):
         // Ruling m2: the channel setting never sends a channel the user is posting by hand right now.
         const approved = answer.how === "policy" ? withoutWaiting(plan) : plan;
         if (!approved.queue.length) return fail(ALL_WAITING, undefined, { approved: true });
-        const sent = await deps.publish.sendApproved(approved);
+        const sent = await deps.publish.sendApproved(approved, { skipWaiting: answer.how === "policy" });
         if ("refuse" in sent) return fail(sent.refuse, sent.issues, { approved: true });
         return ok({
           approved: true,

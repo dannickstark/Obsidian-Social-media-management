@@ -39,7 +39,8 @@ export type RunResult =
   | { status: "failed"; kind: ErrorKind; error: string }
   /** Ruling P4: the send's outcome is unknown; the delivery is parked on `check_needed`, not retried. */
   | { status: "check_needed" }
-  | { status: "refused"; reason: string };
+  /** `notified`: onFailure already told the user (a retry refused after the post changed); no second alert. */
+  | { status: "refused"; reason: string; notified?: true };
 
 export interface OrchestratorDeps {
   writer: SafeWriter;
@@ -216,6 +217,7 @@ export class PublishOrchestrator {
         // The retry was not sent: the delivery stays failed, and the user hears why.
         void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "failed", error: claim.refuse });
         this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: "needs_user", error: claim.refuse });
+        return { done: true, result: { status: "refused", reason: claim.refuse, notified: true } };
       }
       return { done: true, result: { status: "refused", reason: claim.refuse } };
     }

@@ -64,7 +64,9 @@ export interface DeliveryNotifier {
  */
 export function sendDigest(v: Variant, content: LoadedContent): string {
   const media = (m: MediaInfo | undefined) => (m ? [m.target, m.path ?? null, m.alt ?? null, m.focus ?? null] : null);
-  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, content.media.map(media), media(content.featured), v.wordpress ?? null]);
+  // Media a platform never sends (maxCount 0) is neither shown nor part of the digest.
+  const sent = platformDef(v.platform).capabilities.media.maxCount > 0 ? content.media : [];
+  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, sent.map(media), media(content.featured), v.wordpress ?? null]);
 }
 
 /** One labelled line of the approval question ("Link", "Image 1", "Slug" …). */
@@ -109,6 +111,7 @@ const GONE = "That note is no longer available.";
 const BLOCKING = "The post has blocking issues, so nothing was sent.";
 const CHANGED = "The post changed after it was approved, so nothing was sent. Ask again with the new text.";
 const NOTHING = "Nothing left to post for this note.";
+export const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
 const HELD =
   "Claude wrote this note while Obsidian was closed. The user approves it first in Obsidian (sidebar, Written by Claude); after that, schedule or publish it.";
 const LIVE = new Set(["published", "handed_over"]);
@@ -149,7 +152,8 @@ export class PublishActions {
     const result = await this.orchestrator.run(path, channelId, accept);
     const name = this.channelName(channelId);
     if (result.status === "published") new Notice(`Published to ${name}.`);
-    else if (result.status === "refused") new Notice(`${name}: ${result.reason}`);
+    // A refusal the failure notifier already reported (a retry refused after a change) is not shown twice.
+    else if (result.status === "refused" && !result.notified) new Notice(`${name}: ${result.reason}`);
     return result;
   }
 
@@ -472,7 +476,7 @@ export class PublishActions {
       [m.target, m.alt ? `alt text: ${m.alt}` : "no alt text", ...(m.focus ? [`focus: ${m.focus[0]}, ${m.focus[1]}`] : [])].join(", ");
     add("Title", v.title);
     add("Link", v.url);
-    content.media.forEach((m, i) => add(`${m.kind === "video" ? "Video" : "Image"} ${i + 1}`, image(m)));
+    if (platformDef(v.platform).capabilities.media.maxCount > 0) content.media.forEach((m, i) => add(`${m.kind === "video" ? "Video" : "Image"} ${i + 1}`, image(m)));
     if (v.wordpress) {
       add("Slug", v.wordpress.slug);
       add("Categories", v.wordpress.categories.join(", "));
@@ -515,12 +519,16 @@ export class PublishActions {
    * channel that would now go through the API but was approved for the assisted flow refuses the whole send.
    * Each API run re-checks the digest against the exact text it loads and sends.
    */
-  async sendApproved(plan: SendPlan): Promise<{ started: string[]; opened: string[] } | SendRefusal> {
+  async sendApproved(plan: SendPlan, opts: { skipWaiting?: boolean } = {}): Promise<{ started: string[]; opened: string[] } | SendRefusal> {
     const fresh = await this.freshChecked(plan.path);
     if ("refuse" in fresh) return fresh;
     if (sendDigest(fresh.v, fresh.content) !== plan.digest) return { refuse: CHANGED };
-    const queue = assistedQueue(fresh.v, this.deps.settings().defaultStaggerMinutes, plan.queue);
-    if (!queue.length) return { refuse: NOTHING };
+    const all = assistedQueue(fresh.v, this.deps.settings().defaultStaggerMinutes, plan.queue);
+    if (!all.length) return { refuse: NOTHING };
+    // Ruling m2: an approval by the channel setting never sends a channel the user is posting by hand, even one
+    // that started waiting between prepareSend and now.
+    const queue = opts.skipWaiting ? all.filter((id) => effectiveDelivery(fresh.v, id)?.status !== "awaiting_you") : all;
+    if (!queue.length) return { refuse: ALL_WAITING };
     const { api, assisted } = this.split(fresh.v, queue);
     if (api.some((id) => !plan.api.includes(id))) return { refuse: CHANGED };
     const blocked = api.length ? this.apiBlockedReason() : null;

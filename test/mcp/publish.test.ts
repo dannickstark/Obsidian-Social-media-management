@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
-import { MarkdownView, Modal, WorkspaceLeaf } from "../fakes/obsidian";
+import { MarkdownView, Modal, Notice, WorkspaceLeaf } from "../fakes/obsidian";
 import { BUSY, CLOSED, TIMED_OUT } from "../../src/mcp/approval";
 import type { OsmmSettings } from "../../src/settings/settings";
 import { indexed, writeNote } from "../helpers";
@@ -505,5 +505,50 @@ describe("the question shows everything that is sent (fix round 1: I1, I2, m2)",
     expect(r).toMatchObject({ ok: true, approved_by: "channel setting", started_api: ["li/me"], opened_assisted: [] });
     expect(Modal.opened.length).toBe(before);
     expect(policy.asked).toEqual([]);
+  });
+});
+
+describe("re-review minors", () => {
+  it("under the channel setting, drops a channel that started waiting for the user between prepare and send", async () => {
+    const { c, publish } = await setup([]);
+    const plan = await c.ctx.publish.prepareSend(TG);
+    if ("refuse" in plan) throw new Error(plan.refuse);
+    await c.writer.updateDeliveries(c.index.getVariant(TG)!.file, { "tg/event-x": { status: "awaiting_you" } });
+    await indexed(c.index, () => c.index.getVariant(TG)!.deliveries["tg/event-x"]!.status === "awaiting_you");
+    const sent = await c.ctx.publish.sendApproved(plan, { skipWaiting: true });
+    expect(sent).toEqual({ refuse: "The channels left are waiting for the user to post them by hand, so nothing was sent." });
+    await tick(30);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("a retry refused because the post changed alerts the user once", async () => {
+    const { c, publish } = await setup([{ approved: true, how: "asked" }], { note: tgNote({ status: "scheduled" }, "Doors open at 18:00", { url: "https://good.example/" }) });
+    const failed = vi.fn();
+    c.ctx.publish.notifier = { due: () => undefined, failed };
+    publish.mockImplementationOnce(async () => {
+      await c.writer.setFields(c.index.getVariant(TG)!.file, { title: "Other title" });
+      throw Object.assign(new Error("busy"), { status: 503 });
+    });
+    const before = Notice.messages.length;
+    await c.call("publish_now", { path: TG });
+    await indexed(c.index, () => /approved/.test(c.index.getVariant(TG)?.deliveries["tg/event-x"]?.error ?? ""));
+    await tick(30);
+    expect(failed).toHaveBeenCalledOnce();
+    expect(Notice.messages.slice(before).filter((m) => m.includes("retry was not sent"))).toEqual([]);
+  });
+
+  it("shows no media rows for a platform that never sends media", async () => {
+    const HN = "Social/Posts/Hn.md";
+    const note = {
+      path: HN,
+      frontmatter: { type: "social-post", platform: "hackernews", title: "Show HN: OSMM", url: "https://osmm.example/", media: ["cover.png"], channels: ["hn/you"], status: "scheduled", scheduled_at: "2026-10-08T14:00:00+02:00", deliveries: { "hn/you": { status: "scheduled" } } },
+      body: "A planner for social posts in Obsidian.",
+    };
+    const approvals = scriptedApprovals([]);
+    const c = await mcpCtx({ notes: [note], approvals: approvals.gate });
+    await c.app.vault.createBinary("cover.png", new ArrayBuffer(8));
+    await c.call("publish_now", { path: HN });
+    const labels = approvals.asked[0]!.details.map((d) => d.label);
+    expect(labels).toEqual(["Title", "Link"]);
   });
 });
