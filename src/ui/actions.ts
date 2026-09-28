@@ -140,7 +140,17 @@ export class PlannerActions {
   }
 
   async setStatus(v: IndexedVariant, status: "idea" | "draft" | "ready"): Promise<void> {
-    await this.deps.writer.patchVariant(v.file, { status });
+    const previous = {
+      status: v.status,
+      deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, { ...d }])),
+    };
+    const target = status === "idea" ? "draft" : status;
+    const deliveries: typeof v.deliveries = {};
+    for (const [id, d] of Object.entries(v.deliveries)) {
+      deliveries[id] = d.status === "draft" || d.status === "ready" ? { ...d, status: target } : d;
+    }
+    await this.deps.writer.patchVariant(v.file, { status, deliveries });
+    this.undoNotice(`Moved to ${STATUS_LABEL[status]}.`, () => this.deps.writer.patchVariant(v.file, previous));
   }
 
   async schedule(v: IndexedVariant, at: number): Promise<void> {
