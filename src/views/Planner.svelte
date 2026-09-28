@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get } from "svelte/store";
+  import { Platform } from "obsidian";
   import { expandRows, filterRows, rowsBetween } from "../index/queries";
   import { monthRange, weekCells, weekRange } from "../planner/calendar";
   import { toRowFilter, type PlannerMode } from "../planner/viewState";
@@ -7,6 +8,7 @@
   import { useOsmm } from "../ui/context";
   import { monthTitle, weekTitle } from "../ui/format";
   import { icon } from "../ui/icon";
+  import AgendaView from "./AgendaView.svelte";
   import BoardView from "./BoardView.svelte";
   import FilterBar from "./FilterBar.svelte";
   import Legend from "./Legend.svelte";
@@ -20,6 +22,9 @@
   const MODES: PlannerMode[] = ["month", "week", "board", "list"];
 
   let anchor = $state(startOfLocalDay(get(now)));
+  let width = $state(0);
+  /** Phones and narrow panes get the agenda instead of the 7-column grids (#27). jsdom reports 0. */
+  const compact = $derived(Platform.isPhone || (width > 0 && width < 560));
   const mode = $derived(MODES.includes($viewState.mode) ? $viewState.mode : "month");
   const year = $derived(new Date(anchor).getFullYear());
   const month = $derived(new Date(anchor).getMonth());
@@ -53,7 +58,7 @@
   }
 </script>
 
-<div class="osmm-planner">
+<div class="osmm-planner" bind:clientWidth={width}>
   <header class="osmm-toolbar">
     <h2 class="osmm-title">{title}</h2>
     {#if mode === "month" || mode === "week"}
@@ -73,7 +78,9 @@
   </div>
   <PublisherBanner />
   <div class="osmm-body">
-    {#if mode === "month"}
+    {#if (mode === "month" || mode === "week") && compact}
+      <AgendaView rows={visible} from={range.from} to={range.to} />
+    {:else if mode === "month"}
       <MonthView {year} {month} rows={visible} />
     {:else if mode === "week"}
       <WeekView {anchor} rows={visible} />

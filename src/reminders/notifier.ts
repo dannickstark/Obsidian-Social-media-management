@@ -1,4 +1,4 @@
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
 import type { DeliveryNotifier } from "../publish/actions";
 import type { FailureInfo } from "../publish/orchestrator";
 import type { NotifiedLedger } from "./ledger";
@@ -108,7 +108,8 @@ export class Notifier implements DeliveryNotifier {
         hide();
       }),
     );
-    if (typeof Notification === "undefined" || document.hasFocus()) return;
+    // System notifications only in the desktop app; phones get the in-app notice (and ntfy pushes, M3).
+    if (!Platform.isDesktopApp || typeof Notification === "undefined" || document.hasFocus()) return;
     if (Notification.permission === "granted") {
       const system = new Notification(title, { body });
       this.systems.add(system);

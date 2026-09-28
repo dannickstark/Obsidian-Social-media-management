@@ -1,4 +1,4 @@
-import type { App } from "obsidian";
+import { Platform, type App } from "obsidian";
 import type { ClipItem } from "../platforms/types";
 
 export type CopyResult = "copied" | "revealed" | "failed";
@@ -18,21 +18,24 @@ interface ElectronLike {
 
 const MIME: Readonly<Record<string, string>> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
 
-/** Obsidian adds `is-mobile` to <body> on phones and tablets. */
+/** Phones and tablets: Obsidian's Platform flag, or the `is-mobile` class it puts on <body>. */
 export function isMobile(): boolean {
-  return document.body.classList.contains("is-mobile");
+  return Platform.isMobile || document.body.classList.contains("is-mobile");
 }
 
 export function browserClipboard(app: App): ClipboardEnv {
   return {
     writeText: (text) => navigator.clipboard.writeText(text),
     async writeImage(bytes, mime) {
-      const electron = (window as unknown as { require?: (m: string) => unknown }).require?.("electron") as ElectronLike | undefined;
-      if (electron?.clipboard && electron.nativeImage) {
-        const image = electron.nativeImage.createFromBuffer(Buffer.from(bytes));
-        if (!image.isEmpty()) {
-          electron.clipboard.writeImage(image);
-          return true;
+      // Electron (and Node's Buffer) exist only in the desktop app (#27).
+      if (Platform.isDesktopApp) {
+        const electron = (window as unknown as { require?: (m: string) => unknown }).require?.("electron") as ElectronLike | undefined;
+        if (electron?.clipboard && electron.nativeImage) {
+          const image = electron.nativeImage.createFromBuffer(Buffer.from(bytes));
+          if (!image.isEmpty()) {
+            electron.clipboard.writeImage(image);
+            return true;
+          }
         }
       }
       if (typeof ClipboardItem !== "undefined" && mime === "image/png") {
@@ -42,6 +45,7 @@ export function browserClipboard(app: App): ClipboardEnv {
       return false;
     },
     reveal(path) {
+      if (!Platform.isDesktopApp) return false;
       const show = (app as unknown as { showInFolder?: (path: string) => void }).showInFolder;
       if (!show) return false;
       show.call(app, path);

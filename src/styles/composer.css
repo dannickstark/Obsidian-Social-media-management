@@ -70,3 +70,6 @@
 .osmm-steps [aria-current="step"] { color: var(--text-normal); font-weight: 600; }
 .osmm-clip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .osmm-assisted label { display: flex; flex-direction: column; gap: 4px; }
+.osmm-steps { flex-wrap: wrap; }
+body.is-phone .osmm-assisted button { min-height: 40px; }
+body.is-phone .osmm-composer-main { padding: 8px; }

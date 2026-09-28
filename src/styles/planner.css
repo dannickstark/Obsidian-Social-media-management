@@ -71,3 +71,19 @@
 .osmm-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--background-secondary); color: var(--osmm-muted); font-size: var(--font-ui-small); }
 .osmm-planner > .osmm-banner { margin: 0 16px 8px; }
 .osmm-banner.is-warning { background: rgba(var(--color-orange-rgb), 0.1); color: var(--text-normal); }
+.osmm-planner { container-type: inline-size; }
+.osmm-toolbar { flex-wrap: wrap; }
+.osmm-agenda { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.osmm-agenda-day { display: flex; flex-direction: column; gap: 6px; }
+.osmm-agenda-date { margin: 0; font-size: var(--font-ui-small); color: var(--osmm-muted); font-weight: 600; }
+.osmm-agenda-day.is-today .osmm-agenda-date { color: var(--osmm-accent); }
+.osmm-agenda .osmm-chip { width: 100%; min-height: 32px; }
+@container (max-width: 700px) {
+  .osmm-toolbar, .osmm-subbar { gap: 8px; padding: 8px 10px; }
+  .osmm-body { padding: 0 10px 10px; }
+  .osmm-legend { display: none; }
+  .osmm-board { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(240px, 85%); overflow-x: auto; scroll-snap-type: x mandatory; }
+  .osmm-column { scroll-snap-align: start; }
+  .osmm-table { font-size: var(--font-ui-small); }
+}
+body.is-mobile .osmm-chip, body.is-mobile .osmm-card { min-height: 32px; }

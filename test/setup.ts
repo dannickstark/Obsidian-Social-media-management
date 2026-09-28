@@ -31,4 +31,13 @@ HTMLElement.prototype.toggleClass = function toggleClass(this: HTMLElement, cls:
   this.classList.toggle(cls, value);
 };
 
+// jsdom has no ResizeObserver; Planner.svelte's bind:clientWidth (#27) needs one to mount at all.
+// It never reports real sizes, so clientWidth stays 0 in tests (Planner.svelte relies on that for `compact`).
+class FakeResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+Object.assign(globalThis, { ResizeObserver: FakeResizeObserver });
+
 export {};
