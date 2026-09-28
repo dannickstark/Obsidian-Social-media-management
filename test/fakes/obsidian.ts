@@ -445,6 +445,10 @@ export class Component {
   registerEvent(ref: EventRef): void {
     this.cleanups.push(() => ref.owner.offref(ref));
   }
+  registerDomEvent(el: EventTarget, type: string, handler: (ev: Event) => unknown): void {
+    el.addEventListener(type, handler);
+    this.cleanups.push(() => el.removeEventListener(type, handler));
+  }
   async load(): Promise<void> {
     await this.onload();
   }

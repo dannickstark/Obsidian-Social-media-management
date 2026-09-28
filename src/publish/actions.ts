@@ -20,6 +20,9 @@ import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
 import { PublishOrchestrator, type FailureInfo, type RunResult } from "./orchestrator";
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
+import { transition } from "../model/stateMachine";
+import { effectiveMethod } from "../platforms/registry";
+import type { DueItem } from "../scheduler/due";
 
 export interface PublishDeps {
   app: App;
@@ -143,6 +146,33 @@ export class PublishActions {
     void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "skipped" });
     this.deps.planner.undoNotice(`Skipped ${name}.`, () => this.deps.planner.undo([result.record]));
     return true;
+  }
+
+  /** Scheduler: a delivery's time has come. */
+  async dispatch(item: DueItem): Promise<void> {
+    const v = this.deps.index.getVariant(item.path);
+    if (!v) return;
+    const adapter = this.deps.adapters.get(v.platform);
+    let method = effectiveMethod(v.mode, this.deps.channels.get(item.channelId), adapter);
+    // Native channels are handed over when scheduled (M5). One still pending at its time is posted now, never skipped silently.
+    if (method === "native") method = adapter?.publish ? "api" : "assisted";
+    if (method === "api") {
+      void this.runApi(item.path, item.channelId);
+      return;
+    }
+    if (await this.startAssisted(item.path, item.channelId)) this.notifier.due(item.path, item.channelId);
+  }
+
+  /** Scheduler: the time passed too long ago (spec §5.2); the delivery waits in the Overdue tray. */
+  async markOverdue(item: DueItem): Promise<void> {
+    const v = this.deps.index.getVariant(item.path);
+    if (!v) return;
+    const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
+      const d = effectiveDelivery(fresh, item.channelId);
+      if (d?.status !== "scheduled") return { refuse: "The delivery changed." };
+      return { deliveries: { [item.channelId]: transition(d, "overdue") } };
+    });
+    if (!("refuse" in result)) void this.deps.log.append({ at: this.deps.now(), path: item.path, channelId: item.channelId, result: "overdue" });
   }
 
   target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {

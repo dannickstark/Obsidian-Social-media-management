@@ -15,6 +15,7 @@ import { PublishActions } from "./publish/actions";
 import { ClipboardService } from "./publish/clipboard";
 import { MemoryLog } from "./publish/log";
 import { PreviewGridView } from "./previews/PreviewGridView";
+import { Scheduler } from "./scheduler/scheduler";
 import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { migrateSettings, type OsmmSettings } from "./settings/settings";
@@ -35,6 +36,7 @@ export default class OsmmPlugin extends Plugin {
   factory!: NoteFactory;
   channels!: ChannelRegistry;
   index!: SocialIndex;
+  scheduler!: Scheduler;
   readonly adapters = new AdapterRegistry();
   readonly log = new MemoryLog();
   private unloaded = false;
@@ -65,12 +67,30 @@ export default class OsmmPlugin extends Plugin {
     this.index = new SocialIndex(this.app);
     this.register(() => this.index.stop());
 
+    this.scheduler = new Scheduler({
+      index: this.index,
+      settings: () => this.settings,
+      now: () => Date.now(),
+      // M3 (#26) replaces this with the publisher-device setting; until then every device publishes.
+      isPublisher: () => true,
+      autoPostLateMs: () => null,
+      publish: this.uiContext().publish,
+      warn: (message) => new Notice(message, 0),
+    });
+    this.register(() => this.scheduler.stop());
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.visibilityState === "visible") void this.scheduler.tick();
+    });
+
     this.addSettingTab(new OsmmSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(async () => {
       if (this.unloaded) return;
       this.index.start();
       await this.index.build();
+      if (this.unloaded) return;
+      this.scheduler.start();
+      void this.scheduler.tick();
     });
 
     this.registerView(VIEW_PLANNER, (leaf) => new PlannerView(leaf, this.uiContext()));
