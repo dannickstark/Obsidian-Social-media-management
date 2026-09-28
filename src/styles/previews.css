@@ -74,3 +74,13 @@
 .osmm-pv-excerpt { margin: 0; color: var(--text-muted); font-style: italic; }
 .osmm-pv-h { margin: 6px 0 0; }
 .osmm-pv-inline-img { max-width: 100%; border-radius: 6px; }
+.osmm-pv-card-image { width: 100%; max-height: 180px; object-fit: cover; border-radius: var(--radius-s); }
+.osmm-pv-card-title { font-weight: var(--font-semibold); color: var(--text-normal); }
+.osmm-pv-card-desc {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

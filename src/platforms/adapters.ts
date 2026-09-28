@@ -1,4 +1,5 @@
 import type { HttpFn } from "./http";
+import type { LinkCard } from "./og";
 import type { PlatformAdapter } from "./types";
 
 /** A file embedded in a note's body, resolved in the vault (WordPress uploads it). */
@@ -18,6 +19,8 @@ export interface AdapterDeps {
   timeoutMs?: number;
   /** Resolves an image embedded in a body (`![[cover.png]]`) to a vault file; null when it isn't an image in the vault. */
   resolveEmbed?(target: string, fromPath: string): EmbedFile | null;
+  /** The link card for a URL (Bluesky's external embed); null when there is none. */
+  linkCard?(url: string): Promise<LinkCard | null>;
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */

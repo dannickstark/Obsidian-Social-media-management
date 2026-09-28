@@ -20,6 +20,7 @@ import { NoteFactory } from "./model/factory";
 import { SafeWriter } from "./model/writer";
 import { createAdapters, type AdapterDeps } from "./platforms/adapters";
 import { obsidianHttp } from "./platforms/http";
+import { LinkCardFetcher } from "./platforms/og";
 import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
 import { PublishActions } from "./publish/actions";
@@ -80,6 +81,8 @@ export default class OsmmPlugin extends Plugin {
   ntfy!: NtfyClient;
   phone!: NtfyBooker;
   readonly adapters = new AdapterRegistry();
+  /** OpenGraph link cards for the previews and Bluesky's external embed (#93). */
+  linkCards!: LinkCardFetcher;
   log!: VaultLog;
   /** MCP tools for Claude Code (spec §6.1); the server exposes them only on a desktop, when switched on. */
   tools!: ToolRegistry;
@@ -124,6 +127,7 @@ export default class OsmmPlugin extends Plugin {
       },
     });
     this.secrets = new Secrets(this.app);
+    this.linkCards = new LinkCardFetcher({ http: obsidianHttp, now: () => Date.now() });
     // M5: the API adapters (spec §4.2). Registered on every device; only the publisher dispatches through them.
     for (const adapter of createAdapters(this.adapterDeps())) this.adapters.register(adapter);
     this.writer = new SafeWriter(this.app);
@@ -405,6 +409,7 @@ export default class OsmmPlugin extends Plugin {
         const mime = file ? IMAGE_MIME[file.extension.toLowerCase()] : undefined;
         return file && mime ? { path: file.path, name: file.name, mime } : null;
       },
+      linkCard: (url) => this.linkCards.get(url),
     };
   }
 
@@ -528,6 +533,7 @@ export default class OsmmPlugin extends Plugin {
         composer,
         publish,
         publisher: this.publisher,
+        linkCards: this.linkCards,
       };
       actions.context = this.ui;
       publish.context = this.ui;

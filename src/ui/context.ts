@@ -5,6 +5,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import type { IndexSnapshot } from "../index/stores";
 import type { McpStatus } from "../mcp/service";
+import type { LinkCardFetcher } from "../platforms/og";
 import type { ViewState } from "../planner/viewState";
 import type { PublishActions } from "../publish/actions";
 import type { PublisherService } from "../settings/publisher";
@@ -26,6 +27,8 @@ export interface OsmmContext {
   publisher: PublisherService;
   /** The local MCP server's state (desktop); absent where there is none (phones, tests). */
   mcp?: { status: Readable<McpStatus> };
+  /** Fetched link cards for the previews (#93); absent in contexts that don't fetch (some tests). */
+  linkCards?: Pick<LinkCardFetcher, "get" | "peek">;
 }
 
 export function osmmContext(ctx: OsmmContext): Map<unknown, unknown> {
