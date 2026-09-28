@@ -93,6 +93,8 @@ export class McpHttpServer {
   private server: Server | null = null;
   private boundPort: number | null = null;
   private active = 0;
+  /** Flipped at the start of stop(); a request still being read when it flips gets no dispatch, no log. */
+  private stopped = true;
 
   constructor(private readonly deps: McpServerDeps) {}
 
@@ -102,7 +104,9 @@ export class McpHttpServer {
 
   async start(port: number): Promise<number> {
     await this.stop();
-    const server = this.deps.createServer((req, res) => void this.route(req, res));
+    this.stopped = false;
+    // Periodically drops stale/half-open connections so a reload always finds a clean socket set.
+    const server = this.deps.createServer({ connectionsCheckingInterval: 5_000 }, (req, res) => void this.route(req, res));
     server.requestTimeout = REQUEST_TIMEOUT_MS;
     server.headersTimeout = 10_000;
     await new Promise<void>((resolve, reject) => {
@@ -127,6 +131,7 @@ export class McpHttpServer {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     const server = this.server;
     this.server = null;
     this.boundPort = null;
@@ -146,13 +151,25 @@ export class McpHttpServer {
       ...headers,
     });
     res.end(payload);
-    this.deps.onRequest?.({ at: this.deps.now(), status, path: pathOf(req.url), method: req.method ?? "" });
+    // A request that outlived stop() is reported nowhere: the server that would show it in its
+    // settings/status UI is gone.
+    if (this.stopped) return;
+    try {
+      this.deps.onRequest?.({ at: this.deps.now(), status, path: pathOf(req.url), method: req.method ?? "" });
+    } catch {
+      // Caller-supplied telemetry must never crash a request that has already been answered.
+    }
   }
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       await this.serve(req, res);
     } catch {
+      // A connection the client (or stop()) already tore down has nothing left to answer. Note:
+      // `req.destroyed` is not a useful signal here — Node marks a fully-read IncomingMessage
+      // destroyed once its body stream ends, which is true for every ordinary request by the time
+      // a later error (e.g. a handler crash) is caught, not just an aborted one.
+      if (res.destroyed || res.socket?.destroyed) return;
       // Never expose a stack trace or any request detail to the caller.
       if (!res.headersSent) this.finish(req, res, 500, rpcError(null, RPC_ERRORS.internal, "Internal error."));
       else res.destroy();
@@ -179,7 +196,7 @@ export class McpHttpServer {
       return this.finish(req, res, 200, { ok: true, server: "osmm", version: this.deps.version });
     }
     if (req.method !== "POST") return this.finish(req, res, 405, undefined, { Allow: "POST" });
-    if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return this.finish(req, res, 415, { error: "Use Content-Type: application/json." });
+    if (!/^application\/json\s*(;|$)/i.test(req.headers["content-type"] ?? "")) return this.finish(req, res, 415, { error: "Use Content-Type: application/json." });
     const version = req.headers["mcp-protocol-version"];
     // Empty body on purpose: a client that speaks both MCP eras reads it as "legacy server" and sends initialize.
     if (typeof version === "string" && !isSupportedVersion(version)) return this.finish(req, res, 400);
@@ -198,6 +215,9 @@ export class McpHttpServer {
       // Batches are always refused, even though 2025-03-26 allows them (P8): the dispatcher and
       // every tool are written for exactly one message per request.
       if (Array.isArray(message)) return this.finish(req, res, 400, rpcError(null, RPC_ERRORS.invalidRequest, "Batches are not supported."));
+      // The body may finish arriving just as (or after) stop() runs; don't dispatch or log it — the
+      // server that would send the response, or record it, is already gone.
+      if (this.stopped) return;
       const response = await this.deps.handle(message);
       if (response === null) return this.finish(req, res, 202);
       return this.finish(req, res, 200, response);

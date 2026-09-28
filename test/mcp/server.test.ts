@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
 import * as http from "node:http";
-import { hostAllowed, isLoopback, MAX_BODY_BYTES, McpHttpServer, tokenMatches, type RequestInfo } from "../../src/mcp/server";
+import { hostAllowed, isLoopback, MAX_BODY_BYTES, MAX_CONCURRENT, McpHttpServer, tokenMatches, type RequestInfo } from "../../src/mcp/server";
 
 const TOKEN = "T".repeat(43);
 const servers: McpHttpServer[] = [];
@@ -133,12 +133,20 @@ describe("McpHttpServer", () => {
   it("answers 503 beyond 8 requests in flight", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const { port } = await build({ handle: async () => (await gate, { jsonrpc: "2.0", id: 1, result: {} }) });
-    const pending = Array.from({ length: 8 }, () => send(port, { headers: auth, body: ping }));
-    await new Promise((r) => setTimeout(r, 50));
+    let arrived = 0;
+    const { port } = await build({
+      handle: async () => {
+        arrived++;
+        await gate;
+        return { jsonrpc: "2.0", id: 1, result: {} };
+      },
+    });
+    const pending = Array.from({ length: MAX_CONCURRENT }, () => send(port, { headers: auth, body: ping }));
+    // Wait for all 8 to actually be inside the handler, not a fixed sleep, so this can't flake under load.
+    while (arrived < MAX_CONCURRENT) await new Promise((r) => setTimeout(r, 1));
     expect((await send(port, { headers: auth, body: ping })).status).toBe(503);
     release();
-    expect((await Promise.all(pending)).map((r) => r.status)).toEqual(Array(8).fill(200));
+    expect((await Promise.all(pending)).map((r) => r.status)).toEqual(Array(MAX_CONCURRENT).fill(200));
   });
 
   it("turns a handler crash into a JSON-RPC internal error", async () => {
@@ -170,6 +178,115 @@ describe("McpHttpServer", () => {
     const server = new McpHttpServer({ createServer: http.createServer, token: () => TOKEN, handle: async () => null, version: "0", now: () => 0 });
     await expect(server.start(port)).rejects.toThrow(`Port ${port} is already in use`);
     expect(server.port).toBeNull();
+  });
+
+  it("configures periodic stale-connection checking on the underlying http.Server", async () => {
+    const calls: unknown[] = [];
+    const wrapped = ((...args: Parameters<typeof http.createServer>) => {
+      calls.push(args[0]);
+      return http.createServer(...(args as Parameters<typeof http.createServer>));
+    }) as typeof http.createServer;
+    const server = new McpHttpServer({ createServer: wrapped, token: () => TOKEN, handle: async () => null, version: "0", now: () => 0 });
+    const port = await server.start(0);
+    servers.push(server);
+    expect(calls).toEqual([{ connectionsCheckingInterval: 5_000 }]);
+    expect((await send(port, { headers: auth, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) })).status).toBe(202);
+  });
+
+  it("releases its concurrency slot when a mid-body request is aborted", async () => {
+    const { port } = await build();
+    await new Promise<void>((resolve) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/mcp",
+        headers: { Host: `127.0.0.1:${port}`, ...auth, "Transfer-Encoding": "chunked" },
+      });
+      req.on("error", () => undefined);
+      req.write("partial-body-never-finished");
+      setTimeout(() => {
+        req.destroy();
+        setTimeout(resolve, 20);
+      }, 20);
+    });
+    const results = await Promise.all(Array.from({ length: MAX_CONCURRENT }, () => send(port, { headers: auth, body: ping })));
+    expect(results.map((r) => r.status)).toEqual(Array(MAX_CONCURRENT).fill(200));
+  });
+
+  it("gives no handle call and no onRequest entry to a request still in flight when stop() is called", async () => {
+    let handleCalls = 0;
+    const { server, port, requests } = await build({
+      handle: async () => {
+        handleCalls++;
+        return { jsonrpc: "2.0", id: 1, result: {} };
+      },
+    });
+    await new Promise<void>((resolve) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/mcp",
+        headers: { Host: `127.0.0.1:${port}`, ...auth, "Transfer-Encoding": "chunked" },
+      });
+      req.on("error", () => undefined);
+      req.write("partial-body-never-finished");
+      setTimeout(resolve, 20);
+    });
+    await server.stop();
+    expect(handleCalls).toBe(0);
+    expect(requests).toEqual([]);
+  });
+
+  it("refuses Origin: null and an empty Origin, same as any other Origin", async () => {
+    const { port } = await build();
+    expect((await send(port, { headers: { ...auth, Origin: "null" }, body: ping })).status).toBe(403);
+    expect((await send(port, { headers: { ...auth, Origin: "" }, body: ping })).status).toBe(403);
+  });
+
+  it("refuses a token of a different length at the HTTP level", async () => {
+    const { port } = await build();
+    expect((await send(port, { headers: { ...auth, Authorization: `Bearer ${"X".repeat(10)}` }, body: ping })).status).toBe(401);
+    expect((await send(port, { headers: { ...auth, Authorization: `Bearer ${"X".repeat(200)}` }, body: ping })).status).toBe(401);
+  });
+
+  it("tightens the Content-Type check to application/json optionally followed by parameters", async () => {
+    const { port } = await build();
+    expect((await send(port, { headers: { ...auth, "Content-Type": "APPLICATION/JSON" }, body: ping })).status).toBe(200);
+    expect((await send(port, { headers: { ...auth, "Content-Type": "application/json; charset=utf-8" }, body: ping })).status).toBe(200);
+    // A real bug in the old `\b`-based regex: "-" is a non-word character, so `application/json\b` matched
+    // this even though it names a different media type entirely.
+    expect((await send(port, { headers: { ...auth, "Content-Type": "application/json-patch+json" }, body: ping })).status).toBe(415);
+    expect((await send(port, { headers: { ...auth, "Content-Type": "application/jsonxyz" }, body: ping })).status).toBe(415);
+  });
+
+  it("closes an idle keep-alive socket on stop()", async () => {
+    const { server, port } = await build();
+    const agent = new http.Agent({ keepAlive: true });
+    let socket: import("node:net").Socket | undefined;
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port, method: "POST", path: "/mcp", headers: { Host: `127.0.0.1:${port}`, ...auth }, agent },
+        (res) => {
+          res.on("data", () => undefined);
+          res.on("end", () => resolve());
+        },
+      );
+      req.on("socket", (s) => (socket = s));
+      req.on("error", reject);
+      req.end(ping);
+    });
+    // Let the socket settle into the agent's free pool before we stop the server.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(socket?.destroyed).toBe(false);
+    // The client-side socket learns of the close over the (loopback) network, which is never
+    // synchronous with the server's own stop(): wait for the real "close" event, not a poll.
+    const closed = new Promise<void>((resolve) => socket?.once("close", resolve));
+    await server.stop();
+    await closed;
+    expect(socket?.destroyed).toBe(true);
+    agent.destroy();
   });
 });
 
