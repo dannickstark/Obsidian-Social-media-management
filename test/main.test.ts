@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
 import type { PublishDeps } from "../src/publish/actions";
-import { App, Modal, Notice, requestUrlMock, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
+import { App, Modal, Notice, requestUrlMock, setPlatform, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin, { LINK_READY_TIMEOUT_MS } from "../src/main";
 import { formatDateTime } from "../src/model/dates";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
+import { freePort, portIsFree } from "./mcp/net";
 import { NTFY } from "./reminders/ntfy/fixtures";
 import { WITHDRAW_WAIT_MS } from "../src/reminders/ntfy/booker";
 
@@ -806,5 +808,36 @@ describe("phone reminder links (#70)", () => {
     expect(Modal.opened).toEqual([]);
     expect(Notice.messages).toEqual(["Social Planner is still starting. Tap the reminder again in a moment."]);
     plugin.unload();
+  });
+});
+
+describe("Claude Code server (#73)", () => {
+  it("stays off by default on a desktop", async () => {
+    const { plugin } = await loaded();
+    expect(plugin.device.mcp).toEqual({ enabled: false, port: 27150 });
+    expect(get(plugin.mcp.status)).toEqual({ state: "off" });
+    plugin.unload();
+  });
+
+  it("is unavailable on phones and the plugin still loads", async () => {
+    setPlatform("iphone");
+    const { plugin } = await loaded();
+    await plugin.mcp.apply();
+    expect(get(plugin.mcp.status)).toEqual({ state: "unavailable" });
+    plugin.unload();
+  });
+
+  it("starts at load when it was on, and releases the port on unload (review focus 4)", async () => {
+    const port = await freePort();
+    const app = new App();
+    app.saveLocalStorage("osmm-device", { mcp: { enabled: true, port } });
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await settle();
+    await plugin.mcp.apply();
+    expect(get(plugin.mcp.status)).toEqual({ state: "on", port });
+    plugin.unload();
+    await plugin.mcp.apply();
+    expect(await portIsFree(port)).toBe(true);
   });
 });

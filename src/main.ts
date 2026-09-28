@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
@@ -8,6 +8,9 @@ import { ComposerView } from "./composer/ComposerView";
 import { overdueRows } from "./index/queries";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
+import { McpDispatcher } from "./mcp/protocol";
+import { McpService } from "./mcp/service";
+import { ToolRegistry } from "./mcp/tools";
 import { NoteFactory } from "./model/factory";
 import { SafeWriter } from "./model/writer";
 import { AdapterRegistry } from "./platforms/registry";
@@ -71,6 +74,9 @@ export default class OsmmPlugin extends Plugin {
   phone!: NtfyBooker;
   readonly adapters = new AdapterRegistry();
   log!: VaultLog;
+  /** MCP tools for Claude Code (spec §6.1); the server exposes them only on a desktop, when switched on. */
+  tools!: ToolRegistry;
+  mcp!: McpService;
   private unloaded = false;
   /** Set once the startup reconcile has run; later role changes run their own (M3 P2). */
   private started = false;
@@ -228,6 +234,20 @@ export default class OsmmPlugin extends Plugin {
       warn: (message) => new Notice(message, 0),
     });
     this.register(() => this.scheduler.stop());
+    this.tools = new ToolRegistry({
+      redact: (text) => this.secrets.redact(text, allSecretIds(this.channels.list())),
+      onCall: (name, ok) => this.mcp.record(ok ? name : `${name} (refused)`),
+    });
+    const dispatcher = new McpDispatcher({ tools: this.tools, version: this.manifest.version });
+    this.mcp = new McpService({
+      desktop: () => Platform.isDesktopApp,
+      settings: () => this.device.mcp,
+      secrets: this.secrets,
+      handle: (message) => dispatcher.handle(message),
+      version: this.manifest.version,
+      now: () => Date.now(),
+    });
+    this.register(() => void this.mcp.dispose());
     // A device that becomes the publisher after start-up runs the startup check it skipped (spec §5.1, M3 P2).
     let wasPublisher = this.publisher.isPublisher();
     this.register(
@@ -280,6 +300,8 @@ export default class OsmmPlugin extends Plugin {
       }
       this.scheduler.start();
       this.markReady();
+      // After the startup check, so tools see the built index and the settled publisher role.
+      void this.mcp.apply();
       void this.scheduler.tick();
     });
 

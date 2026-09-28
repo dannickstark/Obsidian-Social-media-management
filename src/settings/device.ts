@@ -11,6 +11,25 @@ export interface NtfyDeviceSettings {
   results: boolean;
 }
 
+/** The local MCP server for Claude Code on this device (#73, #78). Its token lives in secret storage, never here. */
+export interface McpDeviceSettings {
+  enabled: boolean;
+  port: number;
+}
+
+export const DEFAULT_MCP_PORT = 27150;
+
+/** A TCP port the user may pick: an integer from 1024 to 65535 (no privileged ports). */
+export function parsePort(value: unknown): number | null {
+  const n = typeof value === "string" && value.trim() ? Number(value.trim()) : value;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null;
+}
+
+function sanitizeMcp(raw: unknown): McpDeviceSettings {
+  const r: Record<string, unknown> = isRecord(raw) ? raw : {};
+  return { enabled: r.enabled === true, port: parsePort(r.port) ?? DEFAULT_MCP_PORT };
+}
+
 /** Settings that must never sync between devices (stored in vault-scoped localStorage). */
 export interface DeviceSettings {
   deviceId: string;
@@ -19,6 +38,7 @@ export interface DeviceSettings {
   /** Desktop notifications on this device (spec §4.3: each device fires its own if enabled). */
   notifications: boolean;
   ntfy: NtfyDeviceSettings;
+  mcp: McpDeviceSettings;
 }
 
 const KEY = "osmm-device";
@@ -51,6 +71,7 @@ function sanitize(raw: Record<string, unknown>, deviceId: string): DeviceSetting
     deviceName: cleanDeviceName(raw.deviceName) ?? defaultDeviceName(),
     notifications: raw.notifications !== false,
     ntfy: sanitizeNtfy(raw.ntfy),
+    mcp: sanitizeMcp(raw.mcp),
   };
 }
 
