@@ -18,6 +18,8 @@
   data-style={style}
   aria-label={label}
   title={label}
+  draggable={!["published", "publishing", "skipped"].includes(row.status)}
+  ondragstart={(e) => actions.dragStart(e, row)}
   onclick={(e) => actions.openNote(row.variant.path, e.metaKey || e.ctrlKey)}
   onmouseenter={(e) => actions.hoverPreview(e, row.variant.path)}>
   <PlatformBadge platform={row.variant.platform} />

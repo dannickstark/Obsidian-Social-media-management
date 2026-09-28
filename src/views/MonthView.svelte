@@ -8,6 +8,7 @@
   let { year, month, rows }: { year: number; month: number; rows: PostRow[] } = $props();
   const { settings, now, snapshot, actions } = useOsmm();
   const MAX = 4;
+  let dropKey = $state<string | null>(null);
 
   const weeks = $derived(monthGrid(year, month, $settings.weekStartsOn, $now));
   const byDay = $derived(groupByDay(rows));
@@ -28,7 +29,17 @@
     <div class="osmm-month-row" role="row">
       {#each week as cell (cell.key)}
         {@const list = byDay.get(cell.key) ?? []}
-        <div role="gridcell" class="osmm-day" class:is-muted={!cell.inMonth} class:is-today={cell.isToday} data-day={cell.key}>
+        <div
+          role="gridcell"
+          class="osmm-day"
+          class:is-muted={!cell.inMonth}
+          class:is-today={cell.isToday}
+          class:is-drop={dropKey === cell.key}
+          data-day={cell.key}
+          tabindex="-1"
+          ondragover={(e) => { e.preventDefault(); dropKey = cell.key; }}
+          ondragleave={() => (dropKey = null)}
+          ondrop={(e) => { dropKey = null; actions.dropOnDay(e, cell.date); }}>
           <div class="osmm-day-head">
             <span class="osmm-day-num">{cell.day}</span>
             {#each anchors.get(cell.key) ?? [] as c (c.path)}<span class="osmm-anchor" title={c.title}>{c.title}</span>{/each}

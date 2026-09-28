@@ -5,7 +5,7 @@
   import Chip from "./Chip.svelte";
 
   let { anchor, rows }: { anchor: number; rows: PostRow[] } = $props();
-  const { settings, now } = useOsmm();
+  const { settings, now, actions } = useOsmm();
   const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
   const cells = $derived(weekCells(anchor, $settings.weekStartsOn, $now));
@@ -29,7 +29,14 @@
       {#each HOURS as h (h)}<span class="osmm-hour" style:top="{h * 60 * PX_PER_MINUTE}px">{String(h).padStart(2, "0")}:00</span>{/each}
     </div>
     {#each cells as c (c.key)}
-      <div class="osmm-week-col" role="gridcell" data-day={c.key} style:height="{24 * 60 * PX_PER_MINUTE}px">
+      <div
+        class="osmm-week-col"
+        role="gridcell"
+        data-day={c.key}
+        style:height="{24 * 60 * PX_PER_MINUTE}px"
+        tabindex="-1"
+        ondragover={(e) => e.preventDefault()}
+        ondrop={(e) => actions.dropOnSlot(e, c.date, Math.round(e.offsetY / PX_PER_MINUTE / 15) * 15)}>
         {#if c.isToday}<div class="osmm-now-line" style:top="{minutesOfDay($now) * PX_PER_MINUTE}px"></div>{/if}
         {#each layoutDay(byDay.get(c.key) ?? []) as p (p.row.key)}
           <div

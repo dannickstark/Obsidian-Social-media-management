@@ -5,6 +5,7 @@ import type { SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
 import { PLATFORM_META } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
+import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
 import type { OsmmSettings } from "../settings/settings";
 import { confirmDialog } from "./dialogs";
@@ -12,6 +13,7 @@ import { formatShortDate, formatTime } from "./format";
 
 export const VIEW_PLANNER = "osmm-planner";
 export const VIEW_SIDEBAR = "osmm-sidebar";
+export const ROW_MIME = "text/x-osmm-row";
 
 export interface ActionDeps {
   app: App;
@@ -89,5 +91,50 @@ export class PlannerActions {
       void undo();
       notice.hide();
     });
+  }
+
+  async reschedule(row: PostRow, target: RescheduleTarget): Promise<boolean> {
+    const channel = row.channelId ? this.deps.channels.get(row.channelId) : undefined;
+    const plan = planReschedule(row, target, channel?.defaultTime ?? "09:00");
+    if (!plan.ok) {
+      new Notice(plan.reason);
+      return false;
+    }
+    if (plan.needsConfirm) {
+      const go = await this.confirm(
+        "This post was already handed over to the platform. Moving it here won't change it on the platform until you push an update. Move anyway?",
+        "Move",
+      );
+      if (!go) return false;
+    }
+    const file = row.variant.file;
+    await this.deps.writer.patchVariant(file, plan.patch);
+    this.undoNotice(`Moved to ${formatShortDate(plan.newAt)} ${formatTime(plan.newAt)}.`, () =>
+      this.deps.writer.patchVariant(file, plan.previous),
+    );
+    return true;
+  }
+
+  dragStart(event: DragEvent, row: PostRow): void {
+    event.dataTransfer?.setData(ROW_MIME, row.key);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+
+  private dropped(event: DragEvent): PostRow | undefined {
+    event.preventDefault();
+    const key = event.dataTransfer?.getData(ROW_MIME);
+    return key ? this.rowByKey(key) : undefined;
+  }
+
+  dropOnDay(event: DragEvent, day: number): void {
+    const row = this.dropped(event);
+    if (row) void this.reschedule(row, { day });
+  }
+
+  dropOnSlot(event: DragEvent, day: number, minutes: number): void {
+    const row = this.dropped(event);
+    if (!row) return;
+    const d = new Date(day);
+    void this.reschedule(row, { at: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, minutes).getTime() });
   }
 }
