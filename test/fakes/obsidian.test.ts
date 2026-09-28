@@ -20,6 +20,21 @@ describe("obsidian fake", () => {
     expect(seen).toEqual(["Social/Event X/Event X.md"]);
   });
 
+  it("fileToLinktext gives the name when unique and the path when ambiguous", async () => {
+    const app = createApp();
+    const a = await writeNote(app, "A/note.md", null, "");
+    const b = await writeNote(app, "B/note.md", null, "");
+    const u = await writeNote(app, "B/unique.md", null, "");
+    expect(app.metadataCache.fileToLinktext(u, "x.md", true)).toBe("unique");
+    expect(app.metadataCache.fileToLinktext(a, "x.md", true)).toBe("note");
+    expect(app.metadataCache.fileToLinktext(b, "x.md", true)).toBe("B/note");
+    await app.vault.createFolder("C");
+    const img = await app.vault.createBinary("C/pic.png", new ArrayBuffer(1));
+    const img2 = await app.vault.createBinary("pic.png", new ArrayBuffer(1));
+    expect(app.metadataCache.fileToLinktext(img2, "x.md", true)).toBe("pic.png");
+    expect(app.metadataCache.fileToLinktext(img, "x.md", true)).toBe("C/pic.png");
+  });
+
   it("refuses to create a file in a missing folder", async () => {
     await expect(createApp().vault.create("Nope/a.md", "")).rejects.toThrow(/does not exist/);
   });

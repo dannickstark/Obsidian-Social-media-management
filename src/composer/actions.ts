@@ -189,7 +189,7 @@ export class ComposerActions {
       }
       const path = await this.deps.app.fileManager.getAvailablePathForAttachment(f.name, v.path);
       const created = await this.deps.app.vault.createBinary(path, await readFile(f));
-      added.push(created.name);
+      added.push(this.deps.app.metadataCache.fileToLinktext(created, v.path, true));
     }
     if (!added.length) return 0;
     const result = await this.deps.planner.write(v.file, (fresh) => ({

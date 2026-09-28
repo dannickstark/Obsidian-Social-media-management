@@ -265,6 +265,14 @@ export class MetadataCache extends Events {
     return this.app.vault.getFiles().find((f) => f.name === base) ?? null;
   }
 
+  /** The shortest link that resolves to `file`: the name when unambiguous, otherwise the vault path. */
+  fileToLinktext(file: TFile, sourcePath: string, omitMdExtension = true): string {
+    const md = file.extension === "md" && omitMdExtension;
+    const short = md ? file.basename : file.name;
+    if (this.getFirstLinkpathDest(short, sourcePath) === file) return short;
+    return md ? file.path.slice(0, -3) : file.path;
+  }
+
   fileChanged(file: TFile, content: string): void {
     const info = getFrontMatterInfo(content);
     let frontmatter: Record<string, any> | undefined;

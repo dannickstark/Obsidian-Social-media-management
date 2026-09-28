@@ -38,6 +38,19 @@ describe("media attach", () => {
     expect(c.index.getVariant(IG)!.media).toEqual(["event-x-cover.png", "crowd.png", "crowd 1.png"]);
   });
 
+  it("stores a link that resolves to the new file when another file has the same name", async () => {
+    const c = await makeCtx({ seed: true });
+    await c.app.vault.createFolder("Other");
+    const other = await c.app.vault.createBinary("Other/cover.png", png(10, 10));
+    await attach(c, image("cover.png"));
+    const created = c.app.vault.getFileByPath("Social/Event X/cover.png")!;
+    expect(created).not.toBeNull();
+    await indexed(c.index, () => c.index.getVariant(IG)!.media.length === 2);
+    const link = c.index.getVariant(IG)!.media[1]!;
+    expect(c.app.metadataCache.getFirstLinkpathDest(link, IG)).toBe(created);
+    expect(c.app.metadataCache.getFirstLinkpathDest(link, IG)).not.toBe(other);
+  });
+
   it("refuses other files and flags videos as unsupported", async () => {
     const c = await makeCtx({ seed: true });
     expect(await c.ctx.composer.attachFiles(c.index.getVariant(IG)!, [new File(["x"], "doc.pdf")])).toBe(0);
