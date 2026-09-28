@@ -1,5 +1,6 @@
 import { Notice, type App, type WorkspaceLeaf } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
+import { heldForReview, nothingPending } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
 import type { Channel, ChannelGroup, Delivery, Issue, MediaMeta, PostMode, Variant } from "../model/types";
@@ -296,7 +297,8 @@ export class ComposerActions {
       const plan = planComposerSchedule(fresh, req, stagger);
       if ("refuse" in plan) return plan;
       frozen = plan.frozen ?? [];
-      return { fields: plan.fields, deliveries: deliveryChanges(fresh, plan.deliveries as Record<string, Delivery>) };
+      // Fix round 1 (I3): the user is looking at the note, so scheduling it here also releases the hold.
+      return { fields: { ...plan.fields, review: undefined }, deliveries: deliveryChanges(fresh, plan.deliveries as Record<string, Delivery>) };
     });
     const suffix = frozen.length
       ? ` ${frozen.length} channel${frozen.length === 1 ? "" : "s"} skipped: an unreadable delivery entry.`
@@ -317,6 +319,16 @@ export class ComposerActions {
       new Notice(`Fix these first: ${errors.map((i) => i.message).join(" ")}`);
       return false;
     }
+    // Fix round 1 (m1): a note that was already posted (e.g. through the composer's own Post now) has
+    // nothing left to schedule; approving it just releases the hold, and the Notice never claims otherwise.
+    if (nothingPending(v)) {
+      const result = await this.deps.planner.write(v.file, (fresh) => {
+        if (!heldForReview(fresh)) return { refuse: "This post is no longer waiting for review." };
+        return { fields: { review: undefined } };
+      });
+      this.deps.planner.afterWrite(result, "Already posted; released for review.");
+      return result.ok;
+    }
     const at = v.scheduledAt;
     if (at === undefined) {
       new Notice("Set a time in the composer first.");
@@ -329,7 +341,7 @@ export class ComposerActions {
     const reminders = reminderDefaults(v, this.channelsOf(v), this.deps.settings());
     const stagger = this.deps.settings().defaultStaggerMinutes;
     const result = await this.deps.planner.write(v.file, (fresh) => {
-      if (fresh.review !== "claude") return { refuse: "This post was already reviewed." };
+      if (!heldForReview(fresh)) return { refuse: "This post was already reviewed." };
       if (fresh.scheduledAt !== at) return { refuse: "The proposed time changed. Check the post again." };
       const plan = planComposerSchedule(fresh, { at, reminders }, stagger);
       if ("refuse" in plan) return plan;
@@ -339,14 +351,20 @@ export class ComposerActions {
     return result.ok;
   }
 
-  /** "Keep as draft": no longer held, and nothing of it stays scheduled. */
+  /** "Keep as draft" (shown as "Dismiss" when nothing is pending): no longer held, nothing left scheduled. */
   async keepClaudeDraft(v: IndexedVariant): Promise<boolean> {
+    let dismissed = false;
     const result = await this.deps.planner.write(v.file, (fresh) => {
-      if (fresh.review !== "claude") return { refuse: "This post was already reviewed." };
+      if (!heldForReview(fresh)) return { refuse: "This post is no longer waiting for review." };
+      // Fix round 1 (m1): every channel is already resolved (published/skipped) — nothing to unschedule.
+      if (nothingPending(fresh)) {
+        dismissed = true;
+        return { fields: { review: undefined } };
+      }
       if (unscheduleBlocked(fresh)) return { refuse: UNSCHEDULE_BLOCKED };
       return { fields: { review: undefined, status: "draft" }, deliveries: deliveryChanges(fresh, unscheduleDeliveries(fresh, "draft")) };
     });
-    this.deps.planner.afterWrite(result, "Kept as a draft.");
+    this.deps.planner.afterWrite(result, dismissed ? "Dismissed." : "Kept as a draft.");
     return result.ok;
   }
 

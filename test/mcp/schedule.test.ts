@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
+import { Notice } from "../fakes/obsidian";
 import { expandRows, rowsBetween } from "../../src/index/queries";
 import { formatDateTime, MINUTE } from "../../src/model/dates";
 import { mcpCtx, type R } from "./helpers";
@@ -34,6 +35,13 @@ describe("schedule (#75)", () => {
     expect((await c.call("get_post", { path: "Social/Posts/Offline.md" })).review).toBe("claude");
     expect((await c.call("schedule", { path: "Social/Posts/Offline.md", at: FRI_9 })).ok).toBe(true);
     expect((await fm(c, "Social/Posts/Offline.md")).review).toBeUndefined();
+    expect(Notice.messages.at(-1)).toContain("released for review");
+  });
+
+  it("mentions releasing a held note in the tool description (#84 fix round 1, m7)", async () => {
+    const c = await mcpCtx();
+    const tool = c.registry.list().find((t) => t.name === "schedule")!;
+    expect(tool.description).toContain("releases it from review");
   });
 
   it("is idempotent: scheduling again at the same time changes nothing (review focus 2)", async () => {

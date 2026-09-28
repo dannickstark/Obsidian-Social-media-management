@@ -236,8 +236,12 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
   if (invalidDeliveries.length) variant.invalidDeliveries = invalidDeliveries;
 
   if (!isBlank(fm.review)) {
-    if (fm.review === "claude") variant.review = "claude";
-    else issues.push({ level: "warning", field: "review", message: 'review can only be "claude" (set by the /social skill on notes written while Obsidian was closed).' });
+    // Fix round 1 (I1): fail-closed — any non-blank value holds the note, whatever it is; only exactly
+    // "claude" is canonical, so anything else also gets a warning.
+    variant.review = typeof fm.review === "string" ? fm.review : JSON.stringify(fm.review);
+    if (variant.review !== "claude") {
+      issues.push({ level: "warning", field: "review", message: 'review can only be "claude" (set by the /social skill on notes written while Obsidian was closed).' });
+    }
   }
 
   if (platform === "wordpress") {

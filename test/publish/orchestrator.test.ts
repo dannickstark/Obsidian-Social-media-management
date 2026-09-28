@@ -91,6 +91,15 @@ describe("PublishOrchestrator", () => {
     });
   });
 
+  it("refuses to claim a note held for review (#84 fix round 1, m2)", async () => {
+    const publish = vi.fn();
+    const { orchestrator } = await setup(publish, {
+      notes: [{ ...note(), frontmatter: { ...note().frontmatter, review: "claude" } } as ReturnType<typeof note>],
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "refused", reason: "Approve it first in Written by Claude." });
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("retries transient errors after 1 and 5 minutes", async () => {
     let calls = 0;
     const { c, orchestrator, delays } = await setup(async () => {

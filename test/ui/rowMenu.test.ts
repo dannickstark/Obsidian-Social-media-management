@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { Menu } from "../fakes/obsidian";
+import { Menu, Notice } from "../fakes/obsidian";
 import { osmmContext } from "../../src/ui/context";
 import BoardView from "../../src/views/BoardView.svelte";
 import Chip from "../../src/views/Chip.svelte";
@@ -140,5 +140,36 @@ describe("board card menu on a multi-channel card (final review Minor 11)", () =
     click("Skip");
     await indexed(index, () => index.getVariant(LI)?.deliveries["li/maker-lab"]?.status === "skipped" && index.getVariant(LI)?.deliveries["li/acme-studio"]?.status === "skipped");
     expect(index.getVariant(LI)!.deliveries["li/me"]?.status).toBe("published");
+  });
+});
+
+describe("a note Claude wrote while Obsidian was closed (#84 fix round 1, I2/I3)", () => {
+  const P = "Social/Event X/Event X – Mastodon.md";
+  const offline = (over: Record<string, unknown> = {}) => ({
+    path: P,
+    frontmatter: { type: "social-post", campaign: "[[Event X]]", platform: "mastodon", channels: ["ma/you"], status: "ready", review: "claude", scheduled_at: "2026-10-09T10:00:00+02:00", ...over },
+    body: "Event X is back on the 12th.",
+  });
+
+  it("offers Review… instead of Post now (or Skip), and opens the composer", async () => {
+    const { ctx, index } = await makeCtx({ seed: true, notes: [offline()] });
+    const openComposer = vi.spyOn(ctx.composer, "openComposer").mockResolvedValue();
+    ctx.actions.cardMenu(index.getVariant(P)!, { x: 0, y: 0 });
+    const list = titles();
+    expect(list).toContain("Review…");
+    expect(list).not.toContain("Post now");
+    expect(list).not.toContain("Skip");
+    click("Review…");
+    expect(openComposer).toHaveBeenCalledWith(P);
+  });
+
+  it("refuses Reschedule…, Move to … and drag with the same Notice", async () => {
+    const { ctx, index } = await makeCtx({ seed: true, notes: [offline()] });
+    const row = ctx.actions.rowByKey(`${P}#ma/you`)!;
+    expect(await ctx.actions.reschedule(row, { at: Date.now() + 3_600_000 })).toBe(false);
+    expect(Notice.messages.at(-1)).toBe("Approve it first in Written by Claude.");
+    await ctx.actions.moveOnBoard(index.getVariant(P)!, "draft");
+    expect(Notice.messages.at(-1)).toBe("Approve it first in Written by Claude.");
+    expect(index.getVariant(P)!.status).toBe("ready");
   });
 });

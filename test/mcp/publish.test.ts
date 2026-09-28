@@ -256,7 +256,7 @@ describe("publish_now (#77)", () => {
     allow(c, "tg/event-x");
     const r = await c.call("publish_now", { path: TG });
     expect(r.error).toBe(
-      "Claude wrote this note while Obsidian was closed. The user approves it first in Obsidian (sidebar, Written by Claude); after that, schedule or publish it.",
+      "Claude wrote this note while Obsidian was closed. It is released once the user agrees in this conversation and Claude schedules it, or once they approve it in Obsidian (sidebar, Written by Claude).",
     );
     expect(asked).toEqual([]);
     expect(publish).not.toHaveBeenCalled();

@@ -37,6 +37,54 @@ describe("notes written by Claude with Obsidian closed (#84)", () => {
     expect(after.status).toBe("scheduled");
     expect(after.deliveries).toEqual({ "ma/you": { status: "scheduled" } });
     expect(Notice.messages.at(-1)).toContain("Approved and scheduled");
+    // Fix round 1 (m6): actually run Undo, not just check the Notice.
+    Notice.last!.noticeEl.querySelector("button")!.click();
+    await indexed(c.index, () => c.index.getVariant(P)?.review === "claude");
+    expect((await fm(c)).review).toBe("claude");
+    expect((await fm(c)).status).toBe("ready");
+  });
+
+  it("hold on any non-blank review value, even in dueItems (#84 fix round 1, I1)", async () => {
+    for (const val of ["Claude", "claude ", "yes", true, ["claude"]]) {
+      const c = await makeCtx({
+        seed: true,
+        notes: [offline({ review: val, status: "scheduled", scheduled_at: "2026-10-08T09:59:00+02:00", deliveries: { "ma/you": { status: "scheduled" } } })],
+      });
+      expect(dueItems(c.index.variants(), TEST_NOW, 15).map((i) => i.path)).not.toContain(P);
+    }
+  });
+
+  it("releases review when the user schedules it from the composer (#84 fix round 1, I3)", async () => {
+    const c = await makeCtx({ seed: true, notes: [offline()] });
+    const v = c.index.getVariant(P)!;
+    const at = Date.parse("2026-10-09T12:00:00+02:00");
+    expect(await c.ctx.composer.schedule(v, { at, reminders: [] }, [])).toBe(true);
+    await indexed(c.index, () => c.index.getVariant(P)?.review === undefined);
+    expect((await fm(c)).review).toBeUndefined();
+    expect(dueItems(c.index.variants(), at + 1000, 15).some((i) => i.path === P)).toBe(true);
+  });
+
+  it("releases review from an already-posted note without claiming anything was scheduled (#84 fix round 1, m1)", async () => {
+    const already = { status: "published", deliveries: { "ma/you": { status: "published", at: "2026-10-08T09:00:00+02:00", url: "https://mastodon.social/@you/1" } } };
+    for (const over of [{}, { scheduled_at: undefined }]) {
+      const c = await makeCtx({ seed: true, notes: [offline({ ...already, ...over })] });
+      expect(await c.ctx.composer.approveClaudeDraft(c.index.getVariant(P)!)).toBe(true);
+      expect(Notice.messages.at(-1)).not.toContain("scheduled");
+      await indexed(c.index, () => c.index.getVariant(P)?.review === undefined);
+      expect((await fm(c)).review).toBeUndefined();
+      expect((await fm(c)).status).toBe("published");
+    }
+  });
+
+  it("keep (dismiss) also releases review when nothing is pending (#84 fix round 1, m1)", async () => {
+    const c = await makeCtx({
+      seed: true,
+      notes: [offline({ scheduled_at: undefined, status: "published", deliveries: { "ma/you": { status: "published", at: "2026-10-08T09:00:00+02:00", url: "https://mastodon.social/@you/1" } } })],
+    });
+    expect(await c.ctx.composer.keepClaudeDraft(c.index.getVariant(P)!)).toBe(true);
+    const after = await fm(c);
+    expect(after.review).toBeUndefined();
+    expect(after.status).toBe("published");
   });
 
   it("are not approved with blocking issues or a past time", async () => {

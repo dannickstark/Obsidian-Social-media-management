@@ -5,7 +5,7 @@ import { ChannelRegistry } from "./channels/registry";
 import { registerCommands } from "./commands";
 import { ComposerActions } from "./composer/actions";
 import { ComposerView } from "./composer/ComposerView";
-import { overdueRows } from "./index/queries";
+import { HELD_REFUSAL, heldForReview, overdueRows } from "./index/queries";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
 import { ApprovalGate } from "./mcp/approval";
@@ -325,7 +325,7 @@ export default class OsmmPlugin extends Plugin {
       }
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
-      const held = this.index.variants().filter((v) => v.review === "claude").length;
+      const held = this.index.variants().filter((v) => heldForReview(v)).length;
       if (held) {
         const message = `${held} post${held === 1 ? "" : "s"} written by Claude need${held === 1 ? "s" : ""} your review.`;
         ui.actions.actionNotice(message, "Review", () => activateView(this.app, VIEW_SIDEBAR, "right"));
@@ -402,6 +402,11 @@ export default class OsmmPlugin extends Plugin {
     const v = this.index.getVariant(path);
     if (!v) {
       new Notice("That post is no longer in this vault.");
+      return;
+    }
+    // Fix round 1 (m3): a note Claude wrote while Obsidian was closed is held from a phone reminder too.
+    if (heldForReview(v)) {
+      new Notice(HELD_REFUSAL);
       return;
     }
     const name = this.channels.get(channel)?.name ?? channel;

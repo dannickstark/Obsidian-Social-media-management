@@ -1,6 +1,6 @@
 import { Menu, Notice, type App, type TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
-import { expandRows, type PostRow, type RowStatus } from "../index/queries";
+import { expandRows, HELD_REFUSAL, heldForReview, type PostRow, type RowStatus } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
@@ -155,6 +155,11 @@ export class PlannerActions {
   }
 
   async reschedule(row: PostRow, target: RescheduleTarget): Promise<boolean> {
+    // Fix round 1 (I3): Reschedule… and drag both call this; a held note refuses instead of moving silently.
+    if (heldForReview(row.variant)) {
+      new Notice(HELD_REFUSAL);
+      return false;
+    }
     const channel = row.channelId ? this.deps.channels.get(row.channelId) : undefined;
     const plan = planReschedule(row, target, channel?.defaultTime ?? "09:00", this.deps.settings().defaultStaggerMinutes);
     if (!plan.ok) {
@@ -263,12 +268,17 @@ export class PlannerActions {
    */
   rowMenu(row: PostRow, at: MouseEvent | { x: number; y: number }, group: readonly PostRow[] = [row]): Menu {
     const v = row.variant;
+    // Fix round 1 (I2): a note Claude wrote while Obsidian was closed gets no Post now (or Skip) from this
+    // menu; "Review…" opens the composer instead, same as everywhere else the user reviews it.
+    const held = heldForReview(v);
     const menu = new Menu();
-    const postable = group.filter((r) => r.channelId !== null && POSTABLE.has(r.status));
+    const postable = held ? [] : group.filter((r) => r.channelId !== null && POSTABLE.has(r.status));
     const postableIds = postable.map((r) => r.channelId!);
     menu.addItem((i) => i.setTitle("Open note").setIcon("file-text").onClick(() => this.openNote(v.path)));
     menu.addItem((i) => i.setTitle("Compose").setIcon("pencil-line").onClick(() => void this.context?.composer.openComposer(v.path)));
-    if (postable.length) {
+    if (held) {
+      menu.addItem((i) => i.setTitle("Review…").setIcon("eye").onClick(() => void this.context?.composer.openComposer(v.path)));
+    } else if (postable.length) {
       menu.addItem((i) => i.setTitle("Post now").setIcon("send").onClick(() => void this.context?.publish.postNow(v.path, postableIds)));
     }
     const current = columnOf(v.status);
@@ -376,6 +386,11 @@ export class PlannerActions {
   }
 
   async moveOnBoard(v: IndexedVariant, to: BoardColumn): Promise<void> {
+    // Fix round 1 (I3): "Move to Scheduled…" (and any other column) refuses on a held note.
+    if (heldForReview(v)) {
+      new Notice(HELD_REFUSAL);
+      return;
+    }
     const plan = planBoardMove(v, to);
     if (!plan.ok) {
       new Notice(plan.reason);

@@ -1,6 +1,7 @@
 import type { TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ContentLoader, LoadedContent } from "../composer/content";
+import { HELD_REFUSAL, heldForReview } from "../index/queries";
 import type { SocialIndex } from "../index/socialIndex";
 import { MINUTE } from "../model/dates";
 import { PLATFORM_META, type Platform } from "../model/platforms";
@@ -323,6 +324,9 @@ export class PublishOrchestrator {
     const { file, channelId } = p;
     const box: { variant?: Variant; delivery?: Delivery; changed?: true } = {};
     const result = await this.deps.writer.updateVariant(file, (fresh) => {
+      // Fix round 1 (m2): a note still held for review (e.g. review was set again since) is never claimed;
+      // covers a retry of a note that became held again, on top of the upstream guards (dueItems, freshChecked).
+      if (heldForReview(fresh)) return { refuse: HELD_REFUSAL };
       const d = effectiveDelivery(fresh, channelId);
       if (!d) return { refuse: "Its delivery entry can't be read, or the channel is not on this post." };
       if (!(first ? CLAIMABLE.has(d.status) : d.status === "failed")) {

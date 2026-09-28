@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { planComposerSchedule, reminderDefaults, scheduleNeeds } from "../../composer/schedule";
+import { heldForReview } from "../../index/queries";
 import { MINUTE } from "../../model/dates";
 import { zMinutesList } from "../../model/schemas";
 import { deliveryTime } from "../../model/stateMachine";
@@ -45,7 +46,7 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
       name: "schedule",
       title: "Schedule a post",
       description:
-        "Makes a post go out at `at` on all its channels (staggered by the post's stagger). The plugin checks it first and refuses blocking issues, times in the past or less than 10 minutes ahead, and channels already handed over to the platform. API channels then post by themselves on the publisher device without asking again; the others remind the user. Only call this after the user agreed to the plan.",
+        "Makes a post go out at `at` on all its channels (staggered by the post's stagger). The plugin checks it first and refuses blocking issues, times in the past or less than 10 minutes ahead, and channels already handed over to the platform. API channels then post by themselves on the publisher device without asking again; the others remind the user. Only call this after the user agreed to the plan. Scheduling a note the /social skill wrote while Obsidian was closed also releases it from review, now that the plugin has validated it.",
       input: z
         .object({
           path: zPath,
@@ -71,6 +72,7 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
         const reminders = a.reminders ?? reminderDefaults(v, deps.composer.channelsOf(v), deps.settings());
         let tooSoon = false;
         let awaiting = false;
+        let releasedHeld = false;
         const result = await deps.planner.write(v.file, (fresh) => {
           const again = scheduleNeeds(fresh, a.at, now);
           if (again.handedOver) return { refuse: HANDED_OVER };
@@ -85,6 +87,9 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
             tooSoon = true;
             return { refuse: TOO_SOON };
           }
+          // Ruling (Task 10 design), fix round 1 (m7): the plugin just validated the post, so scheduling it
+          // releases the hold too, whatever `review` was set to.
+          releasedHeld = heldForReview(fresh);
           return { fields: { ...plan.fields, review: undefined }, deliveries: deliveryChanges(fresh, plan.deliveries) };
         });
         if (!result.ok) {
@@ -95,7 +100,10 @@ export function registerScheduleTools(registry: ToolRegistry, deps: McpToolDeps)
         // Wait for the reindex so the next read tool sees the write; nothing to wait for when nothing changed.
         if (changed) await untilIndexed(deps.index, () => deps.index.getVariant(v.path) !== v);
         const fresh = deps.index.getVariant(v.path) ?? v;
-        if (changed) claudeNotice(deps, `Claude scheduled ${v.displayTitle} for ${formatShortDate(a.at)} ${formatTime(a.at)}.`, v.path);
+        if (changed) {
+          const releaseNote = releasedHeld ? " It was written while Obsidian was closed, and is now released for review." : "";
+          claudeNotice(deps, `Claude scheduled ${v.displayTitle} for ${formatShortDate(a.at)} ${formatTime(a.at)}.${releaseNote}`, v.path);
+        }
         return ok({ path: v.path, scheduled_at: iso(a.at), reminders, channels: channelRows(fresh, stagger(), nameOf), issues });
       },
     }),

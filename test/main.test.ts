@@ -758,6 +758,30 @@ describe("phone reminder links (#70)", () => {
     plugin.unload();
   });
 
+  it("refuses to open a note Claude wrote while Obsidian was closed from a phone link (#84 fix round 1, m3)", async () => {
+    const app = new App();
+    const P = "Social/Posts/P.md";
+    await writeNote(
+      app as never,
+      P,
+      { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-12-01T09:00:00+01:00", review: "claude", deliveries: { "bs/you": { status: "scheduled" } } },
+      "Hi",
+    );
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await plugin.ready;
+    Modal.opened = [];
+    Notice.messages = [];
+    const before = await app.vault.read(app.vault.getFileByPath(P)!);
+    await plugin.openFromLink({ path: P, channel: "bs/you", step: "3" });
+    await plugin.openFromLink({ path: P, channel: "bs/you" });
+    expect(Modal.opened).toEqual([]);
+    expect(Notice.messages).toEqual(["Approve it first in Written by Claude.", "Approve it first in Written by Claude."]);
+    expect(await app.vault.read(app.vault.getFileByPath(P)!)).toBe(before);
+    plugin.unload();
+  });
+
   it("refuses Done while the delivery is being published", async () => {
     const app = new App();
     const P = "Social/Posts/P.md";

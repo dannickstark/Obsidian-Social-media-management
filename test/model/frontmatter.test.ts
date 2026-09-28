@@ -46,12 +46,21 @@ describe("socialKind and linkTarget", () => {
 });
 
 describe("parseVariant", () => {
-  it("reads review: claude and warns about other values", () => {
+  it("reads review: claude, and holds (with a warning) on other values too (#84 fix round 1, I1)", () => {
     const base = { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "ready" };
     expect(parseVariant({ ...base, review: "claude" }, "p.md").value!.review).toBe("claude");
     const other = parseVariant({ ...base, review: "yes" }, "p.md");
-    expect(other.value!.review).toBeUndefined();
+    expect(other.value!.review).toBe("yes");
     expect(other.issues).toEqual([expect.objectContaining({ level: "warning", field: "review" })]);
+  });
+
+  it("holds on any non-blank review value, warning unless it is exactly \"claude\" (#84 fix round 1, I1)", () => {
+    const base = { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "ready" };
+    for (const val of ["Claude", "claude ", "yes", true, ["claude"]]) {
+      const r = parseVariant({ ...base, review: val }, "p.md");
+      expect(r.value!.review).toBeDefined();
+      expect(r.issues.some((i) => i.field === "review" && i.level === "warning")).toBe(true);
+    }
   });
 
   it("splits comma-separated channels, reminders and media (final review F5.3)", () => {

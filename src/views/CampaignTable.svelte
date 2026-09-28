@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Menu } from "obsidian";
+  import { heldForReview } from "../index/queries";
   import { PLATFORM_META } from "../model/platforms";
   import { campaignTable } from "../planner/campaignTable";
   import { VARIANT_STATUS_LABEL } from "../planner/status";
@@ -45,7 +46,9 @@
           <td>
             <button type="button" onclick={() => actions.openNote(r.variant.path)}>Open</button>
             <button type="button" aria-label={`Compose ${PLATFORM_META[r.variant.platform].label} variant`} onclick={() => void composer.openComposer(r.variant.path)}>Compose</button>
-            {#if r.status === "overdue"}
+            {#if heldForReview(r.variant)}
+              <button type="button" aria-label={`Review ${PLATFORM_META[r.variant.platform].label} variant`} onclick={() => void composer.openComposer(r.variant.path)}>Review…</button>
+            {:else if r.status === "overdue"}
               <button type="button" class="mod-cta" aria-label={`Post ${PLATFORM_META[r.variant.platform].label} variant now`} onclick={() => void publish.postNow(r.variant.path)}>Post now</button>
             {/if}
           </td>

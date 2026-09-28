@@ -113,8 +113,9 @@ const BLOCKING = "The post has blocking issues, so nothing was sent.";
 const CHANGED = "The post changed after it was approved, so nothing was sent. Ask again with the new text.";
 const NOTHING = "Nothing left to post for this note.";
 export const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
+// Fix round 1 (m4): say how it is released, not just where to approve it.
 const HELD =
-  "Claude wrote this note while Obsidian was closed. The user approves it first in Obsidian (sidebar, Written by Claude); after that, schedule or publish it.";
+  "Claude wrote this note while Obsidian was closed. It is released once the user agrees in this conversation and Claude schedules it, or once they approve it in Obsidian (sidebar, Written by Claude).";
 const LIVE = new Set(["published", "handed_over"]);
 
 const SILENT: DeliveryNotifier = { due: () => undefined, failed: () => undefined };
@@ -408,6 +409,13 @@ export class PublishActions {
     const fresh = await this.freshValidated(path);
     if (!fresh) return;
     const { v } = fresh;
+    // Fix round 1 (I3): the composer's own Post now is the one place still allowed to post a held note
+    // (the user is looking at it); doing so releases the hold, in a write of its own before anything sends
+    // (so the orchestrator's own held-note guard, m2, never sees it as still held).
+    if (heldForReview(v)) {
+      const file = this.deps.index.getVariant(path)?.file;
+      if (file) await this.deps.writer.updateVariant(file, (f) => (heldForReview(f) ? { fields: { review: undefined } } : {}));
+    }
     const queue = assistedQueue(v, this.deps.settings().defaultStaggerMinutes, channelIds);
     if (!queue.length) {
       new Notice(NOTHING);

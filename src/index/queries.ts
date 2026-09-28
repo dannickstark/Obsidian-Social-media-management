@@ -98,9 +98,24 @@ export function unreadableRow(r: Pick<PostRow, "variant" | "channelId">): boolea
   return r.channelId !== null && (r.variant.invalidDeliveries?.includes(r.channelId) ?? false);
 }
 
-/** A note the /social skill wrote while Obsidian was closed: nothing posts or reminds until the user reviews it (#84). */
+/**
+ * A note the /social skill wrote while Obsidian was closed: nothing posts or reminds until the user
+ * reviews it (#84). Fix round 1 (I1): any non-blank `review` value holds, fail-closed — only the
+ * sidebar's Approve/Keep (or the MCP `schedule` tool, once the plugin has validated the note) clear it,
+ * whatever it was set to. `parseVariant` separately warns when it is not exactly "claude".
+ */
 export function heldForReview(v: Pick<Variant, "review">): boolean {
-  return v.review === "claude";
+  return v.review !== undefined;
+}
+
+/** Shown wherever an action on a held note is refused outside the sidebar's own Approve/Keep (#84 fix round 1). */
+export const HELD_REFUSAL = "Approve it first in Written by Claude.";
+
+const RESOLVED_DELIVERY = new Set<DeliveryStatus>(["published", "skipped"]);
+
+/** Every channel of the post is already resolved (published or skipped): nothing is left to schedule or unschedule. */
+export function nothingPending(v: Pick<Variant, "channels" | "deliveries">): boolean {
+  return v.channels.length > 0 && v.channels.every((id) => RESOLVED_DELIVERY.has(v.deliveries[id]?.status ?? "draft"));
 }
 
 export function overdueRows(rows: readonly PostRow[], now: number): PostRow[] {
