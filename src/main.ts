@@ -18,7 +18,7 @@ import { PreviewGridView } from "./previews/PreviewGridView";
 import { Scheduler } from "./scheduler/scheduler";
 import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
-import { migrateSettings, type OsmmSettings } from "./settings/settings";
+import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
 import { PlannerActions, VIEW_COMPOSER, VIEW_PLANNER, VIEW_PREVIEW_GRID, VIEW_SIDEBAR } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
@@ -73,7 +73,7 @@ export default class OsmmPlugin extends Plugin {
       now: () => Date.now(),
       // M3 (#26) replaces this with the publisher-device setting; until then every device publishes.
       isPublisher: () => true,
-      autoPostLateMs: () => null,
+      autoPostLateMs: () => autoPostLateMs(this.settings),
       publish: this.uiContext().publish,
       warn: (message) => new Notice(message, 0),
     });
@@ -88,6 +88,8 @@ export default class OsmmPlugin extends Plugin {
       if (this.unloaded) return;
       this.index.start();
       await this.index.build();
+      if (this.unloaded) return;
+      await this.scheduler.reconcile();
       if (this.unloaded) return;
       this.scheduler.start();
       void this.scheduler.tick();

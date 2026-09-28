@@ -702,12 +702,33 @@ export class DropdownComponent {
   }
 }
 
+export class ToggleComponent {
+  value = false;
+  private cb: ((v: boolean) => unknown) | undefined;
+  setValue(v: boolean): this {
+    this.value = v;
+    return this;
+  }
+  getValue(): boolean {
+    return this.value;
+  }
+  onChange(cb: (v: boolean) => unknown): this {
+    this.cb = cb;
+    return this;
+  }
+  /** Test helper: the user flips the toggle. */
+  async toggle(v: boolean): Promise<void> {
+    this.value = v;
+    await this.cb?.(v);
+  }
+}
+
 export class Setting {
   static all: Setting[] = [];
   name = "";
   desc = "";
   heading = false;
-  components: Array<TextComponent | DropdownComponent | TextAreaComponent | ButtonComponent> = [];
+  components: Array<TextComponent | DropdownComponent | TextAreaComponent | ButtonComponent | ToggleComponent> = [];
   settingEl = document.createElement("div");
   constructor(containerEl: HTMLElement) {
     containerEl.appendChild(this.settingEl);
@@ -745,6 +766,12 @@ export class Setting {
   }
   addButton(cb: (c: ButtonComponent) => unknown): this {
     const c = new ButtonComponent();
+    this.components.push(c);
+    cb(c);
+    return this;
+  }
+  addToggle(cb: (c: ToggleComponent) => unknown): this {
+    const c = new ToggleComponent();
     this.components.push(c);
     cb(c);
     return this;

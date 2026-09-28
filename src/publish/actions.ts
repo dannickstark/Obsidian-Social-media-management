@@ -175,6 +175,36 @@ export class PublishActions {
     if (!("refuse" in result)) void this.deps.log.append({ at: this.deps.now(), path: item.path, channelId: item.channelId, result: "overdue" });
   }
 
+  /** Startup: Obsidian closed mid-publish. The delivery is never retried automatically (spec §5.1). */
+  async markCheckNeeded(path: string, channelId: string): Promise<boolean> {
+    const v = this.deps.index.getVariant(path);
+    if (!v) return false;
+    const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
+      const d = fresh.deliveries[channelId];
+      if (d?.status !== "publishing") return { refuse: "The delivery changed." };
+      const error = "Obsidian closed while this was being published. Check the platform, then mark it as published or not.";
+      return { deliveries: { [channelId]: transition(d, "check_needed", { error }) } };
+    });
+    if ("refuse" in result) return false;
+    void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "check_needed" });
+    return true;
+  }
+
+  /** Resolves a check-needed delivery with the adapter's lookup(); leaves it to the user when that can't tell. */
+  async resolveCheck(path: string, channelId: string): Promise<void> {
+    const state = await this.orchestrator.lookup(path, channelId);
+    const v = this.deps.index.getVariant(path);
+    if (!state || !v) return;
+    await this.deps.writer.updateVariant(v.file, (fresh) => {
+      const d = fresh.deliveries[channelId];
+      if (d?.status !== "check_needed") return { refuse: "The delivery changed." };
+      if (!state.published) return { deliveries: { [channelId]: transition(d, "failed", { error: "Not found on the platform after an interrupted publish." }) } };
+      const next = transition(d, "published", { ...(state.url ? { url: state.url } : {}), ...(state.remoteId ? { remoteId: state.remoteId } : {}) });
+      delete next.error;
+      return { deliveries: { [channelId]: next } };
+    });
+  }
+
   target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {
     return assistedTarget(assistedJob(v, channel, content));
   }

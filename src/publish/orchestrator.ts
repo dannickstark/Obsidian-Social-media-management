@@ -10,7 +10,7 @@ import type { SafeWriter } from "../model/writer";
 import { classifyError, PublishError, statusOf, UnknownOutcomeError, type ErrorKind } from "../platforms/errors";
 import { platformDef, type AdapterRegistry } from "../platforms/registry";
 import { postItems } from "../platforms/text";
-import type { DeliveryJob, MediaInfo, PlatformAdapter } from "../platforms/types";
+import type { DeliveryJob, MediaInfo, PlatformAdapter, RemoteState } from "../platforms/types";
 import { effectiveDelivery } from "./eligibility";
 import type { AttemptLog } from "./log";
 import { Semaphore } from "./semaphore";
@@ -111,6 +111,23 @@ export class PublishOrchestrator {
       const outcome = await this.gate(job.platform).run(() => this.attempt(job, attempt));
       if (outcome.done) return outcome.result;
       await this.deps.delay(outcome.wait);
+    }
+  }
+
+  /** Asks the platform whether an interrupted publish went out (spec §5.1); null when it can't tell. */
+  async lookup(path: string, channelId: string): Promise<RemoteState | null> {
+    const v = this.deps.index.getVariant(path);
+    const channel = this.deps.channels.get(channelId);
+    const adapter = v ? this.deps.adapters.get(v.platform) : undefined;
+    const delivery = v?.deliveries[channelId];
+    if (!v || !channel || !adapter?.lookup || !delivery) return null;
+    const content = await this.deps.content.load(v);
+    const items = postItems(content.body, platformDef(v.platform));
+    const secret = channel.secretId ? this.deps.secrets.get(channel.secretId) : null;
+    try {
+      return await adapter.lookup({ variant: v, channel, delivery, text: items.join("\n\n"), items, media: content.media, secret });
+    } catch {
+      return null;
     }
   }
 

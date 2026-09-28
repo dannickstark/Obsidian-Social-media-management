@@ -66,6 +66,27 @@ export class OsmmSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl).setName("Publishing").setHeading();
+
+    new Setting(containerEl)
+      .setName("Post late items automatically")
+      .setDesc("If Obsidian was closed at a post's time, post it anyway when it is less late than the window below. Otherwise it waits in the Overdue tray.")
+      .addToggle((t) =>
+        t.setValue(s.autoPostLate).onChange(async (value) => {
+          await this.osmm.updateSettings({ autoPostLate: value });
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Late window (minutes)")
+      .setDesc("From 1 to 240 minutes.")
+      .addText((t) =>
+        t.setValue(String(s.autoPostLateMinutes)).onChange(async (value) => {
+          const n = Number(value.trim());
+          if (Number.isInteger(n) && n >= 1 && n <= 240) await this.osmm.updateSettings({ autoPostLateMinutes: n });
+        }),
+      );
+
     new Setting(containerEl).setName("Channels").setHeading();
     const host = document.createElement("div");
     host.className = "osmm";

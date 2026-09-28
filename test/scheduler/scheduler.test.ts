@@ -37,6 +37,8 @@ function build(c: TestCtx, over: Partial<SchedulerDeps> = {}) {
     publish: {
       dispatch: async (i: DueItem) => void calls.dispatched.push(i.key),
       markOverdue: async (i: DueItem) => void calls.overdue.push(i.key),
+      markCheckNeeded: async () => false,
+      resolveCheck: async () => undefined,
     },
     warn: (m) => warnings.push(m),
     ...over,

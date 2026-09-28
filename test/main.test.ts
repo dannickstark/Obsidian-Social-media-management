@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { App, Notice, Setting, type TextComponent, type DropdownComponent } from "./fakes/obsidian";
+import { App, Notice, Setting, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
 import { nextChange, settle } from "./helpers";
 
@@ -35,13 +35,28 @@ describe("OsmmPlugin", () => {
     Setting.all = [];
     (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!.display();
     const byName = (n: string) => Setting.all.find((s) => s.name === n)!;
-    expect(Setting.all.map((s) => s.name)).toEqual(["General", "Root folder", "Week starts on", "Default reminders", "Default stagger", "Channels", "Schedule templates", "Launch"]);
+    expect(Setting.all.map((s) => s.name)).toEqual([
+      "General",
+      "Root folder",
+      "Week starts on",
+      "Default reminders",
+      "Default stagger",
+      "Publishing",
+      "Post late items automatically",
+      "Late window (minutes)",
+      "Channels",
+      "Schedule templates",
+      "Launch",
+    ]);
     await (byName("Default reminders").components[0] as TextComponent).change("30, 5");
     await (byName("Week starts on").components[0] as DropdownComponent).change("0");
     expect(plugin.settings.defaultReminders).toEqual([30, 5]);
     expect(plugin.settings.weekStartsOn).toBe(0);
     await (byName("Default reminders").components[0] as TextComponent).change("soon");
     expect(plugin.settings.defaultReminders).toEqual([30, 5]);
+    await (byName("Post late items automatically").components[0] as ToggleComponent).toggle(true);
+    await (byName("Late window (minutes)").components[0] as TextComponent).change("45");
+    expect([plugin.settings.autoPostLate, plugin.settings.autoPostLateMinutes]).toEqual([true, 45]);
     plugin.unload();
   });
 

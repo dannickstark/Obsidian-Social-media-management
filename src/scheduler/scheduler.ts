@@ -1,10 +1,15 @@
 import type { SocialIndex } from "../index/socialIndex";
 import type { OsmmSettings } from "../settings/settings";
 import { decide, dueItems, type DueItem } from "./due";
+import { reconcilePlan } from "./reconcile";
 
 export interface SchedulerPort {
   dispatch(item: DueItem): Promise<void>;
   markOverdue(item: DueItem): Promise<void>;
+  /** `publishing → check_needed`; false when the delivery changed meanwhile. */
+  markCheckNeeded(path: string, channelId: string): Promise<boolean>;
+  /** Asks the platform whether an interrupted publish went out, where the adapter can tell. */
+  resolveCheck(path: string, channelId: string): Promise<void>;
 }
 
 export interface SchedulerDeps {
@@ -29,6 +34,12 @@ export interface SchedulerDeps {
 export interface TickResult {
   dispatched: string[];
   overdue: string[];
+}
+
+export interface ReconcileSummary {
+  checkNeeded: number;
+  overdue: number;
+  dispatched: number;
 }
 
 /** The 30-second loop (spec §4). A wake from sleep is simply a late tick: `decide` turns stale items into overdue ones. */
@@ -93,6 +104,36 @@ export class Scheduler {
     } finally {
       this.running = false;
     }
+  }
+
+  /** Runs once at startup, before the loop (publisher only). */
+  async reconcile(): Promise<ReconcileSummary> {
+    const summary: ReconcileSummary = { checkNeeded: 0, overdue: 0, dispatched: 0 };
+    if (!this.deps.isPublisher()) return summary;
+    const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs());
+    for (const action of plan) {
+      try {
+        if (action.kind === "check_needed") {
+          if (await this.deps.publish.markCheckNeeded(action.path, action.channelId)) {
+            summary.checkNeeded++;
+            await this.deps.publish.resolveCheck(action.path, action.channelId);
+          }
+          continue;
+        }
+        if (this.handled.has(action.item.key)) continue;
+        this.handled.add(action.item.key);
+        if (action.kind === "dispatch") {
+          summary.dispatched++;
+          await this.deps.publish.dispatch(action.item);
+        } else {
+          summary.overdue++;
+          await this.deps.publish.markOverdue(action.item);
+        }
+      } catch (e) {
+        this.deps.warn(`Could not check ${action.kind === "check_needed" ? action.path : action.item.path}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return summary;
   }
 
   private warnUnreadable(): void {

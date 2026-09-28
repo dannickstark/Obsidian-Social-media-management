@@ -12,6 +12,9 @@ export interface OsmmSettings {
   weekStartsOn: 0 | 1;
   defaultReminders: number[];
   defaultStaggerMinutes: number;
+  /** Spec §5.2: post items that are less than `autoPostLateMinutes` late instead of sending them to the Overdue tray. */
+  autoPostLate: boolean;
+  autoPostLateMinutes: number;
   channels: Channel[];
   channelGroups: ChannelGroup[];
   scheduleTemplates: ScheduleTemplate[];
@@ -23,6 +26,8 @@ export const DEFAULT_SETTINGS: OsmmSettings = {
   weekStartsOn: 1,
   defaultReminders: [60, 10],
   defaultStaggerMinutes: 15,
+  autoPostLate: false,
+  autoPostLateMinutes: 15,
   channels: [],
   channelGroups: [],
   scheduleTemplates: structuredClone(DEFAULT_TEMPLATES),
@@ -49,12 +54,15 @@ function sanitize(raw: RawSettings): OsmmSettings {
   const templates = (Array.isArray(raw.scheduleTemplates) ? raw.scheduleTemplates : [])
     .map((t) => zScheduleTemplate.safeParse(t))
     .flatMap((r) => (r.success ? [r.data] : []));
+  const lateMinutes = zMinutes.safeParse(raw.autoPostLateMinutes);
   return {
     schemaVersion: SETTINGS_VERSION,
     rootFolder: root === "/" ? DEFAULT_SETTINGS.rootFolder : root,
     weekStartsOn: raw.weekStartsOn === 0 ? 0 : 1,
     defaultReminders: reminders.success ? reminders.data : [...DEFAULT_SETTINGS.defaultReminders],
     defaultStaggerMinutes: stagger.success ? stagger.data : DEFAULT_SETTINGS.defaultStaggerMinutes,
+    autoPostLate: raw.autoPostLate === true,
+    autoPostLateMinutes: lateMinutes.success && lateMinutes.data >= 1 && lateMinutes.data <= 240 ? lateMinutes.data : DEFAULT_SETTINGS.autoPostLateMinutes,
     channels,
     channelGroups: groups,
     scheduleTemplates: templates,
@@ -82,4 +90,9 @@ export function parseMinutesList(text: string): number[] | null {
   if (!parts.every((p) => /^\d+$/.test(p))) return null;
   const r = zMinutesList.safeParse(parts.map(Number));
   return r.success ? r.data : null;
+}
+
+/** The late window in ms when late auto-posting is on, else null. */
+export function autoPostLateMs(s: Pick<OsmmSettings, "autoPostLate" | "autoPostLateMinutes">): number | null {
+  return s.autoPostLate ? s.autoPostLateMinutes * 60_000 : null;
 }
