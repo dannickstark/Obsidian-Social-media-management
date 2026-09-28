@@ -1,9 +1,9 @@
-import { countChars } from "../model/body";
+import { countChars, extractEmbeds } from "../model/body";
 import { PLATFORM_META, type Platform } from "../model/platforms";
 import type { Channel, Variant } from "../model/types";
 import { cropRect, feedRatio, type Rect } from "../media/crop";
 import { limitFor } from "../platforms/checks";
-import { countFor, postItems, urlsIn } from "../platforms/text";
+import { countFor, postItems, renderText, urlsIn } from "../platforms/text";
 import type { MediaInfo, PlatformDef, PreviewLayout, TextDialect } from "../platforms/types";
 import { initials } from "../ui/format";
 
@@ -111,6 +111,8 @@ export interface PreviewModel {
   excerpt?: string;
   /** The raw Markdown, for the article layout. */
   markdown: string;
+  /** Image sources for embeds in an article body, by link target ("" when unresolved). */
+  embeds?: Record<string, string>;
 }
 
 export interface PreviewInput {
@@ -121,6 +123,8 @@ export interface PreviewInput {
   featured?: MediaInfo;
   channel?: Channel;
   resource(path: string): string;
+  /** Resolves an embed in the body to an image source (article layout). */
+  embedSrc?(target: string): string;
 }
 
 /** Platforms whose feed turns a link into a card. */
@@ -197,5 +201,70 @@ export function previewModel(p: PreviewInput): PreviewModel {
   if (cardUrl && model.media.length === 0 && LINK_CARDS.has(def.id)) model.linkCard = { url: cardUrl, domain: domainOf(cardUrl) };
   if (p.featured) model.featured = previewMedia(p.featured, def, p.resource);
   if (variant.wordpress?.excerpt) model.excerpt = variant.wordpress.excerpt;
+  if (def.preview === "article") {
+    model.embeds = Object.fromEntries(extractEmbeds(p.body).map((target) => [target, p.embedSrc?.(target) ?? ""]));
+  }
   return model;
+}
+
+export type Block =
+  | { kind: "heading"; level: number; segments: Segment[] }
+  | { kind: "paragraph"; segments: Segment[] }
+  | { kind: "list"; ordered: boolean; items: Segment[][] }
+  | { kind: "quote"; segments: Segment[] }
+  | { kind: "rule" }
+  | { kind: "image"; target: string };
+
+const inline = (text: string): Segment[] => segments(renderText(text, "markdown"), "markdown");
+const WIKI_IMAGE_RE = /^!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$/;
+const MD_IMAGE_RE = /^!\[[^\]]*\]\(([^)\s]+)\)$/;
+
+/** A small Markdown block parser for the neutral article preview (not a full CommonMark renderer). */
+export function articleBlocks(markdown: string, title?: string): Block[] {
+  const blocks: Block[] = [];
+  let para: string[] = [];
+  let list: { ordered: boolean; items: Segment[][] } | null = null;
+  const flushPara = () => {
+    if (para.length) blocks.push({ kind: "paragraph", segments: inline(para.join("\n")) });
+    para = [];
+  };
+  const flush = () => {
+    flushPara();
+    if (list) blocks.push({ kind: "list", ordered: list.ordered, items: list.items });
+    list = null;
+  };
+  for (const raw of markdown.replace(/%%[\s\S]*?%%/g, "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+    let m: RegExpExecArray | null;
+    if (!trimmed) {
+      flush();
+    } else if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+      flush();
+      blocks.push({ kind: "heading", level: m[1]!.length, segments: inline(m[2]!) });
+    } else if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flush();
+      blocks.push({ kind: "rule" });
+    } else if ((m = WIKI_IMAGE_RE.exec(trimmed) ?? MD_IMAGE_RE.exec(trimmed))) {
+      flush();
+      blocks.push({ kind: "image", target: m[1]!.trim() });
+    } else if ((m = /^\s*([-*+]|\d+[.)])\s+(.*)$/.exec(line))) {
+      const ordered = /\d/.test(m[1]!);
+      flushPara();
+      if (list && list.ordered !== ordered) flush();
+      list ??= { ordered, items: [] };
+      list.items.push(inline(m[2]!));
+    } else if ((m = /^>\s?(.*)$/.exec(line))) {
+      flush();
+      blocks.push({ kind: "quote", segments: inline(m[1]!) });
+    } else {
+      if (list) flush();
+      para.push(line);
+    }
+  }
+  flush();
+  const first = blocks[0];
+  const plain = (s: Segment[]) => s.map((x) => x.text).join("").trim();
+  if (title && first?.kind === "heading" && first.level === 1 && plain(first.segments) === title.trim()) blocks.shift();
+  return blocks;
 }

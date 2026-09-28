@@ -49,3 +49,28 @@
 .osmm-pv-card-domain { color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .osmm-pv-card-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .osmm-pv-over { margin: 0; color: var(--text-error); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+.osmm-pv-chat { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--background-secondary); }
+.osmm-pv-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 90%;
+  padding: 8px 10px;
+  border-radius: 12px 12px 12px 4px;
+  background: var(--background-primary);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+}
+.osmm-pv-chat[data-platform="whatsapp"] .osmm-pv-bubble { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: rgba(var(--color-green-rgb), 0.18); }
+.osmm-pv-chat[data-platform="discord"] .osmm-pv-bubble { max-width: none; padding: 0 0 0 40px; background: transparent; box-shadow: none; }
+.osmm-pv-channel { color: var(--text-accent); }
+.osmm-pv-time { align-self: flex-end; color: var(--text-faint); font-size: 10.5px; }
+.osmm-pv-link { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.osmm-pv-title { margin: 0; font-size: var(--font-ui-medium); }
+.osmm-pv-domain, .osmm-pv-sub { color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: normal; }
+.osmm-pv-link[data-platform="hackernews"] { border-top: 3px solid var(--color-orange); }
+.osmm-pv-article { display: flex; flex-direction: column; gap: 10px; padding: 16px; font-family: var(--font-text); }
+.osmm-pv-site { color: var(--text-muted); font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: 0.06em; }
+.osmm-pv-article-title { margin: 0; font-size: 1.5em; line-height: 1.2; }
+.osmm-pv-excerpt { margin: 0; color: var(--text-muted); font-style: italic; }
+.osmm-pv-h { margin: 6px 0 0; }
+.osmm-pv-inline-img { max-width: 100%; border-radius: 6px; }
