@@ -121,3 +121,24 @@ describe("opening the menu without a mouse", () => {
     expect(Menu.last!.pos).toEqual({ x: 40, y: 80 });
   });
 });
+
+describe("board card menu on a multi-channel card (final review Minor 11)", () => {
+  const LI = "Social/Event X/Event X – LinkedIn.md";
+
+  it("posts every postable channel of the card, not only the first", async () => {
+    const { ctx, index } = await makeCtx({ seed: true });
+    const postNow = vi.spyOn(ctx.publish, "postNow").mockResolvedValue();
+    render(BoardView, { props: { variants: [index.getVariant(LI)!] }, context: osmmContext(ctx) });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Event X/ }));
+    click("Post now");
+    expect(postNow).toHaveBeenCalledWith(LI, ["li/acme-studio", "li/maker-lab"]);
+  });
+
+  it("skips every postable channel of the card", async () => {
+    const { ctx, index } = await makeCtx({ seed: true });
+    ctx.actions.cardMenu(index.getVariant(LI)!, { x: 0, y: 0 });
+    click("Skip");
+    await indexed(index, () => index.getVariant(LI)?.deliveries["li/maker-lab"]?.status === "skipped" && index.getVariant(LI)?.deliveries["li/acme-studio"]?.status === "skipped");
+    expect(index.getVariant(LI)!.deliveries["li/me"]?.status).toBe("published");
+  });
+});

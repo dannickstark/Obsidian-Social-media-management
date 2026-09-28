@@ -242,24 +242,39 @@ export class PlannerActions {
     menu.showAtMouseEvent(event);
   }
 
-  rowFor(v: IndexedVariant): PostRow | undefined {
-    return this.rows().find((r) => r.variant.path === v.path);
+  /**
+   * The menu of a board card: one card stands for every channel of the post, so Post now and Skip act on
+   * all of its postable channels (final review Minor 11), not only on the first row.
+   */
+  cardMenu(v: IndexedVariant, at: MouseEvent | { x: number; y: number }): Menu | undefined {
+    const rows = this.rows().filter((r) => r.variant.path === v.path);
+    return rows[0] ? this.rowMenu(rows[0], at, rows) : undefined;
   }
 
-  /** The menu equivalent of every drag-and-drop action (#113), with the same guards, notices and undo. */
-  rowMenu(row: PostRow, at: MouseEvent | { x: number; y: number }): Menu {
+  /** The Menu key or Shift+F10 on a board card. */
+  cardKeyMenu(event: KeyboardEvent, v: IndexedVariant): void {
+    const rows = this.rows().filter((r) => r.variant.path === v.path);
+    if (rows[0]) this.keyMenu(event, rows[0], rows);
+  }
+
+  /**
+   * The menu equivalent of every drag-and-drop action (#113), with the same guards, notices and undo.
+   * `group` is every row the menu stands for (a board card: all channels of the post); Post now and Skip act on its postable ones.
+   */
+  rowMenu(row: PostRow, at: MouseEvent | { x: number; y: number }, group: readonly PostRow[] = [row]): Menu {
     const v = row.variant;
     const menu = new Menu();
+    const postable = group.filter((r) => r.channelId !== null && POSTABLE.has(r.status));
+    const postableIds = postable.map((r) => r.channelId!);
     menu.addItem((i) => i.setTitle("Open note").setIcon("file-text").onClick(() => this.openNote(v.path)));
     menu.addItem((i) => i.setTitle("Compose").setIcon("pencil-line").onClick(() => void this.context?.composer.openComposer(v.path)));
-    if (row.channelId && POSTABLE.has(row.status)) {
-      const channelId = row.channelId;
-      menu.addItem((i) => i.setTitle("Post now").setIcon("send").onClick(() => void this.context?.publish.postNow(v.path, [channelId])));
+    if (postable.length) {
+      menu.addItem((i) => i.setTitle("Post now").setIcon("send").onClick(() => void this.context?.publish.postNow(v.path, postableIds)));
     }
     const current = columnOf(v.status);
     const movable = BOARD_COLUMNS.filter((col) => col !== current && planBoardMove(v, col).ok);
     const canReschedule = !NOT_MOVABLE.has(row.status);
-    const canSkip = !!row.channelId && POSTABLE.has(row.status);
+    const canSkip = postable.length > 0;
     if (canReschedule || movable.length || canSkip) menu.addSeparator();
     if (canReschedule) {
       menu.addItem((i) =>
@@ -276,7 +291,16 @@ export class PlannerActions {
     for (const col of movable) {
       menu.addItem((i) => i.setTitle(`Move to ${COLUMN_TITLE[col]}`).onClick(() => void this.moveOnBoard(v, col)));
     }
-    if (canSkip) menu.addItem((i) => i.setTitle("Skip").setIcon("skip-forward").onClick(() => void this.skip(row)));
+    if (canSkip) {
+      menu.addItem((i) =>
+        i
+          .setTitle("Skip")
+          .setIcon("skip-forward")
+          .onClick(async () => {
+            for (const r of postable) await this.skip(r);
+          }),
+      );
+    }
     if (at instanceof MouseEvent) {
       // A keyboard-triggered click (Enter/Space) fires a MouseEvent with detail 0; anchor to the
       // button's rect instead of showing the menu at (0,0).
@@ -289,10 +313,10 @@ export class PlannerActions {
   }
 
   /** The Menu key or Shift+F10 opens the row menu under the focused element. */
-  keyMenu(event: KeyboardEvent, row: PostRow): void {
+  keyMenu(event: KeyboardEvent, row: PostRow, group: readonly PostRow[] = [row]): void {
     if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
     event.preventDefault();
-    this.rowMenu(row, rectAnchor(event.currentTarget as HTMLElement));
+    this.rowMenu(row, rectAnchor(event.currentTarget as HTMLElement), group);
   }
 
   dragStart(event: DragEvent, row: PostRow): void {
