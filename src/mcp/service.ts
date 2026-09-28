@@ -138,7 +138,7 @@ export class McpService {
       this.ensureToken();
       const http = (this.http ??= await (this.deps.loadHttp ?? (() => import("node:http")))());
       await this.server?.stop();
-      this.server ??= new McpHttpServer({
+      this.server = new McpHttpServer({
         createServer: http.createServer,
         token: () => this.token(),
         handle: (message) => this.deps.handle(message),
