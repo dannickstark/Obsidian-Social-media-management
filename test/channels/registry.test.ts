@@ -34,6 +34,19 @@ describe("ChannelRegistry", () => {
     expect(store.writes).toBe(0);
   });
 
+  it("createChannel refuses an id that already exists and leaves it unchanged (G4)", async () => {
+    const store = memoryStore([me]);
+    const reg = new ChannelRegistry(store);
+    expect(await reg.createChannel({ ...me, name: "Other" })).toEqual({
+      ok: false,
+      issues: [{ level: "error", field: "id", message: "A channel with this id already exists" }],
+    });
+    expect(store.writes).toBe(0);
+    expect(reg.get("li/me")).toEqual(me);
+    expect(await reg.createChannel(acme)).toEqual({ ok: true, value: acme });
+    expect(reg.list()).toEqual([me, acme]);
+  });
+
   it("filters by platform", () => {
     expect(new ChannelRegistry(memoryStore([me, acme, tg])).byPlatform("linkedin").map((c) => c.id)).toEqual(["li/me", "li/acme-studio"]);
   });

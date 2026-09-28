@@ -26,6 +26,26 @@ describe("ChannelForm", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
     expect(screen.getByRole("alert").textContent).toContain("Name is required");
   });
+
+  it("refuses to add a channel whose id already exists (G4)", async () => {
+    const { ctx } = await makeCtx({ seed: true });
+    const existing = ctx.channels.get("li/acme-studio")!;
+    const close = vi.fn();
+    render(ChannelForm, { props: { close }, context: osmmContext(ctx) });
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Imposter" } });
+    await fireEvent.input(screen.getByLabelText("Channel id"), { target: { value: "li/acme-studio" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(screen.getByRole("alert").textContent).toContain("id: A channel with this id already exists");
+    expect(ctx.channels.get("li/acme-studio")).toEqual(existing);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("makes the channel id read-only when editing (G4)", async () => {
+    const { ctx } = await makeCtx({ seed: true });
+    const channel = ctx.channels.get("li/acme-studio")!;
+    render(ChannelForm, { props: { channel, close: () => {} }, context: osmmContext(ctx) });
+    expect((screen.getByLabelText("Channel id") as HTMLInputElement).readOnly).toBe(true);
+  });
 });
 
 describe("ChannelsSection", () => {

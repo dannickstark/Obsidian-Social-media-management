@@ -59,6 +59,14 @@ export class ChannelRegistry {
     return { ok: true, value: r.data };
   }
 
+  /** Add a new channel; never overwrites an existing one with the same id. */
+  async createChannel(input: unknown): Promise<UpsertResult<Channel>> {
+    const r = zChannel.safeParse(input);
+    if (!r.success) return { ok: false, issues: zodIssues(r.error) };
+    if (this.get(r.data.id)) return { ok: false, issues: [{ level: "error", field: "id", message: "A channel with this id already exists" }] };
+    return this.upsertChannel(r.data);
+  }
+
   async removeChannel(id: string): Promise<void> {
     const { channels, channelGroups } = this.store.read();
     await this.store.write({

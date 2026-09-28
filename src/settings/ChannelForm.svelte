@@ -34,7 +34,7 @@
 
   async function save(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    const result = await channels.upsertChannel({
+    const input = {
       id,
       platform,
       name,
@@ -44,13 +44,14 @@
       avatarColor,
       defaultTime: defaultTime || undefined,
       secretId: secretId || undefined,
-      defaultReminders: channel?.defaultReminders,
-    });
+      defaultReminders: initial?.defaultReminders,
+    };
+    // Editing never renames (that would orphan notes using the old id); adding never overwrites.
+    const result = editing ? await channels.upsertChannel({ ...input, id: initial!.id }) : await channels.createChannel(input);
     if (!result.ok) {
       issues = result.issues;
       return;
     }
-    if (editing && channel && channel.id !== id) await channels.removeChannel(channel.id);
     close();
   }
 </script>
@@ -63,7 +64,7 @@
     </select>
   </label>
   <label>Name<input type="text" bind:value={name} /></label>
-  <label>Channel id<input type="text" bind:value={id} oninput={() => (idTouched = true)} /></label>
+  <label>Channel id<input type="text" bind:value={id} readonly={editing} oninput={() => (idTouched = true)} /></label>
   <label>
     Kind
     <select bind:value={kind}>{#each CHANNEL_KINDS as k (k)}<option value={k}>{KIND_LABEL[k]}</option>{/each}</select>
