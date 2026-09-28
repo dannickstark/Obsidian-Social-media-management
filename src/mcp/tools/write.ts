@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { GROUP_PREFIX } from "../../channels/registry";
 import { planSetChannels } from "../../composer/channels";
+import { openMarkdownView } from "../../composer/session";
 import { channelRowStatus, type RowStatus } from "../../index/queries";
-import type { VariantPatch } from "../../model/frontmatter";
+import { parseVariant, type VariantPatch } from "../../model/frontmatter";
 import { PLATFORM_META, PLATFORMS, type Platform } from "../../model/platforms";
 import { POST_MODES, zMinutesList } from "../../model/schemas";
-import type { Channel, Issue, Variant, WordPressFields } from "../../model/types";
+import type { Channel, Delivery, Issue, Variant, WordPressFields } from "../../model/types";
 import { blocking } from "../../platforms/checks";
-import { claudeNotice, findPost, noPost, normalizePathArg, untilIndexed, zChannelsArg, zHttpUrl, zKey, zPath, zWhen } from "../common";
+import { bodyHash, claudeNotice, findPost, noPost, sameBody, normalizePathArg, untilIndexed, zChannelsArg, zHttpUrl, zKey, zPath, zWhen } from "../common";
 import type { McpToolDeps } from "../deps";
 import { IdempotencyCache } from "../idempotency";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
@@ -15,6 +16,13 @@ import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 export const BLOCKED = "Blocking issues, so nothing was written. Fix them, or pass force_draft: true to save the post as a draft anyway.";
 const PENDING = new Set<RowStatus>(["scheduled", "awaiting_you", "handed_over", "overdue"]);
 const LIVE = new Set<string>(["published", "handed_over"]);
+const PUBLISHING_NOW = "This post is being published right now. Try again in a minute.";
+const NOTE_CHANGED = "The note changed since you read it; call get_post again.";
+const ADDED_AS_DRAFT = "Added as draft; call schedule to plan it.";
+const WP_KEYS = ["slug", "excerpt", "categories", "tags", "featuredImage"] as const;
+
+/** Thrown inside the editBody callback to abort the body write. */
+class BodyRefusal extends Error {}
 
 const zBody = z.string().max(100_000).describe("Markdown. On X, Mastodon and Bluesky a line with only --- starts the next thread item.");
 const zMedia = z.array(z.string().trim().min(1).max(300)).max(20).describe('Vault images by file name or path, e.g. "event-x-cover.png"');
@@ -75,6 +83,16 @@ function mergeWordPress(current: WordPressFields | undefined, wp: WordPressInput
   };
 }
 
+/** Only the WordPress fields whose parsed value changes (minor 1): the others stay byte for byte. */
+function wordpressChanges(current: WordPressFields | undefined, wp: WordPressInput): Partial<WordPressFields> | undefined {
+  const next = mergeWordPress(current, wp);
+  const out: Record<string, unknown> = {};
+  for (const k of WP_KEYS) if (JSON.stringify(next[k] ?? null) !== JSON.stringify(current?.[k] ?? null)) out[k] = next[k];
+  return Object.keys(out).length ? (out as Partial<WordPressFields>) : undefined;
+}
+
+const publishing = (v: Pick<Variant, "channels" | "deliveries">): boolean => v.channels.some((id) => v.deliveries[id]?.status === "publishing");
+
 /** A post with deliveries still to happen (or waiting on the user) can't hold blocking issues. */
 export function pendingDeliveries(v: Pick<Variant, "channels" | "deliveries" | "status" | "scheduledAt">): boolean {
   if (!v.channels.length) return v.status === "scheduled";
@@ -89,7 +107,8 @@ async function draftIssues(deps: McpToolDeps, variant: Variant, body: string): P
 export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): void {
   const idem = new IdempotencyCache(() => deps.now());
   const nameOf = (id: string) => deps.channels.get(id)?.name ?? id;
-  const exists = (o: { ok: boolean; data?: Record<string, unknown> }) => !o.ok || !!deps.app.vault.getFileByPath(String(o.data?.path));
+  // A kept outcome is still valid while the note it names exists.
+  const exists = (o: { data?: Record<string, unknown> }) => typeof o.data?.path !== "string" || !!deps.app.vault.getFileByPath(o.data.path);
 
   registry.add(
     defineTool({
@@ -111,6 +130,7 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
         idem.run(
           "create_campaign",
           a.idempotency_key,
+          a,
           async () => {
             const file = await deps.factory.createCampaign({ title: a.title, anchorDate: a.anchor_date, link: a.link, brief: a.brief });
             await untilIndexed(deps.index, () => !!deps.index.getCampaign(file.path));
@@ -150,6 +170,7 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
         idem.run(
           "create_variant",
           a.idempotency_key,
+          a,
           async () => {
             if (a.wordpress && a.platform !== "wordpress") return fail("wordpress fields are only for platform wordpress.");
             const campaign = a.campaign ? deps.index.getCampaign(normalizePathArg(a.campaign)) : undefined;
@@ -181,8 +202,14 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
             if (a.media?.length) patch.media = a.media;
             if (a.reminders) patch.reminders = a.reminders;
             if (a.mode) patch.mode = a.mode;
-            if (Object.keys(patch).length) await deps.writer.patchVariant(file, patch);
-            if (a.wordpress) await deps.writer.setFields(file, wordpressFields(a.wordpress));
+            try {
+              if (Object.keys(patch).length) await deps.writer.patchVariant(file, patch);
+              if (a.wordpress) await deps.writer.setFields(file, wordpressFields(a.wordpress));
+            } catch (e) {
+              // The note exists: the outcome names it, so the idempotency entry stays and a retry returns it (minor 5).
+              const why = e instanceof Error ? e.message : String(e);
+              return fail(`The note was created, but not all fields could be written: ${why}. Check it with get_post and fix it with update_variant.`, issues, { path: file.path });
+            }
             await untilIndexed(deps.index, () => !!deps.index.getVariant(file.path));
             claudeNotice(deps, `Claude created ${file.basename}.`, file.path);
             return ok({ path: file.path, status: "draft", issues });
@@ -211,6 +238,7 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
           media: zMedia.optional(),
           wordpress: zWordPress.optional(),
           force_draft: z.boolean().optional(),
+          base_body_hash: z.string().trim().min(1).max(40).optional().describe("body_hash from get_post: the text is only replaced if the note still has the text you read"),
         })
         .strict(),
       annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -218,21 +246,27 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
         const v = findPost(deps, a.path);
         if (!v) return fail(noPost(a.path));
         if (a.wordpress && v.platform !== "wordpress") return fail("wordpress fields are only for platform wordpress.");
-        if (v.channels.some((id) => v.deliveries[id]?.status === "publishing")) return fail("This post is being published right now. Try again in a minute.");
+        if (publishing(v)) return fail(PUBLISHING_NOW);
         let resolved: Channel[] | undefined;
         if (a.channels) {
           const r = resolveChannels(deps, a.channels, v.platform);
           if (blocking(r.issues)) return fail("Unknown or wrong channels, so nothing was written.", r.issues);
           resolved = r.channels;
         }
-        const fields: Omit<VariantPatch, "deliveries" | "channels"> = {};
+        const fields: Omit<VariantPatch, "deliveries" | "channels" | "wordpress"> = {};
         if (a.title !== undefined) fields.title = a.title ?? undefined;
         if (a.url !== undefined) fields.url = a.url ?? undefined;
         if (a.mode) fields.mode = a.mode;
         if (a.reminders) fields.reminders = a.reminders;
         if (a.stagger_minutes !== undefined) fields.staggerMinutes = a.stagger_minutes;
         if (a.media) fields.media = a.media;
+        // I3: what the user sees in an open editor is the text Claude edits against.
+        const flush = async () => {
+          if (a.body !== undefined) await openMarkdownView(deps.app, v.path)?.save();
+        };
+        await flush();
         const content = await deps.composer.content.load(v);
+        if (a.base_body_hash !== undefined && a.base_body_hash !== bodyHash(content.body)) return fail(NOTE_CHANGED);
         const draft: Variant = {
           ...v,
           ...fields,
@@ -254,24 +288,50 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
             message: `Already live on ${live.map(nameOf).join(", ")}. This edit doesn't change those posts; use push_update to change them there.`,
           });
         }
+        const bodyChanged = a.body !== undefined && !sameBody(a.body, content.body);
+        if (bodyChanged) {
+          // Refuse before any field is written when the text moved on since it was loaded.
+          await flush();
+          if (!sameBody(await deps.composer.content.body(v), content.body)) return fail(NOTE_CHANGED, issues);
+        }
+        let added: string[] = [];
         const result = await deps.planner.write(v.file, (fresh) => {
-          if (fresh.channels.some((id) => fresh.deliveries[id]?.status === "publishing")) return { refuse: "This post is being published right now. Try again in a minute." };
+          if (publishing(fresh)) return { refuse: PUBLISHING_NOW };
           // WordPress fields merge into the fresh ones in the same write, so they are part of the undo record.
-          const all = a.wordpress ? { ...fields, wordpress: mergeWordPress(fresh.wordpress, a.wordpress) } : fields;
+          const wordpress = a.wordpress ? wordpressChanges(fresh.wordpress, a.wordpress) : undefined;
+          const all = wordpress ? { ...fields, wordpress } : fields;
           if (!resolved) return { fields: all };
           const plan = planSetChannels(fresh, resolved, nameOf);
           if ("refuse" in plan) return plan;
-          return { fields: { ...all, ...plan.fields }, ...(plan.deliveries ? { deliveries: plan.deliveries } : {}) };
+          // I1: an added channel starts as a draft, never inheriting "scheduled"; schedule plans it (with its lead time).
+          added = (plan.fields?.channels ?? []).filter((id) => !fresh.channels.includes(id) && !fresh.invalidDeliveries?.includes(id));
+          const deliveries: Record<string, Delivery | null> = { ...plan.deliveries };
+          for (const id of added) deliveries[id] = { status: "draft" };
+          return { fields: { ...all, ...plan.fields }, ...(Object.keys(deliveries).length ? { deliveries } : {}) };
         });
         if (!result.ok) return fail(result.reason, issues);
-        const bodyChanged = a.body !== undefined && a.body !== content.body;
-        if (bodyChanged) await deps.writer.editBody(v.file, () => a.body as string);
+        if (bodyChanged) {
+          await flush();
+          try {
+            await deps.writer.editBody(v.file, (current, fm) => {
+              // Checked against the note as it is now, inside the write queue (I3, minor 3).
+              const now = parseVariant(fm, v.path).value;
+              if (now && publishing(now)) throw new BodyRefusal(PUBLISHING_NOW);
+              if (!sameBody(current, content.body)) throw new BodyRefusal(NOTE_CHANGED);
+              return a.body as string;
+            });
+          } catch (e) {
+            if (!(e instanceof BodyRefusal)) throw e;
+            const saved = result.record.fields.length + result.record.deliveries.length > 0;
+            return fail(saved ? `${e.message} The other changes were saved; the text was not.` : e.message, issues);
+          }
+        }
         const changed = result.record.fields.length + result.record.deliveries.length > 0 || bodyChanged;
         if (changed) {
           await untilIndexed(deps.index, () => deps.index.getVariant(v.path) !== v);
           claudeNotice(deps, `Claude updated ${v.displayTitle}.`, v.path);
         }
-        return ok({ path: v.path, changed, issues });
+        return ok({ path: v.path, changed, issues, ...(added.length ? { note: ADDED_AS_DRAFT } : {}) });
       },
     }),
   );

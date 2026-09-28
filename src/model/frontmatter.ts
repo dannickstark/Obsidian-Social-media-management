@@ -12,7 +12,7 @@ import {
   zUrl,
   zVariantStatus,
 } from "./schemas";
-import type { Campaign, Delivery, Issue, MediaMeta, Parsed, Variant } from "./types";
+import type { Campaign, Delivery, Issue, MediaMeta, Parsed, Variant, WordPressFields } from "./types";
 
 export type SocialKind = "campaign" | "post";
 
@@ -279,9 +279,11 @@ export type VariantPatch = Partial<
     | "title"
     | "url"
     | "deliveries"
-    | "wordpress"
   >
->;
+> & {
+  /** Only the WordPress fields to write; keys left out stay as they are in the note. */
+  wordpress?: Partial<WordPressFields>;
+};
 
 /** Map a camelCase patch to frontmatter keys. A key mapped to `undefined` means "delete this key". */
 export function variantFields(patch: VariantPatch): Record<string, unknown> {
@@ -298,13 +300,13 @@ export function variantFields(patch: VariantPatch): Record<string, unknown> {
   if ("url" in patch) out.url = patch.url;
   if ("deliveries" in patch) out.deliveries = patch.deliveries ? serializeDeliveries(patch.deliveries) : undefined;
   if ("wordpress" in patch) {
-    // WordPress fields are top-level keys; an empty value removes its key.
-    const wp = patch.wordpress;
-    out.slug = wp?.slug || undefined;
-    out.excerpt = wp?.excerpt || undefined;
-    out.categories = wp?.categories.length ? wp.categories : undefined;
-    out.tags = wp?.tags.length ? wp.tags : undefined;
-    out.featured_image = wp?.featuredImage ? `[[${wp.featuredImage}]]` : undefined;
+    // WordPress fields are top-level keys, written one by one; an empty value removes its key.
+    const wp = patch.wordpress ?? {};
+    if ("slug" in wp) out.slug = wp.slug || undefined;
+    if ("excerpt" in wp) out.excerpt = wp.excerpt || undefined;
+    if ("categories" in wp) out.categories = wp.categories?.length ? wp.categories : undefined;
+    if ("tags" in wp) out.tags = wp.tags?.length ? wp.tags : undefined;
+    if ("featuredImage" in wp) out.featured_image = wp.featuredImage ? `[[${wp.featuredImage}]]` : undefined;
   }
   return out;
 }

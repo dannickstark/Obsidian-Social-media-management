@@ -10,8 +10,18 @@ export function sameDelivery(a: Delivery | null | undefined, b: Delivery | null 
   return JSON.stringify(a ? serializeDelivery(a) : null) === JSON.stringify(b ? serializeDelivery(b) : null);
 }
 
+/** Compares on the frontmatter keys `b` writes (one key per field; a partial `wordpress` writes only some keys). */
 export function sameField(key: FieldKey, a: unknown, b: unknown): boolean {
-  return JSON.stringify(variantFields({ [key]: a })) === JSON.stringify(variantFields({ [key]: b }));
+  const fa = variantFields({ [key]: a });
+  const fb = variantFields({ [key]: b });
+  return Object.keys(fb).every((k) => JSON.stringify(fa[k]) === JSON.stringify(fb[k]));
+}
+
+/** The value before a write, limited to what the write touched (a partial `wordpress` restores only its keys). */
+function beforeOf(key: FieldKey, fresh: Variant, after: unknown): unknown {
+  const before = fresh[key];
+  if (key !== "wordpress" || !before || !after || typeof after !== "object") return before;
+  return Object.fromEntries(Object.keys(after).map((k) => [k, (before as unknown as Record<string, unknown>)[k]]));
 }
 
 /** The entries of a planned full delivery map that differ from the fresh ones (keys absent from `next` are left alone). */
@@ -31,7 +41,7 @@ export interface WriteRecord {
 export function recordWrite(file: TFile, fresh: Variant, applied: VariantUpdate): WriteRecord {
   const record: WriteRecord = { file, fields: [], deliveries: [] };
   for (const [key, after] of Object.entries(applied.fields ?? {}) as Array<[FieldKey, unknown]>) {
-    const before = fresh[key];
+    const before = beforeOf(key, fresh, after);
     if (!sameField(key, before, after)) record.fields.push({ key, before, after });
   }
   for (const [id, after] of Object.entries(applied.deliveries ?? {})) {

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
+import { MarkdownView, WorkspaceLeaf } from "../fakes/obsidian";
+import { formatDateTime, MINUTE } from "../../src/model/dates";
+import { dueItems } from "../../src/scheduler/due";
 import { IdempotencyCache } from "../../src/mcp/idempotency";
 import { fail, ok } from "../../src/mcp/tools";
 import { mcpCtx, type R } from "./helpers";
@@ -290,21 +293,153 @@ describe("IdempotencyCache", () => {
   it("replays a success, forgets failures and expires after the TTL", async () => {
     let now = 0;
     const cache = new IdempotencyCache(() => now, 1_000);
+    const args = { title: "A" };
     const fn = vi.fn(async () => ok({ path: "a.md" }));
-    expect(await cache.run("s", "key-1234", fn)).toEqual({ ok: true, data: { path: "a.md" } });
-    expect(await cache.run("s", "key-1234", fn)).toEqual({ ok: true, data: { path: "a.md", replayed: true } });
-    expect(await cache.run("other", "key-1234", fn)).toEqual({ ok: true, data: { path: "a.md" } });
+    expect(await cache.run("s", "key-1234", args, fn)).toEqual({ ok: true, data: { path: "a.md" } });
+    expect(await cache.run("s", "key-1234", args, fn)).toEqual({ ok: true, data: { path: "a.md", replayed: true } });
+    expect(await cache.run("other", "key-1234", args, fn)).toEqual({ ok: true, data: { path: "a.md" } });
     expect(fn).toHaveBeenCalledTimes(2);
     now = 2_000;
-    await cache.run("s", "key-1234", fn);
+    await cache.run("s", "key-1234", args, fn);
     expect(fn).toHaveBeenCalledTimes(3);
     const failing = vi.fn(async () => fail("nope"));
-    await cache.run("s", "key-fail", failing);
-    await cache.run("s", "key-fail", failing);
+    await cache.run("s", "key-fail", args, failing);
+    await cache.run("s", "key-fail", args, failing);
     expect(failing).toHaveBeenCalledTimes(2);
     const noKey = vi.fn(async () => ok());
-    await cache.run("s", undefined, noKey);
-    await cache.run("s", undefined, noKey);
+    await cache.run("s", undefined, args, noKey);
+    await cache.run("s", undefined, args, noKey);
     expect(noKey).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a key reused with different arguments; key order does not matter (I2)", async () => {
+    const cache = new IdempotencyCache(() => 0);
+    const fn = vi.fn(async () => ok({ path: "a.md" }));
+    await cache.run("s", "key-1234", { title: "A", body: { x: 1, y: 2 } }, fn);
+    expect(await cache.run("s", "key-1234", { body: { y: 2, x: 1 }, title: "A" }, fn)).toMatchObject({ ok: true, data: { replayed: true } });
+    expect(await cache.run("s", "key-1234", { title: "B" }, fn)).toEqual({ ok: false, error: "This idempotency_key was already used with different arguments. Use a new key." });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs once when concurrent replays find the first result gone (minor 4)", async () => {
+    const cache = new IdempotencyCache(() => 0);
+    let n = 0;
+    let valid = false;
+    const fn = vi.fn(async () => ok({ path: `a${++n}.md` }));
+    await cache.run("s", "key-1234", {}, fn, () => valid);
+    valid = false;
+    const stillValid = (o: R) => valid || o.data.path !== "a1.md";
+    const [a, b] = await Promise.all([cache.run("s", "key-1234", {}, fn, stillValid), cache.run("s", "key-1234", {}, fn, stillValid)]);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect([a.ok && a.data.path, b.ok && b.data.path]).toEqual(["a2.md", "a2.md"]);
+  });
+});
+
+describe("fix round 1", () => {
+  const WP = "Social/Posts/Recap.md";
+  const wpNote = {
+    path: WP,
+    frontmatter: { type: "social-post", platform: "wordpress", title: "Recap", channels: ["wp/eventx-berlin"], status: "draft", slug: "recap", tags: ["events"], featured_image: "[[event-x-cover.png|Cover]]" },
+    body: "# Recap\n\nText.\n",
+  };
+
+  it("adds a channel to a scheduled post as a draft, never inheriting scheduled (I1)", async () => {
+    const now = Date.parse("2026-10-08T09:00:00+02:00");
+    const at = now + 3 * MINUTE;
+    const path = "Social/Posts/Soon.md";
+    const c = await mcpCtx({
+      now,
+      notes: [{ path, frontmatter: { type: "social-post", platform: "linkedin", title: "Soon", channels: ["li/acme-studio"], status: "scheduled", scheduled_at: formatDateTime(at), deliveries: { "li/acme-studio": { status: "scheduled" } } }, body: "Hello\n" }],
+    });
+    const r = await c.call("update_variant", { path, channels: ["li/acme-studio", "li/maker-lab"] });
+    expect(r).toMatchObject({ ok: true, changed: true, note: "Added as draft; call schedule to plan it." });
+    const v = c.index.getVariant(path)!;
+    expect(v.deliveries["li/maker-lab"]).toEqual({ status: "draft" });
+    expect(v.deliveries["li/acme-studio"]).toEqual({ status: "scheduled" });
+    const due = dueItems(c.index.variants(), at + 60 * MINUTE, 15).filter((d) => d.path === path);
+    expect(due.map((d) => d.channelId)).toEqual(["li/acme-studio"]);
+  });
+
+  it("refuses a body write when the user edited the note after it was read (I3)", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    const file = c.app.vault.getFileByPath(X)!;
+    const write = c.deps.planner.write.bind(c.deps.planner);
+    vi.spyOn(c.deps.planner, "write").mockImplementationOnce(async (f, plan) => {
+      const result = await write(f, plan);
+      await c.app.vault.process(file, (t) => t.replace("twelve makers", "thirteen makers"));
+      return result;
+    });
+    const r = await c.call("update_variant", { path: X, body: "Claude's text" });
+    expect(r).toMatchObject({ ok: false, error: "The note changed since you read it; call get_post again." });
+    expect(await body(c, X)).toContain("thirteen makers");
+  });
+
+  it("flushes the open editor and refuses a stale base_body_hash (I3)", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    const read = await c.call("get_post", { path: X });
+    expect(typeof read.body_hash).toBe("string");
+    const disk = await c.app.vault.read(c.app.vault.getFileByPath(X)!);
+    const leaf = new WorkspaceLeaf(c.app);
+    const md = new MarkdownView(leaf);
+    md.file = c.app.vault.getFileByPath(X) as never;
+    md.editor = { getValue: () => disk.replace("One evening", "One late evening") };
+    leaf.view = md;
+    leaf.viewType = "markdown";
+    c.app.workspace.leaves.push(leaf);
+    const r = await c.call("update_variant", { path: X, body: "Claude's text", base_body_hash: read.body_hash });
+    expect(r).toMatchObject({ ok: false, error: "The note changed since you read it; call get_post again." });
+    expect(await body(c, X)).toContain("One late evening");
+    const again = await c.call("get_post", { path: X });
+    expect(again.body_hash).not.toBe(read.body_hash);
+    expect((await c.call("update_variant", { path: X, body: "Claude's text", base_body_hash: again.body_hash })).ok).toBe(true);
+  });
+
+  it("refuses the body write when a channel started publishing meanwhile (minor 3)", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    const file = c.app.vault.getFileByPath(X)!;
+    const write = c.deps.planner.write.bind(c.deps.planner);
+    vi.spyOn(c.deps.planner, "write").mockImplementationOnce(async (f, plan) => {
+      const result = await write(f, plan);
+      await c.writer.transitionDelivery(file as never, "x/you", "publishing");
+      return result;
+    });
+    const r = await c.call("update_variant", { path: X, body: "Claude's text" });
+    expect(r).toMatchObject({ ok: false, error: "This post is being published right now. Try again in a minute." });
+    expect(await body(c, X)).not.toContain("Claude's text");
+  });
+
+  it("writes only the WordPress keys that change; an aliased featured image survives (minor 1)", async () => {
+    const c = await mcpCtx({ notes: [wpNote] });
+    const file = c.app.vault.getFileByPath(WP)!;
+    const before = await c.app.vault.read(file);
+    const same = await c.call("update_variant", { path: WP, wordpress: { slug: "recap", tags: ["events"], featured_image: "event-x-cover.png" } });
+    expect(same).toMatchObject({ ok: true, changed: false });
+    expect(await c.app.vault.read(file)).toBe(before);
+    const r = await c.call("update_variant", { path: WP, wordpress: { tags: ["events", "recap"] } });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    expect(await fm(c, WP)).toMatchObject({ tags: ["events", "recap"], slug: "recap", featured_image: "[[event-x-cover.png|Cover]]" });
+  });
+
+  it("keeps the key on the created note when a later step fails, so a retry returns it (minor 5)", async () => {
+    const c = await mcpCtx();
+    vi.spyOn(c.writer, "patchVariant").mockRejectedValueOnce(new Error("disk full"));
+    const args = { platform: "x", campaign: EX, channels: ["x/you"], body: "Hi", url: "https://example.com/x", idempotency_key: "retry-after-partial" };
+    const first = await c.call("create_variant", args);
+    expect(first).toMatchObject({ ok: false, path: "Social/Event X/Event X – X 2.md" });
+    expect(first.error).toContain("disk full");
+    const retry = await c.call("create_variant", args);
+    expect(retry.path).toBe("Social/Event X/Event X – X 2.md");
+    expect(c.app.vault.getFileByPath("Social/Event X/Event X – X 3.md")).toBeNull();
+  });
+
+  it("does not count a trailing newline as a body change (minor 6)", async () => {
+    const c = await mcpCtx();
+    const X = "Social/Event X/Event X – X.md";
+    const current = await body(c, X);
+    const r = await c.call("update_variant", { path: X, body: current.replace(/\n+$/, "") });
+    expect(r).toMatchObject({ ok: true, changed: false });
   });
 });

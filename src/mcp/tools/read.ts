@@ -8,7 +8,7 @@ import { DELIVERY_STATUSES } from "../../model/schemas";
 import { blocking } from "../../platforms/checks";
 import { platformDef } from "../../platforms/registry";
 import { postItems } from "../../platforms/text";
-import { clip, findPost, noPost, normalizePathArg, zPath, zWhen } from "../common";
+import { bodyHash, clip, findPost, noPost, normalizePathArg, zPath, zWhen } from "../common";
 import type { McpToolDeps } from "../deps";
 import { campaignInfo, channelInfo, platformRules, postSummary } from "../present";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
@@ -166,6 +166,7 @@ export function registerReadTools(registry: ToolRegistry, deps: McpToolDeps): vo
             ? { wordpress: { slug: wp.slug ?? null, excerpt: wp.excerpt ?? null, categories: wp.categories, tags: wp.tags, featured_image: wp.featuredImage ?? null } }
             : {}),
           body: clip(content.body, 100_000),
+          body_hash: bodyHash(content.body),
           thread_items: def.capabilities.threads ? postItems(content.body, def).length : null,
           note_issues: v.issues,
           issues,

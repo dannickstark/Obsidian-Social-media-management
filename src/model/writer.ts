@@ -1,4 +1,4 @@
-import { getFrontMatterInfo, type App, type TFile } from "obsidian";
+import { getFrontMatterInfo, parseYaml, type App, type TFile } from "obsidian";
 import { isRecord, parseVariant, serializeDelivery, variantFields, type VariantPatch } from "./frontmatter";
 import { rollupStatus, transition } from "./stateMachine";
 import type { Delivery, DeliveryStatus, Variant } from "./types";
@@ -88,13 +88,17 @@ export class SafeWriter {
     });
   }
 
-  /** Replaces the note's body; the frontmatter block is kept exactly as it is. */
-  editBody(file: TFile, edit: (body: string) => string): Promise<void> {
+  /**
+   * Replaces the note's body; the frontmatter block is kept exactly as it is. `edit` also sees the current
+   * frontmatter (read only) and may throw to abort: then nothing is written.
+   */
+  editBody(file: TFile, edit: (body: string, fm: Frontmatter) => string): Promise<void> {
     return this.enqueue(file, async () => {
       await this.app.vault.process(file, (content) => {
         const info = getFrontMatterInfo(content);
         const head = info.exists ? content.slice(0, info.contentStart) : "";
-        const next = edit(info.exists ? content.slice(info.contentStart) : content);
+        const parsed: unknown = info.exists ? parseYaml(info.frontmatter) : null;
+        const next = edit(info.exists ? content.slice(info.contentStart) : content, isRecord(parsed) ? parsed : {});
         return head + (next.endsWith("\n") ? next : `${next}\n`);
       });
     });

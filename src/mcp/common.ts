@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { parseDateTime } from "../model/dates";
+import { cyrb53 } from "../util/hash";
 import type { McpToolDeps } from "./deps";
 
 export const zPath = z
@@ -69,3 +70,11 @@ export function untilIndexed(index: SocialIndex, predicate: () => boolean, timeo
 export function claudeNotice(deps: Pick<McpToolDeps, "planner">, message: string, path: string): void {
   deps.planner.actionNotice(message, "Open", () => deps.planner.openNote(path));
 }
+
+/** A body without its trailing line breaks: a missing final newline is not a change. */
+const normBody = (body: string): string => body.replace(/[\r\n]+$/, "");
+
+export const sameBody = (a: string, b: string): boolean => normBody(a) === normBody(b);
+
+/** What get_post returns and update_variant's base_body_hash is compared with (I3). */
+export const bodyHash = (body: string): string => cyrb53(normBody(body)).toString(36);
