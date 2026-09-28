@@ -6,6 +6,7 @@ import type { McpToolDeps } from "../deps";
 import { iso } from "../present";
 import { busyTimes, findFreeSlots, MAX_RANGE_DAYS, minutesOfDay } from "../slots";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
+import { MIN_SCHEDULE_LEAD_MS } from "./schedule";
 
 export function registerSlotTools(registry: ToolRegistry, deps: McpToolDeps): void {
   registry.add(
@@ -13,7 +14,7 @@ export function registerSlotTools(registry: ToolRegistry, deps: McpToolDeps): vo
       name: "find_free_slots",
       title: "Find free slots",
       description:
-        "Proposes posting times per channel that keep min_spacing_minutes away from everything already planned on that channel (drafts included), inside the preferred windows (default 09:00–18:00 local), closest to the channel's usual time first. Deterministic. Use it to fill a campaign timeline, then confirm the plan with the user before schedule.",
+        "Proposes posting times per channel that keep min_spacing_minutes away from everything already planned on that channel (drafts included), inside the preferred windows (default 09:00–18:00 local), closest to the channel's usual time first. Never proposes a time less than 10 minutes from now, so schedule accepts every suggestion. Deterministic. Use it to fill a campaign timeline, then confirm the plan with the user before schedule.",
       input: z
         .object({
           channels: zChannelsArg,
@@ -52,12 +53,14 @@ export function registerSlotTools(registry: ToolRegistry, deps: McpToolDeps): vo
           for (const id of expanded) if (!ids.includes(id)) ids.push(id);
         }
         const rows = deps.planner.rows();
+        // Ruling P5: schedule refuses anything less than 10 minutes ahead, so no suggestion is earlier than that.
+        const earliest = now + MIN_SCHEDULE_LEAD_MS - 1;
         const channels = ids.map((id) => {
           const channel = deps.channels.get(id)!;
           const slots = findFreeSlots(busyTimes(rows, id), {
             from,
             to,
-            now,
+            now: earliest,
             minSpacingMinutes: a.min_spacing_minutes,
             stepMinutes: a.step_minutes,
             perChannel: a.per_channel,

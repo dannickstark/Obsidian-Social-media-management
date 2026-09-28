@@ -69,4 +69,17 @@ describe("find_free_slots tool", () => {
     expect((await c.call("find_free_slots", { channels: ["li/me"], from: "2026-10-10T00:00:00+02:00", to: "2027-01-10T00:00:00+01:00" })).error).toBe("Ask for at most 62 days at a time.");
     expect((await c.call("find_free_slots", { channels: ["li/me"], preferred_windows: [{ start: "18:00", end: "09:00" }] })).error).toBe("Each window must start before it ends.");
   });
+
+  it("skips candidates less than the schedule lead time from now (#76 follow-up)", async () => {
+    const c = await mcpCtx({ now: at(0, 8, 55), seed: false });
+    const r = await c.call("find_free_slots", {
+      channels: ["li/me"],
+      from: "2026-10-12T00:00",
+      to: "2026-10-13T00:00",
+      preferred_windows: [{ start: "09:00", end: "09:00" }],
+    });
+    expect(r.ok).toBe(true);
+    const channel = r.channels.find((ch: R) => ch.channel_id === "li/me");
+    expect(channel.slots).toEqual([]);
+  });
 });
