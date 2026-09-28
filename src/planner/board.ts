@@ -54,9 +54,11 @@ export function planBoardMove(
   return { ok: true, move: { kind: "setStatus", status: to } };
 }
 
-export function scheduleDeliveries(v: Pick<Variant, "channels" | "deliveries">): Record<string, Delivery> {
+export function scheduleDeliveries(v: Pick<Variant, "channels" | "deliveries" | "invalidDeliveries">): Record<string, Delivery> {
   const out: Record<string, Delivery> = { ...v.deliveries };
   for (const id of v.channels) {
+    // An unreadable entry (typo'd status) is frozen: writing `scheduled` over it could publish it twice.
+    if (v.invalidDeliveries?.includes(id)) continue;
     const current = out[id] ?? { status: "draft" as const };
     if (canTransition(current.status, "scheduled")) out[id] = transition(current, "scheduled");
   }

@@ -8,7 +8,7 @@ export interface ScheduleRequest {
 }
 
 export type SchedulePlan =
-  | { fields: { scheduledAt: number; reminders: number[] }; deliveries: Record<string, Delivery> }
+  | { fields: { scheduledAt: number; reminders: number[] }; deliveries: Record<string, Delivery>; frozen?: string[] }
   | { refuse: string };
 
 /** Channels that keep their status and their time: done, in flight, or already on the platform. */
@@ -16,11 +16,15 @@ const KEEP = new Set<DeliveryStatus>(["published", "skipped", "publishing", "han
 
 export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defaultStagger: number): SchedulePlan {
   if (!fresh.channels.length) return { refuse: "Pick at least one channel before scheduling." };
+  // An unreadable entry (typo'd status) is frozen: writing `scheduled` over it could publish it twice.
+  const frozen = fresh.channels.filter((id) => fresh.invalidDeliveries?.includes(id));
+  if (frozen.length === fresh.channels.length) return { refuse: "Every channel's delivery status can't be read from the note. Fix it before scheduling." };
   if (fresh.channels.some((id) => fresh.deliveries[id]?.status === "publishing")) return { refuse: "This post is being published right now." };
   const hasRecords = fresh.channels.some((id) => fresh.deliveries[id] !== undefined);
   if (!hasRecords && (fresh.status === "published" || fresh.status === "partial")) return { refuse: "This post was already published." };
   const deliveries: Record<string, Delivery> = {};
   for (const id of fresh.channels) {
+    if (frozen.includes(id)) continue;
     const d = fresh.deliveries[id];
     if (d && KEEP.has(d.status)) {
       if (d.at === undefined) {
@@ -35,11 +39,19 @@ export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defau
     delete next.error;
     deliveries[id] = next;
   }
-  return { fields: { scheduledAt: req.at, reminders: req.reminders }, deliveries };
+  return { fields: { scheduledAt: req.at, reminders: req.reminders }, deliveries, ...(frozen.length ? { frozen } : {}) };
 }
 
-export function scheduleNeeds(v: Pick<Variant, "channels" | "deliveries">, at: number, now: number): { past: boolean; handedOver: boolean } {
-  return { past: at < now, handedOver: v.channels.some((id) => v.deliveries[id]?.status === "handed_over") };
+export function scheduleNeeds(
+  v: Pick<Variant, "channels" | "deliveries">,
+  at: number,
+  now: number,
+): { past: boolean; handedOver: boolean; awaitingYou: boolean } {
+  return {
+    past: at < now,
+    handedOver: v.channels.some((id) => v.deliveries[id]?.status === "handed_over"),
+    awaitingYou: v.channels.some((id) => v.deliveries[id]?.status === "awaiting_you"),
+  };
 }
 
 /** Static in v1: the first selected channel with a usual posting time. */

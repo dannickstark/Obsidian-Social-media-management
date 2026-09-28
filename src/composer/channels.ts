@@ -9,6 +9,7 @@ const STAYS: Partial<Record<DeliveryStatus, string>> = {
   publishing: "is being published right now",
   handed_over: "was handed over to the platform",
   check_needed: "needs a check after an interrupted publish",
+  awaiting_you: "is awaiting you to post manually",
 };
 const PUBLISHED = new Set<VariantStatus>(["published", "partial"]);
 const SCHEDULED = new Set<VariantStatus>(["scheduled", "partial", "overdue", "attention"]);
@@ -21,7 +22,10 @@ function withChannels(fresh: Variant, ids: readonly string[]): VariantUpdate {
   const channels = [...fresh.channels, ...ids];
   if (!hasRecords(fresh)) return { fields: { channels } };
   const status = inheritedStatus(fresh);
-  return { fields: { channels }, deliveries: Object.fromEntries(ids.map((id) => [id, { status } satisfies Delivery])) };
+  // An id with an unreadable delivery entry (typo'd status) is frozen: never write over it here either.
+  const writable = ids.filter((id) => !fresh.invalidDeliveries?.includes(id));
+  if (!writable.length) return { fields: { channels } };
+  return { fields: { channels }, deliveries: Object.fromEntries(writable.map((id) => [id, { status } satisfies Delivery])) };
 }
 
 export function planToggleChannel(
@@ -36,6 +40,9 @@ export function planToggleChannel(
     return withChannels(fresh, [channel.id]);
   }
   if (!has) return {};
+  if (fresh.invalidDeliveries?.includes(channel.id)) {
+    return { refuse: `${channel.name}'s delivery status can't be read from the note, so it stays on this post until you fix it.` };
+  }
   const d = fresh.deliveries[channel.id];
   const why = d ? STAYS[d.status] : !hasRecords(fresh) && PUBLISHED.has(fresh.status) ? STAYS.published : undefined;
   if (why) return { refuse: `${channel.name} ${why}, so it stays on this post.` };

@@ -106,7 +106,7 @@ export function parseCampaign(fm: Record<string, unknown>, path: string): Parsed
   return { value: campaign, issues };
 }
 
-function parseDeliveries(raw: unknown, channels: string[], issues: Issue[]): Record<string, Delivery> {
+function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], invalid: string[]): Record<string, Delivery> {
   const deliveries: Record<string, Delivery> = {};
   if (isBlank(raw)) return deliveries;
   if (!isRecord(raw)) {
@@ -117,10 +117,14 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[]): Rec
     const field = `deliveries.${id}`;
     if (!isRecord(value)) {
       issues.push({ level: "warning", field, message: "Delivery must be an object" });
+      invalid.push(id);
       continue;
     }
     const status = take(zDeliveryStatus, value.status, `${field}.status`, issues, "warning");
-    if (!status) continue;
+    if (!status) {
+      invalid.push(id);
+      continue;
+    }
     const d: Delivery = { status };
     const at = takeDate(value.at, `${field}.at`, issues);
     if (at !== undefined) d.at = at;
@@ -205,6 +209,7 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
     if (!channels.includes(id)) channels.push(id);
   }
 
+  const invalidDeliveries: string[] = [];
   const variant: Variant = {
     path,
     platform,
@@ -222,11 +227,12 @@ export function parseVariant(fm: Record<string, unknown>, path: string): Parsed<
     media: splitList(fm.media)
       .map(linkTarget)
       .filter((m): m is string => m !== undefined),
-    deliveries: parseDeliveries(fm.deliveries, channels, issues),
+    deliveries: parseDeliveries(fm.deliveries, channels, issues, invalidDeliveries),
   };
 
   const mediaMeta = parseMediaMeta(fm.media_meta, issues);
   if (mediaMeta) variant.mediaMeta = mediaMeta;
+  if (invalidDeliveries.length) variant.invalidDeliveries = invalidDeliveries;
 
   if (platform === "wordpress") {
     variant.wordpress = {

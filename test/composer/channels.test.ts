@@ -38,8 +38,27 @@ describe("planToggleChannel", () => {
     ["publishing", "Me is being published right now, so it stays on this post."],
     ["handed_over", "Me was handed over to the platform, so it stays on this post."],
     ["check_needed", "Me needs a check after an interrupted publish, so it stays on this post."],
+    ["awaiting_you", "Me is awaiting you to post manually, so it stays on this post."],
   ] as const)("refuses to remove a %s channel (review focus 4)", (status, reason) => {
     expect(planToggleChannel(v({ deliveries: { "li/me": { status } } }), ch("li/me", "Me"), false)).toEqual({ refuse: reason });
+  });
+
+  it("refuses to remove a channel with an unreadable delivery entry (M2b ruling P1)", () => {
+    const post = v({ invalidDeliveries: ["li/acme"] });
+    expect(planToggleChannel(post, ch("li/acme", "Acme"), false)).toEqual({
+      refuse: "Acme's delivery status can't be read from the note, so it stays on this post until you fix it.",
+    });
+  });
+
+  it("never writes over an unreadable delivery entry when re-adding the channel (M2b ruling P1)", () => {
+    const post = v({
+      channels: ["li/me"],
+      status: "scheduled",
+      scheduledAt: 1,
+      deliveries: { "li/me": { status: "scheduled" } },
+      invalidDeliveries: ["li/acme"],
+    });
+    expect(planToggleChannel(post, ch("li/acme", "Acme"), true)).toEqual({ fields: { channels: ["li/me", "li/acme"] } });
   });
 
   it("refuses to remove a channel of a post stored as published without records", () => {
@@ -62,5 +81,20 @@ describe("planSelectGroup", () => {
     const group = [ch("li/acme"), ch("li/osmm"), ch("x/you", "@you", "x"), ch("li/maker")];
     expect(planSelectGroup(v(), group)).toEqual({ fields: { channels: ["li/me", "li/acme", "li/osmm", "li/maker"] } });
     expect(planSelectGroup(v({ channels: ["li/acme", "li/osmm", "li/maker"] }), group)).toEqual({});
+  });
+
+  it("never writes over an unreadable delivery entry among the added channels (M2b ruling P1)", () => {
+    const post = v({
+      channels: ["li/me"],
+      status: "scheduled",
+      scheduledAt: 1,
+      deliveries: { "li/me": { status: "scheduled" } },
+      invalidDeliveries: ["li/osmm"],
+    });
+    const group = [ch("li/osmm"), ch("li/maker")];
+    expect(planSelectGroup(post, group)).toEqual({
+      fields: { channels: ["li/me", "li/osmm", "li/maker"] },
+      deliveries: { "li/maker": { status: "scheduled" } },
+    });
   });
 });

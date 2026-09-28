@@ -76,6 +76,8 @@ export interface Variant {
   media: string[];
   mediaMeta?: Record<string, MediaMeta>;
   deliveries: Record<string, Delivery>;
+  /** Ids of delivery entries that exist but can't be read (e.g. a typo'd status). They are frozen: never published or overwritten. */
+  invalidDeliveries?: string[];
   wordpress?: WordPressFields;
 }
 

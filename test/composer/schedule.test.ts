@@ -58,12 +58,29 @@ describe("planComposerSchedule", () => {
   ])("refuses %#", (post, reason) => {
     expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({ refuse: reason });
   });
+
+  it("skips a channel with an unreadable delivery entry and reports it (M2b ruling P1)", () => {
+    const post = v({ invalidDeliveries: ["li/acme"] });
+    expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({
+      fields: { scheduledAt: NEW, reminders: [] },
+      deliveries: { "li/me": { status: "scheduled" }, "li/maker": { status: "scheduled" } },
+      frozen: ["li/acme"],
+    });
+  });
+
+  it("refuses when every channel has an unreadable delivery entry (M2b ruling P1)", () => {
+    const post = v({ channels: ["li/acme"], invalidDeliveries: ["li/acme"] });
+    expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({
+      refuse: "Every channel's delivery status can't be read from the note. Fix it before scheduling.",
+    });
+  });
 });
 
 describe("schedule helpers", () => {
   it("says what needs confirming", () => {
-    expect(scheduleNeeds(v(), T - 1, T)).toEqual({ past: true, handedOver: false });
-    expect(scheduleNeeds(v({ deliveries: { "li/acme": { status: "handed_over" } } }), T + 1, T)).toEqual({ past: false, handedOver: true });
+    expect(scheduleNeeds(v(), T - 1, T)).toEqual({ past: true, handedOver: false, awaitingYou: false });
+    expect(scheduleNeeds(v({ deliveries: { "li/acme": { status: "handed_over" } } }), T + 1, T)).toEqual({ past: false, handedOver: true, awaitingYou: false });
+    expect(scheduleNeeds(v({ deliveries: { "li/acme": { status: "awaiting_you" } } }), T + 1, T)).toEqual({ past: false, handedOver: false, awaitingYou: true });
   });
 
   it("finds the best slot from the channels' usual times", () => {

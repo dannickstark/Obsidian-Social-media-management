@@ -157,6 +157,17 @@ describe("UI writes against fresh frontmatter (G1)", () => {
     });
   });
 
+  it("board schedule never overwrites an unreadable delivery entry (parked M1 item)", async () => {
+    const c = await makeCtx({ notes: [p1({ status: "draft" }, "draft")] });
+    const v = c.index.getVariant(P1)!;
+    await c.ctx.actions.schedule(v, T + DAY);
+    const fm = await fmOf(c, P1);
+    expect(fm.deliveries).toEqual({
+      "li/me": { status: "scheduled" },
+      "li/acme": { status: "Handed-Over", url: "https://x" },
+    });
+  });
+
   it("applyTemplate writes against fresh frontmatter and skips posts published since", async () => {
     const c = await makeCtx({ notes: [p1({ status: "scheduled", note: "keep me" })] });
     const v = c.index.getVariant(P1)!;

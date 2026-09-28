@@ -41,8 +41,16 @@ function storedStatusToRow(status: IndexedVariant["status"]): RowStatus {
 }
 
 /** Status of a channel without a delivery record, when some listed channels do have records. */
-function missingChannelStatus(v: IndexedVariant): RowStatus {
+function missingChannelStatus(v: Pick<IndexedVariant, "status" | "scheduledAt">): RowStatus {
   return v.status === "idea" ? "idea" : inheritedStatus(v);
+}
+
+/** The status one listed channel shows as a row: its record, else what it inherits (exactly what expandRows uses). */
+export function channelRowStatus(v: Pick<IndexedVariant, "channels" | "deliveries" | "status" | "scheduledAt">, channelId: string): RowStatus {
+  const own = v.deliveries[channelId];
+  if (own) return own.status;
+  const hasRecords = v.channels.some((c) => v.deliveries[c] !== undefined);
+  return hasRecords ? missingChannelStatus(v) : storedStatusToRow(v.status);
 }
 
 export function expandRows(variants: readonly IndexedVariant[], defaultStagger: number): PostRow[] {
@@ -52,15 +60,12 @@ export function expandRows(variants: readonly IndexedVariant[], defaultStagger: 
       rows.push({ key: `${v.path}#`, variant: v, channelId: null, status: storedStatusToRow(v.status), at: v.scheduledAt });
       continue;
     }
-    // Without records for listed channels, the stored status is authoritative.
-    const hasRecords = v.channels.some((c) => v.deliveries[c] !== undefined);
-    const missing = hasRecords ? missingChannelStatus(v) : storedStatusToRow(v.status);
     for (const id of v.channels) {
       rows.push({
         key: `${v.path}#${id}`,
         variant: v,
         channelId: id,
-        status: v.deliveries[id]?.status ?? missing,
+        status: channelRowStatus(v, id),
         at: deliveryTime(v, id, defaultStagger),
       });
     }

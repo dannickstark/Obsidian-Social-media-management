@@ -70,7 +70,16 @@ export class ComposerActions {
   }
 
   check(v: Variant, content: LoadedContent): Issue[] {
-    return validateAll({ variant: v, body: content.body, media: content.media }, this.channelsOf(v));
+    const issues = validateAll({ variant: v, body: content.body, media: content.media }, this.channelsOf(v));
+    const frozen: Issue[] = (v.invalidDeliveries ?? [])
+      .filter((id) => v.channels.includes(id))
+      .map((id) => ({
+        level: "error",
+        field: `deliveries.${id}`,
+        code: "unreadable-delivery",
+        message: `Fix the delivery status of ${this.deps.channels.get(id)?.name ?? id} in the note: it can't be read, so it won't be published.`,
+      }));
+    return [...frozen, ...issues];
   }
 
   counters(v: Variant, content: LoadedContent, channel?: Channel): Counter[] {
@@ -275,13 +284,24 @@ export class ComposerActions {
     ) {
       return false;
     }
+    if (
+      needs.awaitingYou &&
+      !(await planner.confirm("Some channels are awaiting you to post manually. Changing the time here won't change what you already agreed to post. Continue?", "Continue"))
+    ) {
+      return false;
+    }
     const stagger = this.deps.settings().defaultStaggerMinutes;
+    let frozen: string[] = [];
     const result = await planner.write(v.file, (fresh) => {
       const plan = planComposerSchedule(fresh, req, stagger);
       if ("refuse" in plan) return plan;
+      frozen = plan.frozen ?? [];
       return { fields: plan.fields, deliveries: deliveryChanges(fresh, plan.deliveries as Record<string, Delivery>) };
     });
-    planner.afterWrite(result, `Scheduled for ${formatShortDate(req.at)} ${formatTime(req.at)}.`);
+    const suffix = frozen.length
+      ? ` ${frozen.length} channel${frozen.length === 1 ? "" : "s"} skipped: an unreadable delivery entry.`
+      : "";
+    planner.afterWrite(result, `Scheduled for ${formatShortDate(req.at)} ${formatTime(req.at)}.${suffix}`);
     return result.ok;
   }
 

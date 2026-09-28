@@ -62,6 +62,8 @@ describe("SchedulePanel", () => {
   it("keeps a published channel untouched when rescheduling a partial post (review focus 5)", async () => {
     const c = await makeCtx({ seed: true });
     const LI = "Social/Event X/Event X – LinkedIn.md";
+    // li/acme-studio is awaiting_you in the seed data (M2b ruling P2): confirm the move.
+    c.ctx.actions.confirm = async () => true;
     const before = (await fm(c, LI)).deliveries as Record<string, unknown>;
     render(SchedulePanel, { props: { variant: c.index.getVariant(LI)!, issues: [] }, context: osmmContext(c.ctx) });
     await setWhen("2026-10-15", "17:30");
