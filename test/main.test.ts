@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import type { PublishDeps } from "../src/publish/actions";
 import { App, Modal, Notice, requestUrlMock, setPlatform, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
+import { browser } from "./fakes/browser";
 import OsmmPlugin, { LINK_READY_TIMEOUT_MS } from "../src/main";
 import { formatDateTime } from "../src/model/dates";
 import { CLOSED } from "../src/mcp/approval";
@@ -88,6 +89,9 @@ describe("OsmmPlugin", () => {
       "Phone reminders (ntfy)",
       "About phone reminders",
       "Phone reminders on this device",
+      "Claude Code",
+      "About Claude Code",
+      "MCP server on this device",
       "Channels",
       "Schedule templates",
       "Launch",
@@ -854,5 +858,103 @@ describe("Claude Code server (#73)", () => {
     expect(await answer).toEqual({ approved: false, reason: CLOSED });
     expect(Modal.opened.at(-1)!.isOpen).toBe(false);
     expect(await plugin.approvals.request(req)).toEqual({ approved: false, reason: CLOSED });
+  });
+
+  it("sets up Claude Code from the settings without the token leaving secret storage (#78)", async () => {
+    const { app, plugin } = await loaded();
+    const port = await freePort();
+    plugin.setDevice({ mcp: { enabled: false, port } });
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    Setting.all = [];
+    tab.display();
+    await (last("MCP server on this device").components[0] as ToggleComponent).toggle(true);
+    expect(get(plugin.mcp.status)).toEqual({ state: "on", port });
+    expect(Setting.all.map((s) => s.name)).toEqual(
+      expect.arrayContaining(["Status", "Port", "Connect Claude Code", "Test connection", "Access token for Claude", "Publishing from Claude"]),
+    );
+    const token = plugin.mcp.token()!;
+    expect(last("Connect Claude Code").desc).toContain('--header "Authorization: Bearer ••••"');
+    expect(last("Connect Claude Code").desc).not.toContain(token);
+    await (last("Connect Claude Code").components[0] as ButtonComponent).click();
+    expect(browser.clipboard.at(-1)).toEqual({
+      kind: "text",
+      text: `claude mcp add --transport http --scope user --header "Authorization: Bearer ${token}" osmm http://127.0.0.1:${port}/mcp`,
+    });
+    await (last("Test connection").components[0] as ButtonComponent).click();
+    expect(Notice.messages.at(-1)).toBe("The server answers. Claude Code can connect.");
+    expect(JSON.stringify(await plugin.loadData())).not.toContain(token);
+    expect(JSON.stringify(app.loadLocalStorage("osmm-device"))).not.toContain(token);
+    plugin.unload();
+  });
+
+  it("rotates the token after a confirmation and validates the port (#73, #78)", async () => {
+    const { plugin } = await loaded();
+    const port = await freePort();
+    plugin.setDevice({ mcp: { enabled: true, port } });
+    await plugin.mcp.apply();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    Setting.all = [];
+    tab.display();
+    const old = plugin.mcp.token();
+    const clicked = (last("Access token for Claude").components[0] as ButtonComponent).click();
+    [...Modal.opened.at(-1)!.contentEl.querySelectorAll("button")].find((b) => b.textContent === "New token")!.click();
+    await clicked;
+    expect(plugin.mcp.token()).not.toBe(old);
+    await (last("Port").components[0] as TextComponent).change("80");
+    await (last("Port").components[1] as ButtonComponent).click();
+    expect(Notice.messages.at(-1)).toBe("Use a port between 1024 and 65535.");
+    expect(plugin.device.mcp.port).toBe(port);
+    plugin.unload();
+  });
+
+  it("lets a channel publish without asking only after a confirmation (#77)", async () => {
+    const { plugin } = await loaded();
+    await plugin.channels.upsertChannel({ id: "tg/event-x", platform: "telegram", name: "Event X channel", kind: "page", avatarColor: "#5cc6d6", method: "api" });
+    plugin.setDevice({ mcp: { enabled: true, port: await freePort() } });
+    await plugin.mcp.apply();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    Setting.all = [];
+    tab.display();
+    const policy = Setting.all.filter((s) => s.name === "Event X channel (Telegram)").at(-1)!.components[0] as DropdownComponent;
+    expect(policy.value).toBe("ask");
+    const changed = policy.change("allow");
+    [...Modal.opened.at(-1)!.contentEl.querySelectorAll("button")].find((b) => b.textContent === "Allow")!.click();
+    await changed;
+    expect(plugin.settings.publishWithoutAsking).toEqual(["tg/event-x"]);
+    plugin.unload();
+  });
+
+  it("shows the setup command copy explains where the token ends up (#78, P9)", async () => {
+    const { plugin } = await loaded();
+    plugin.setDevice({ mcp: { enabled: true, port: await freePort() } });
+    await plugin.mcp.apply();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    Setting.all = [];
+    tab.display();
+    await (last("Connect Claude Code").components[0] as ButtonComponent).click();
+    expect(Notice.messages.at(-1)).toContain("Claude Code's");
+    plugin.unload();
+  });
+
+  it("prunes publishWithoutAsking when a channel is deleted (Task 9 carry)", async () => {
+    const { plugin } = await loaded();
+    await plugin.channels.upsertChannel({ id: "tg/event-x", platform: "telegram", name: "Event X channel", kind: "page", avatarColor: "#5cc6d6", method: "api" });
+    await plugin.updateSettings({ publishWithoutAsking: ["tg/event-x"] });
+    expect(plugin.settings.publishWithoutAsking).toEqual(["tg/event-x"]);
+    await plugin.channels.removeChannel("tg/event-x");
+    expect(plugin.settings.publishWithoutAsking).toEqual([]);
+    plugin.unload();
+  });
+
+  it("has no Claude Code section on phones", async () => {
+    setPlatform("iphone");
+    const { plugin } = await loaded();
+    Setting.all = [];
+    (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!.display();
+    expect(Setting.all.map((s) => s.name)).not.toContain("Claude Code");
+    plugin.unload();
   });
 });

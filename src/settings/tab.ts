@@ -1,5 +1,8 @@
-import { normalizePath, Notice, PluginSettingTab, Setting, type App } from "obsidian";
+import { get } from "svelte/store";
+import { normalizePath, Notice, Platform, PluginSettingTab, Setting, type App } from "obsidian";
+import type { McpActivity, McpStatus } from "../mcp/service";
 import type OsmmPlugin from "../main";
+import { PLATFORM_META } from "../model/platforms";
 import { formatTemplateLines, parseTemplateLines } from "../planner/templates";
 import { ClipboardService } from "../publish/clipboard";
 import { WITHDRAW_WAIT_MS } from "../reminders/ntfy/booker";
@@ -7,11 +10,12 @@ import { testMessage } from "../reminders/ntfy/client";
 import { DEFAULT_NTFY_SERVER, normalizeServer, randomTopic, TOPIC_RE } from "../reminders/ntfy/config";
 import { SecretIds } from "../secrets/secrets";
 import { confirmDialog } from "../ui/dialogs";
+import { formatTime } from "../ui/format";
 import { settlesWithin } from "../util/time";
 import { mountSvelte, type Mounted } from "../ui/mount";
 import { osmmContext } from "../ui/context";
 import ChannelsSection from "./ChannelsSection.svelte";
-import { cleanDeviceName } from "./device";
+import { cleanDeviceName, parsePort } from "./device";
 import { publisherDescription } from "./publisher";
 import { parseMinutesList } from "./settings";
 
@@ -23,6 +27,28 @@ const TOKEN_DESC = "Only for protected topics (your own server, or a reserved nt
 const HTTP_TOKEN_WARNING = "Warning: this server uses http, so the token travels unencrypted. Use an https address.";
 /** Server and Topic edits apply this long after the last keystroke, or when the field loses focus (final review 1). */
 export const TARGET_EDIT_DELAY_MS = 1_500;
+
+const ABOUT_CLAUDE =
+  "Lets Claude Code read your plan, draft, check and schedule posts in this vault through a local MCP server. It listens on this computer only (127.0.0.1) and needs a secret token. Claude asks you here before it publishes or updates a live post; a post it schedules goes out at its time without asking again.";
+// P9: the setup command carries the token in the clear, and running it stores that token in Claude Code's own
+// user config (and possibly the shell history) — the copy here must say so, not claim it stays in secret storage.
+const CONNECT_CLAUDE =
+  "Paste this into a terminal once. Running it stores the token in Claude Code's own configuration, and possibly your shell history. Run it again after a new token or a port change:";
+
+export function mcpStatusText(status: McpStatus, activity: McpActivity): string {
+  const parts: string[] = [];
+  if (status.state === "on") parts.push(`Running on 127.0.0.1:${status.port}.`);
+  else if (status.state === "starting") parts.push("Starting.");
+  else if (status.state === "error") parts.push(`Not running: ${status.message}`);
+  else if (status.state === "off") parts.push("Off.");
+  else parts.push("Only available in Obsidian for desktop.");
+  if (activity.last) parts.push(`Last request from Claude: ${activity.last.label} at ${formatTime(activity.last.at)}.`);
+  if (activity.refused) {
+    const why = activity.refused.status === 401 ? "missing or wrong token" : "not from this computer, or from a web page";
+    parts.push(`Last refused request at ${formatTime(activity.refused.at)} (${why}).`);
+  }
+  return parts.join(" ");
+}
 
 /** A Server or Topic value typed but not applied yet. */
 interface TargetEdit {
@@ -178,6 +204,8 @@ export class OsmmSettingTab extends PluginSettingTab {
       );
 
     this.phoneSection(containerEl);
+
+    if (Platform.isDesktopApp) this.claudeSection(containerEl);
 
     new Setting(containerEl).setName("Channels").setHeading();
     const host = document.createElement("div");
@@ -371,6 +399,99 @@ export class OsmmSettingTab extends PluginSettingTab {
     if (change.server !== undefined) osmm.setDevice({ ntfy: { ...osmm.device.ntfy, server: change.server } });
     if (change.topic !== undefined) osmm.secrets.set(SecretIds.ntfyTopic, change.topic);
     return true;
+  }
+
+  private claudeSection(containerEl: HTMLElement): void {
+    const osmm = this.osmm;
+    new Setting(containerEl).setName("Claude Code").setHeading();
+    new Setting(containerEl).setName("About Claude Code").setDesc(ABOUT_CLAUDE);
+    new Setting(containerEl)
+      .setName("MCP server on this device")
+      .setDesc("Off by default. Stored on this device only; the token stays in this device's secret storage.")
+      .addToggle((t) =>
+        t.setValue(osmm.device.mcp.enabled).onChange(async (value) => {
+          osmm.setDevice({ mcp: { ...osmm.device.mcp, enabled: value } });
+          await osmm.mcp.apply();
+          this.display();
+        }),
+      );
+    if (!osmm.device.mcp.enabled) return;
+
+    new Setting(containerEl).setName("Status").setDesc(mcpStatusText(get(osmm.mcp.status), get(osmm.mcp.activity)));
+
+    let port = String(osmm.device.mcp.port);
+    new Setting(containerEl)
+      .setName("Port")
+      .setDesc("From 1024 to 65535; 27150 by default. Run the setup command again after a change.")
+      .addText((t) => t.setValue(port).onChange((value) => void (port = value)))
+      .addButton((b) =>
+        b.setButtonText("Apply").onClick(async () => {
+          const parsed = parsePort(port);
+          if (parsed === null) {
+            new Notice("Use a port between 1024 and 65535.");
+            return;
+          }
+          osmm.setDevice({ mcp: { ...osmm.device.mcp, port: parsed } });
+          await osmm.mcp.apply();
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Connect Claude Code")
+      .setDesc(`${CONNECT_CLAUDE} ${osmm.mcp.maskedSetupCommand()}`)
+      .addButton((b) =>
+        b
+          .setButtonText("Copy setup command")
+          .setCta()
+          .onClick(async () => {
+            const command = osmm.mcp.setupCommand();
+            if (command && (await new ClipboardService(this.app).copyText(command)))
+              new Notice("Setup command copied. It contains your token: running it stores the token in Claude Code's own configuration, and possibly your shell history, so don't share it.");
+          }),
+      );
+
+    new Setting(containerEl).setName("Test connection").addButton((b) =>
+      b.setButtonText("Test").onClick(async () => {
+        const result = await osmm.mcp.testConnection();
+        new Notice(result.ok ? "The server answers. Claude Code can connect." : `No connection: ${result.message}`);
+      }),
+    );
+
+    new Setting(containerEl)
+      .setName("Access token for Claude")
+      .setDesc("Stored in this device's secret storage. A new token disconnects Claude Code until you run the new setup command.")
+      .addButton((b) =>
+        b.setButtonText("New token").onClick(async () => {
+          const ok = await confirmDialog(this.app, "Make a new token? Claude Code stops connecting until you copy and run the setup command again.", "New token");
+          if (!ok) return;
+          osmm.mcp.rotateToken();
+          new Notice("New token made. Copy the setup command again.");
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Publishing from Claude")
+      .setDesc("Claude asks you in Obsidian before it publishes now or updates a live post (publish_now, push_update). Allow a channel below to skip that question for publish_now only — push_update always asks, and a post Claude schedules goes out at its time without a second question.");
+    for (const channel of osmm.channels.list()) {
+      new Setting(containerEl).setName(`${channel.name} (${PLATFORM_META[channel.platform].label})`).addDropdown((d) =>
+        d
+          .addOption("ask", "Ask me first")
+          .addOption("allow", "Publish without asking")
+          .setValue(osmm.settings.publishWithoutAsking.includes(channel.id) ? "allow" : "ask")
+          .onChange(async (value) => {
+            if (value === "allow" && !(await confirmDialog(this.app, `Let Claude publish to ${channel.name} without asking you first? This covers publish_now only; push_update always asks.`, "Allow"))) {
+              d.setValue("ask");
+              return;
+            }
+            const next = new Set(osmm.settings.publishWithoutAsking);
+            if (value === "allow") next.add(channel.id);
+            else next.delete(channel.id);
+            await osmm.updateSettings({ publishWithoutAsking: [...next] });
+          }),
+      );
+    }
   }
 
   override hide(): void {

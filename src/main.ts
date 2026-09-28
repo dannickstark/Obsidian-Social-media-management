@@ -128,7 +128,10 @@ export default class OsmmPlugin extends Plugin {
     this.channels = new ChannelRegistry({
       read: () => this.settings,
       write: async (next) => {
-        this.settings = migrateSettings({ ...this.settings, ...next });
+        // Task 9 carry: a channel removed here must not stay listed in publishWithoutAsking.
+        const ids = new Set(next.channels.map((c) => c.id));
+        const publishWithoutAsking = this.settings.publishWithoutAsking.filter((id) => ids.has(id));
+        this.settings = migrateSettings({ ...this.settings, ...next, publishWithoutAsking });
         this.settingsStore.set(this.settings);
         await this.saveSettings();
       },
@@ -273,6 +276,7 @@ export default class OsmmPlugin extends Plugin {
       version: this.manifest.version,
       now: () => Date.now(),
     });
+    ui.mcp = this.mcp;
     this.register(() => void this.mcp.dispose());
     // A device that becomes the publisher after start-up runs the startup check it skipped (spec §5.1, M3 P2).
     let wasPublisher = this.publisher.isPublisher();

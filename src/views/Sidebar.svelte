@@ -4,6 +4,7 @@
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
+  import McpStatusLight from "./McpStatusLight.svelte";
   import PublisherBanner from "./PublisherBanner.svelte";
 
   const { snapshot, settings, now, channels, actions, composer, publish } = useOsmm();
@@ -23,6 +24,7 @@
 
 <div class="osmm-sidebar">
   <PublisherBanner />
+  <McpStatusLight />
   <button type="button" class="mod-cta" onclick={() => actions.quickCreate("campaign")}>New campaign</button>
   {#if overdue.length}
     <section class="osmm-overdue" aria-label={`Overdue · ${overdue.length}`}>

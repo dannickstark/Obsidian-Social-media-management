@@ -4,6 +4,7 @@ import type { App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import type { IndexSnapshot } from "../index/stores";
+import type { McpStatus } from "../mcp/service";
 import type { ViewState } from "../planner/viewState";
 import type { PublishActions } from "../publish/actions";
 import type { PublisherService } from "../settings/publisher";
@@ -23,6 +24,8 @@ export interface OsmmContext {
   composer: ComposerActions;
   publish: PublishActions;
   publisher: PublisherService;
+  /** The local MCP server's state (desktop); absent where there is none (phones, tests). */
+  mcp?: { status: Readable<McpStatus> };
 }
 
 export function osmmContext(ctx: OsmmContext): Map<unknown, unknown> {

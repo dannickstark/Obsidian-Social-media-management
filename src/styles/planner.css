@@ -86,3 +86,8 @@
   .osmm-table { font-size: var(--font-ui-small); }
 }
 body.is-mobile .osmm-chip, body.is-mobile .osmm-card { min-height: 32px; }
+.osmm-mcp-status { display: flex; align-items: center; gap: 6px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.osmm-mcp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-faint); }
+.osmm-mcp-status[data-state="on"] .osmm-mcp-dot { background: var(--color-green); }
+.osmm-mcp-status[data-state="starting"] .osmm-mcp-dot { background: var(--color-yellow); }
+.osmm-mcp-status[data-state="error"] .osmm-mcp-dot { background: var(--color-red); }
