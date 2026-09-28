@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { HttpFn } from "../../../src/platforms/http";
+import type { HttpFn, HttpResponse } from "../../../src/platforms/http";
 import { recordingHttp, replay } from "./record";
 
 describe("recordingHttp", () => {
@@ -54,5 +54,23 @@ describe.skipIf(!process.env.OSMM_RECORD)("live recording", () => {
       writeFileSync(file, `${JSON.stringify(exchanges, null, 2)}\n`);
     });
     expect(exchanges.length).toBeGreaterThan(0);
+  });
+});
+
+describe("recordingHttp masks credentials minted during the run", () => {
+  it("masks a session token returned in a body and reused in a later request", async () => {
+    const answers: HttpResponse[] = [
+      { status: 200, headers: { "set-cookie": "sid=abcdefghijkl" }, text: JSON.stringify({ accessJwt: "eyJhbGciOiJIUzI1NiJ9.x.y", did: "did:plc:123" }), arrayBuffer: new ArrayBuffer(0) },
+      { status: 200, headers: {}, text: "{}", arrayBuffer: new ArrayBuffer(0) },
+    ];
+    let i = 0;
+    const { http, exchanges } = recordingHttp(async () => answers[i++]!, ["app-password-1234"]);
+    await http({ url: "https://bsky.social/xrpc/com.atproto.server.createSession", method: "POST", body: '{"password":"app-password-1234"}' });
+    await http({ url: "https://bsky.social/xrpc/x?auth=eyJhbGciOiJIUzI1NiJ9.x.y", method: "GET" });
+    const all = JSON.stringify(exchanges);
+    expect(all).not.toContain("eyJhbGciOiJIUzI1NiJ9.x.y");
+    expect(all).not.toContain("app-password-1234");
+    expect(all).not.toContain("sid=abcdefghijkl");
+    expect(all).toContain("did:plc:123");
   });
 });

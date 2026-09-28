@@ -10,3 +10,6 @@ coverage/
 .DS_Store
 design/
 .ignore
+
+# Live API recordings (M5 P1): never committed
+test/platforms/*/recorded/
