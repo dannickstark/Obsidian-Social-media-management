@@ -8,6 +8,42 @@ import momentLib from "moment";
 
 export const moment = momentLib;
 
+const DESKTOP_PLATFORM = {
+  isDesktop: true,
+  isMobile: false,
+  isDesktopApp: true,
+  isMobileApp: false,
+  isIosApp: false,
+  isAndroidApp: false,
+  isPhone: false,
+  isTablet: false,
+  isMacOS: true,
+  isWin: false,
+  isLinux: false,
+  isSafari: false,
+  resourcePathPrefix: "app://local/",
+};
+
+/** Mutable copy of Obsidian's `Platform`; tests switch it with `setPlatform` (reset to desktop before each test). */
+export const Platform = { ...DESKTOP_PLATFORM };
+
+export function setPlatform(kind: "desktop" | "iphone" | "android"): void {
+  Object.assign(Platform, DESKTOP_PLATFORM);
+  if (kind === "desktop") return;
+  Object.assign(Platform, {
+    isDesktop: false,
+    isMobile: true,
+    isDesktopApp: false,
+    isMobileApp: true,
+    isPhone: true,
+    isIosApp: kind === "iphone",
+    isAndroidApp: kind === "android",
+    isMacOS: kind === "iphone",
+    isSafari: kind === "iphone",
+    resourcePathPrefix: "file:///",
+  });
+}
+
 type Callback = (...args: any[]) => unknown;
 
 export interface EventRef {

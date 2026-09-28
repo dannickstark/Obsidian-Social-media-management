@@ -16,10 +16,7 @@ export interface SchedulerDeps {
   index: SocialIndex;
   settings(): OsmmSettings;
   now(): number;
-  /**
-   * Only the publisher device runs deliveries (spec §4.3). The publisher-device setting arrives in
-   * M3 (#26); until then the plugin passes `() => true`.
-   */
+  /** Only the publisher device runs deliveries (spec §4.3); the plugin reads `PublisherService.isPublisher()`. */
   isPublisher(): boolean;
   /** Late deliveries younger than this are still posted (the optional auto-post setting); null when off. */
   autoPostLateMs(): number | null;
@@ -87,11 +84,14 @@ export class Scheduler {
       } catch (e) {
         this.deps.warn(e instanceof Error ? e.message : String(e));
       }
-      if (!this.deps.isPublisher()) return result;
+      // Re-checked after onTick: becamePublisher() may have closed the gate while it ran (M3 P2).
+      if (!this.ready || !this.deps.isPublisher()) return result;
       this.warnUnreadable();
       const stagger = this.deps.settings().defaultStaggerMinutes;
       const lateMs = this.deps.autoPostLateMs();
       for (const item of dueItems(this.deps.index.variants(), now, stagger)) {
+        // The role can move to another device mid-loop (a synced takeover): stop at once.
+        if (!this.deps.isPublisher()) break;
         if (this.handled.has(item.key)) continue;
         this.handled.add(item.key);
         try {
@@ -121,11 +121,21 @@ export class Scheduler {
     }
   }
 
+  /**
+   * This device just became the publisher after start-up: close the ready gate and run the startup
+   * reconcile it skipped as a non-publisher, so a stuck `publishing` becomes check_needed before any dispatch.
+   */
+  becamePublisher(): Promise<ReconcileSummary> {
+    this.ready = false;
+    return this.reconcile();
+  }
+
   private async reconcileOnce(): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { checkNeeded: 0, overdue: 0, dispatched: 0 };
     if (!this.deps.isPublisher()) return summary;
     const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs());
     for (const action of plan) {
+      if (!this.deps.isPublisher()) break;
       try {
         if (action.kind === "check_needed") {
           if (await this.deps.publish.markCheckNeeded(action.path, action.channelId)) {

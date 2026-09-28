@@ -222,3 +222,70 @@ describe("dispatch through PublishActions", () => {
     await indexed(c.index, () => c.index.getVariant(M)?.deliveries["ma/you"]?.status === "awaiting_you");
   });
 });
+
+describe("Scheduler when the publisher role changes (M3 P2)", () => {
+  it("reconciles before any dispatch when this device becomes the publisher mid-session", async () => {
+    const S = "Social/Posts/S.md";
+    const c = await makeCtx({ notes: [note(S, T - 5 * MIN, { deliveries: { "bs/you": { status: "publishing", at: formatDateTime(T - 5 * MIN) } } }), note(A, T)], now: T });
+    await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("bs/you")!, method: "api" });
+    const publish = vi.fn(async () => ({ remoteId: "1", url: "https://bsky.app/profile/you/post/1" }));
+    c.adapters.register({ platform: "bluesky", publish });
+    let publisher = false;
+    const scheduler = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => publisher,
+      autoPostLateMs: () => null,
+      publish: c.ctx.publish,
+      warn: () => undefined,
+    });
+    // Start-up as a non-publisher: the reconcile does nothing but opens the ready gate.
+    expect(await scheduler.reconcile()).toEqual({ checkNeeded: 0, overdue: 0, dispatched: 0 });
+    publisher = true;
+    const [ticked, summary] = await Promise.all([scheduler.tick(), scheduler.becamePublisher()]);
+    expect(ticked).toEqual({ dispatched: [], overdue: [] });
+    expect(summary).toEqual({ checkNeeded: 1, overdue: 0, dispatched: 1 });
+    await indexed(c.index, () => c.index.getVariant(S)?.deliveries["bs/you"]?.status === "check_needed" && c.index.getVariant(A)?.status === "published");
+    await scheduler.tick();
+    c.now.set(T + 60 * MIN);
+    await scheduler.tick();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(c.index.getVariant(S)!.deliveries["bs/you"]?.status).toBe("check_needed");
+  });
+
+  it("stops dispatching as soon as the role is lost mid-loop, in tick and in reconcile", async () => {
+    for (const via of ["tick", "reconcile"] as const) {
+      const c = await makeCtx({ notes: [note(A, T), note(B, T)], now: T });
+      let publisher = via === "reconcile";
+      const dispatched: string[] = [];
+      const scheduler = new Scheduler({
+        index: c.index,
+        settings: () => get(c.settings),
+        now: () => get(c.now),
+        isPublisher: () => publisher,
+        autoPostLateMs: () => null,
+        publish: {
+          dispatch: async (i: DueItem) => {
+            dispatched.push(i.key);
+            publisher = false; // the takeover by another device synced in meanwhile
+          },
+          markOverdue: async () => undefined,
+          markCheckNeeded: async () => false,
+          resolveCheck: async () => undefined,
+        },
+        warn: () => undefined,
+      });
+      await scheduler.reconcile();
+      if (via === "tick") {
+        publisher = true;
+        await scheduler.tick();
+      }
+      expect(dispatched).toHaveLength(1);
+      // The skipped item was not consumed: it runs once the role comes back.
+      publisher = true;
+      await scheduler.tick();
+      expect(dispatched.sort()).toEqual([key(A, T), key(B, T)]);
+    }
+  });
+});

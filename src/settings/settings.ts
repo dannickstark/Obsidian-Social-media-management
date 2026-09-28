@@ -4,7 +4,14 @@ import { DEFAULT_TEMPLATES, zScheduleTemplate, type ScheduleTemplate } from "../
 import { zChannel, zChannelGroup, zMinutes, zMinutesList } from "../model/schemas";
 import type { Channel, ChannelGroup } from "../model/types";
 
-export const SETTINGS_VERSION = 2;
+/** The device that publishes (spec §4.3), as recorded in the synced settings. The device id itself never syncs. */
+export interface PublisherRecord {
+  deviceId: string;
+  name: string;
+  since: number;
+}
+
+export const SETTINGS_VERSION = 3;
 
 export interface OsmmSettings {
   schemaVersion: typeof SETTINGS_VERSION;
@@ -15,6 +22,8 @@ export interface OsmmSettings {
   /** Spec §5.2: post items that are less than `autoPostLateMinutes` late instead of sending them to the Overdue tray. */
   autoPostLate: boolean;
   autoPostLateMinutes: number;
+  /** Null until the user picks a publisher device: nothing is dispatched or marked overdue meanwhile. */
+  publisher: PublisherRecord | null;
   channels: Channel[];
   channelGroups: ChannelGroup[];
   scheduleTemplates: ScheduleTemplate[];
@@ -28,6 +37,7 @@ export const DEFAULT_SETTINGS: OsmmSettings = {
   defaultStaggerMinutes: 15,
   autoPostLate: false,
   autoPostLateMinutes: 15,
+  publisher: null,
   channels: [],
   channelGroups: [],
   scheduleTemplates: structuredClone(DEFAULT_TEMPLATES),
@@ -39,7 +49,15 @@ type RawSettings = Record<string, unknown>;
 const MIGRATIONS: Record<number, (raw: RawSettings) => RawSettings> = {
   0: (raw) => ({ ...raw, schemaVersion: 1 }),
   1: (raw) => ({ ...raw, schemaVersion: 2, scheduleTemplates: structuredClone(DEFAULT_TEMPLATES) }),
+  2: (raw) => ({ ...raw, schemaVersion: 3, publisher: null }),
 };
+
+function sanitizePublisher(raw: unknown): PublisherRecord | null {
+  if (!isRecord(raw) || typeof raw.deviceId !== "string" || !raw.deviceId) return null;
+  const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 40) : "another device";
+  const since = typeof raw.since === "number" && Number.isFinite(raw.since) ? raw.since : 0;
+  return { deviceId: raw.deviceId, name, since };
+}
 
 function sanitize(raw: RawSettings): OsmmSettings {
   const root = typeof raw.rootFolder === "string" && raw.rootFolder.trim() ? normalizePath(raw.rootFolder.trim()) : DEFAULT_SETTINGS.rootFolder;
@@ -63,6 +81,7 @@ function sanitize(raw: RawSettings): OsmmSettings {
     defaultStaggerMinutes: stagger.success ? stagger.data : DEFAULT_SETTINGS.defaultStaggerMinutes,
     autoPostLate: raw.autoPostLate === true,
     autoPostLateMinutes: lateMinutes.success && lateMinutes.data >= 1 && lateMinutes.data <= 240 ? lateMinutes.data : DEFAULT_SETTINGS.autoPostLateMinutes,
+    publisher: sanitizePublisher(raw.publisher),
     channels,
     channelGroups: groups,
     scheduleTemplates: templates,

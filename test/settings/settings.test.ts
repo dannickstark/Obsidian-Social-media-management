@@ -8,19 +8,19 @@ const channel = { id: "li/me", platform: "linkedin", name: "Me", kind: "profile"
 describe("migrateSettings", () => {
   it("returns defaults for empty data", () => {
     expect(migrateSettings(null)).toEqual(DEFAULT_SETTINGS);
-    expect(migrateSettings(undefined).schemaVersion).toBe(2);
+    expect(migrateSettings(undefined).schemaVersion).toBe(3);
   });
 
   it("migrates v0 data and normalizes the root folder", () => {
     const s = migrateSettings({ rootFolder: "/Content//Social/", weekStartsOn: 0 });
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(3);
     expect(s.rootFolder).toBe("Content/Social");
     expect(s.weekStartsOn).toBe(0);
   });
 
-  it("migrates v1 settings to v2 with default templates", () => {
+  it("migrates v1 settings to v3 with default templates", () => {
     const s = migrateSettings({ schemaVersion: 1, rootFolder: "Social" });
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(3);
     expect(s.scheduleTemplates.map((t) => t.name)).toEqual(["Launch"]);
   });
 
@@ -33,6 +33,17 @@ describe("migrateSettings", () => {
   it("falls back to defaults for invalid scalar values", () => {
     const s = migrateSettings({ schemaVersion: 1, rootFolder: "", weekStartsOn: 3, defaultReminders: ["x"], defaultStaggerMinutes: -1 });
     expect(s).toMatchObject({ rootFolder: "Social", weekStartsOn: 1, defaultReminders: [60, 10], defaultStaggerMinutes: 15 });
+  });
+
+  it("migrates v2 settings to v3 with no publisher device", () => {
+    expect(migrateSettings({ schemaVersion: 2, rootFolder: "Social" }).publisher).toBeNull();
+  });
+
+  it("keeps a valid publisher record and drops a malformed one", () => {
+    const publisher = { deviceId: "d-1", name: "Studio iMac", since: 5 };
+    expect(migrateSettings({ schemaVersion: 3, publisher }).publisher).toEqual(publisher);
+    expect(migrateSettings({ schemaVersion: 3, publisher: { name: "x" } }).publisher).toBeNull();
+    expect(migrateSettings({ schemaVersion: 3, publisher: { deviceId: "d-1", name: " ", since: "x" } }).publisher).toEqual({ deviceId: "d-1", name: "another device", since: 0 });
   });
 
   it("refuses settings from a newer plugin version", () => {

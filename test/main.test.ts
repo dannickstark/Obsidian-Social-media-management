@@ -3,7 +3,7 @@ import type { PublishDeps } from "../src/publish/actions";
 import type { Notifier } from "../src/reminders/notifier";
 import { App, Notice, Setting, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
-import { nextChange, settle } from "./helpers";
+import { indexed, nextChange, settle, writeNote } from "./helpers";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
 
@@ -114,6 +114,28 @@ describe("OsmmPlugin", () => {
     await expect(plugin.load()).resolves.toBeUndefined();
     expect(Notice.messages).toEqual([expect.stringMatching(/newer version/)]);
     expect(plugin.index).toBeUndefined();
+    plugin.unload();
+  });
+
+  it("runs the startup check once this device becomes the publisher (#26)", async () => {
+    const app = new App();
+    await writeNote(app as never, "Social/Posts/P.md", {
+      type: "social-post",
+      platform: "bluesky",
+      channels: ["bs/you"],
+      status: "scheduled",
+      scheduled_at: "2026-10-08T10:00:00+02:00",
+      deliveries: { "bs/you": { status: "publishing", at: "2026-10-08T10:00:00+02:00" } },
+    }, "Hi");
+    await settle();
+    const plugin = new OsmmPlugin(app as never, manifest);
+    await plugin.load();
+    await indexed(plugin.index, () => plugin.index.variants().length === 1);
+    await settle(20);
+    expect(plugin.publisher.isPublisher()).toBe(false);
+    expect(plugin.index.getVariant("Social/Posts/P.md")?.deliveries["bs/you"]?.status).toBe("publishing");
+    await plugin.publisher.claim();
+    await indexed(plugin.index, () => plugin.index.getVariant("Social/Posts/P.md")?.deliveries["bs/you"]?.status === "check_needed");
     plugin.unload();
   });
 

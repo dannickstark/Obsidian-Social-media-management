@@ -22,6 +22,7 @@ import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
 import { allSecretIds, Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
+import { PublisherService } from "./settings/publisher";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
 import {
@@ -41,6 +42,7 @@ export default class OsmmPlugin extends Plugin {
   override settings!: OsmmSettings;
   settingsStore!: Writable<OsmmSettings>;
   device!: DeviceSettings;
+  publisher!: PublisherService;
   secrets!: Secrets;
   writer!: SafeWriter;
   factory!: NoteFactory;
@@ -51,6 +53,8 @@ export default class OsmmPlugin extends Plugin {
   readonly adapters = new AdapterRegistry();
   log!: VaultLog;
   private unloaded = false;
+  /** Set once the startup reconcile has run; later role changes run their own (M3 P2). */
+  private started = false;
   private ui: OsmmContext | undefined;
   /** Pending orchestrator retry delays, cleared on unload so no retry fires after the plugin is gone. */
   private readonly delays = new Set<number>();
@@ -70,6 +74,12 @@ export default class OsmmPlugin extends Plugin {
     }
     this.settingsStore = writable(this.settings);
     this.device = loadDeviceSettings(this.app);
+    this.publisher = new PublisherService({
+      device: () => this.device,
+      settings: () => this.settings,
+      update: (patch) => this.updateSettings(patch),
+      now: () => Date.now(),
+    });
     this.secrets = new Secrets(this.app);
     this.writer = new SafeWriter(this.app);
     this.factory = new NoteFactory(this.app, this.writer, {
@@ -115,8 +125,7 @@ export default class OsmmPlugin extends Plugin {
       index: this.index,
       settings: () => this.settings,
       now: () => Date.now(),
-      // M3 (#26) replaces this with the publisher-device setting; until then every device publishes.
-      isPublisher: () => true,
+      isPublisher: () => this.publisher.isPublisher(),
       autoPostLateMs: () => autoPostLateMs(this.settings),
       publish: ui.publish,
       onTick: (now, previous) =>
@@ -128,6 +137,15 @@ export default class OsmmPlugin extends Plugin {
       warn: (message) => new Notice(message, 0),
     });
     this.register(() => this.scheduler.stop());
+    // A device that becomes the publisher after start-up runs the startup check it skipped (spec §5.1, M3 P2).
+    let wasPublisher = this.publisher.isPublisher();
+    this.register(
+      this.settingsStore.subscribe(() => {
+        const now = this.publisher.isPublisher();
+        if (now && !wasPublisher && this.started) void this.scheduler.becamePublisher().then(() => this.scheduler.tick());
+        wasPublisher = now;
+      }),
+    );
     this.registerDomEvent(document, "visibilitychange", () => {
       if (document.visibilityState === "visible") void this.scheduler.tick();
     });
@@ -139,7 +157,12 @@ export default class OsmmPlugin extends Plugin {
       this.index.start();
       await this.index.build();
       if (this.unloaded) return;
+      const reconciledAsPublisher = this.publisher.isPublisher();
       await this.scheduler.reconcile();
+      if (this.unloaded) return;
+      this.started = true;
+      // The role arrived while the startup reconcile ran as a non-publisher: run it again as the publisher.
+      if (!reconciledAsPublisher && this.publisher.isPublisher()) await this.scheduler.becamePublisher();
       if (this.unloaded) return;
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
       this.scheduler.start();
