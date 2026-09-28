@@ -88,7 +88,15 @@ export function captionChecks(input: ComposeInput, def: PlatformDef): Issue[] {
   if (!max || input.media.length === 0) return [];
   const n = countFor(postText(input.body, def), def);
   if (n <= max) return [];
-  return [{ level: "error", field: "body", code: "caption-too-long", message: `With media, ${label(def)} allows ${fmt(max)} characters; the text is ${fmt(n)}.` }];
+  // M5 P14: a warning; the adapter posts the photos first and the text after them as its own message (#88).
+  return [
+    {
+      level: "warning",
+      field: "body",
+      code: "caption-too-long",
+      message: `With media, ${label(def)} allows ${fmt(max)} characters in a caption; the photos go first and the text follows as its own message.`,
+    },
+  ];
 }
 
 export function hashtagChecks(input: ComposeInput, def: PlatformDef): Issue[] {

@@ -1,5 +1,6 @@
 import type { HttpFn } from "./http";
 import type { LinkCard } from "./og";
+import { TelegramAdapter } from "./telegram/api";
 import type { PlatformAdapter } from "./types";
 
 /** A file embedded in a note's body, resolved in the vault (WordPress uploads it). */
@@ -24,6 +25,6 @@ export interface AdapterDeps {
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
-export function createAdapters(_deps: AdapterDeps): PlatformAdapter[] {
-  return [];
+export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
+  return [new TelegramAdapter(deps)];
 }

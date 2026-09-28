@@ -106,7 +106,7 @@ A tool result's top-level `error` is always readable prose; `issues[].code` is t
 | `already-live` | update_variant | A channel in the edit is already published or handed over; the edit doesn't change what's live there (warning; use `push_update`). |
 | `empty-body` | validate, create_variant, update_variant | No text (error, unless the platform needs only media). |
 | `too-long` | validate, create_variant, update_variant | The text (or one thread part) is over the platform's character limit. |
-| `caption-too-long` | validate, create_variant, update_variant | With media attached, the caption is over the platform's shorter limit. |
+| `caption-too-long` | validate, create_variant, update_variant | With media attached, the text is over the platform's caption limit (warning: on Telegram the photos go first and the text follows as its own message). |
 | `too-many-hashtags` | validate, create_variant, update_variant | More hashtags than the platform allows. |
 | `missing-title` | validate, create_variant, update_variant | The platform requires a title and none was given. |
 | `title-too-long` | validate, create_variant, update_variant | The title is over the platform's limit. |

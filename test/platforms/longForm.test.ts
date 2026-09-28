@@ -56,7 +56,11 @@ describe("Instagram", () => {
 describe("chat platforms", () => {
   it("Telegram: 4 096 characters, 1 024 with media", () => {
     expect(check("telegram", "a".repeat(4096))).toEqual([]);
-    expect(check("telegram", "a".repeat(1025), {}, [img()])).toEqual(["error:body:With media, Telegram allows 1,024 characters; the text is 1,025."]);
+    // M5 P14: a warning, not an error; the adapter sends the photos first and the text as its own message (#88).
+    expect(check("telegram", "a".repeat(1024), {}, [img()])).toEqual([]);
+    expect(check("telegram", "a".repeat(1025), {}, [img()])).toEqual([
+      "warning:body:With media, Telegram allows 1,024 characters in a caption; the photos go first and the text follows as its own message.",
+    ]);
   });
 
   it("Discord: 2 000 characters", () => {
