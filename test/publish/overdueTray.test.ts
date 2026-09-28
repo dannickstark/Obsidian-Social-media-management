@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { Modal, Notice } from "../fakes/obsidian";
+import { getFrontMatterInfo } from "obsidian";
+import { MarkdownView, Modal, Notice, WorkspaceLeaf } from "../fakes/obsidian";
 import ActionsBar from "../../src/composer/ActionsBar.svelte";
 import { VIEW_SIDEBAR } from "../../src/ui/actions";
 import { osmmContext } from "../../src/ui/context";
@@ -33,6 +34,34 @@ describe("Overdue tray", () => {
     c.adapters.register({ platform: "instagram", publish: async () => ({ remoteId: "1", url: "https://www.instagram.com/p/1" }) });
     await c.ctx.publish.postNow(IG);
     await indexed(c.index, () => c.index.getVariant(IG)?.status === "published");
+  });
+
+  it("flushes an open editor before an API delivery, so it sends the exact text on screen (ruling P3)", async () => {
+    const c = await makeCtx({ seed: true });
+    const X = "Social/Event X/Event X – X.md";
+    const file = c.app.vault.getFileByPath(X)!;
+    const raw = await c.app.vault.cachedRead(file);
+    const info = getFrontMatterInfo(raw);
+    const buffer = `${raw.slice(0, info.contentStart)}Fresh buffer text, not yet saved.\n`;
+    const leaf = new WorkspaceLeaf(c.app);
+    const md = new MarkdownView(leaf);
+    md.file = file;
+    md.editor = { getValue: () => buffer };
+    leaf.view = md;
+    leaf.viewType = "markdown";
+    c.app.workspace.leaves.push(leaf);
+
+    let sentText = "";
+    c.adapters.register({
+      platform: "x",
+      publish: async (job) => {
+        sentText = job.text;
+        return { remoteId: "1", url: "https://x.com/you/status/1" };
+      },
+    });
+    await c.ctx.publish.postNow(X, ["x/you"]);
+    await indexed(c.index, () => c.index.getVariant(X)?.deliveries["x/you"]?.status === "published");
+    expect(sentText).toBe("Fresh buffer text, not yet saved.");
   });
 
   it("updates its count live", async () => {
