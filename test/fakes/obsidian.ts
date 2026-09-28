@@ -310,6 +310,17 @@ export class FileManager {
   async trashFile(file: TFile): Promise<void> {
     await this.app.vault.delete(file);
   }
+
+  async getAvailablePathForAttachment(filename: string, sourcePath?: string): Promise<string> {
+    const folder = sourcePath?.includes("/") ? sourcePath.slice(0, sourcePath.lastIndexOf("/")) : "";
+    const dot = filename.lastIndexOf(".");
+    const base = dot > 0 ? filename.slice(0, dot) : filename;
+    const ext = dot > 0 ? filename.slice(dot) : "";
+    const prefix = folder ? `${folder}/` : "";
+    let candidate = `${prefix}${filename}`;
+    for (let n = 1; this.app.vault.getAbstractFileByPath(candidate); n++) candidate = `${prefix}${base} ${n}${ext}`;
+    return candidate;
+  }
 }
 
 export class WorkspaceLeaf {

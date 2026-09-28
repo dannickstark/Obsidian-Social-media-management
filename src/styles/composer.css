@@ -52,3 +52,15 @@
 .osmm-chip-token { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 10px; background: var(--osmm-hover); }
 .osmm-methods { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .osmm-methods li { display: flex; justify-content: space-between; gap: 8px; }
+
+.osmm-dropzone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px dashed var(--text-faint); border-radius: 8px; color: var(--text-muted); }
+.osmm-dropzone.is-drop { border-color: var(--interactive-accent); background: rgba(var(--interactive-accent-rgb), 0.08); }
+.osmm-file { display: inline-flex; align-items: center; color: var(--text-accent); cursor: pointer; }
+.osmm-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.osmm-media-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.osmm-media-item { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; }
+.osmm-crop { position: relative; width: 96px; height: auto; padding: 0; overflow: hidden; background: var(--background-secondary); box-shadow: none; cursor: crosshair; }
+.osmm-crop img { display: block; width: 100%; }
+.osmm-crop-box { position: absolute; border: 2px solid var(--interactive-accent); box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.45); pointer-events: none; }
+.osmm-media-missing { display: flex; align-items: center; justify-content: center; width: 96px; height: 72px; border-radius: 6px; background: var(--background-secondary); color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.osmm-media-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

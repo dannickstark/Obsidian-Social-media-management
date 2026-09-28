@@ -2,7 +2,7 @@ import { Notice, type App, type WorkspaceLeaf } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
-import type { Channel, ChannelGroup, Delivery, Issue, PostMode, Variant } from "../model/types";
+import type { Channel, ChannelGroup, Delivery, Issue, MediaMeta, PostMode, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { MediaInspector } from "../media/mediaInfo";
 import { planSelectGroup, planToggleChannel } from "./channels";
@@ -18,6 +18,17 @@ import { formatShortDate, formatTime } from "../ui/format";
 import { ContentLoader, type LoadedContent } from "./content";
 import { planComposerSchedule, scheduleNeeds, type ScheduleRequest } from "./schedule";
 import { composerSession, type ComposerSession } from "./session";
+
+const ATTACHABLE_RE = /\.(png|jpe?g|webp|gif|mp4|mov|m4v|webm)$/i;
+
+function readFile(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}`));
+    reader.readAsArrayBuffer(file);
+  });
+}
 
 export interface ComposerDeps {
   app: App;
@@ -166,6 +177,64 @@ export class ComposerActions {
       new Notice(e instanceof Error ? e.message : String(e));
       return null;
     }
+  }
+
+  /** Saves files to the attachments folder and appends them to `media:`. Videos are kept; checks flag them. */
+  async attachFiles(v: IndexedVariant, files: readonly File[]): Promise<number> {
+    const added: string[] = [];
+    for (const f of files) {
+      if (!ATTACHABLE_RE.test(f.name)) {
+        new Notice(`${f.name}: use a PNG, JPG, WebP or GIF image.`);
+        continue;
+      }
+      const path = await this.deps.app.fileManager.getAvailablePathForAttachment(f.name, v.path);
+      const created = await this.deps.app.vault.createBinary(path, await readFile(f));
+      added.push(created.name);
+    }
+    if (!added.length) return 0;
+    const result = await this.deps.planner.write(v.file, (fresh) => ({
+      fields: { media: [...fresh.media, ...added.filter((a) => !fresh.media.includes(a))] },
+    }));
+    this.deps.planner.afterWrite(result, `Attached ${added.length} file${added.length === 1 ? "" : "s"}.`);
+    return added.length;
+  }
+
+  async moveMedia(v: IndexedVariant, target: string, delta: -1 | 1): Promise<void> {
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      const i = fresh.media.indexOf(target);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= fresh.media.length) return {};
+      const media = [...fresh.media];
+      [media[i], media[j]] = [media[j]!, media[i]!];
+      return { fields: { media } };
+    });
+    this.deps.planner.afterWrite(result, "Media reordered.");
+  }
+
+  async removeMedia(v: IndexedVariant, target: string): Promise<void> {
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      const mediaMeta = { ...fresh.mediaMeta };
+      delete mediaMeta[target];
+      return { fields: { media: fresh.media.filter((m) => m !== target), mediaMeta } };
+    });
+    this.deps.planner.afterWrite(result, `Removed ${target} from the post.`);
+  }
+
+  setAlt(v: IndexedVariant, target: string, alt: string): Promise<void> {
+    return this.patchMediaMeta(v, target, { alt: alt.trim() }, "Alt text saved.");
+  }
+
+  setFocus(v: IndexedVariant, target: string, focus: [number, number]): Promise<void> {
+    return this.patchMediaMeta(v, target, { focus }, "Focal point saved.");
+  }
+
+  private async patchMediaMeta(v: IndexedVariant, target: string, patch: MediaMeta, message: string): Promise<void> {
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      const next: MediaMeta = { ...fresh.mediaMeta?.[target], ...patch };
+      if (!next.alt) delete next.alt;
+      return { fields: { mediaMeta: { ...fresh.mediaMeta, [target]: next } } };
+    });
+    this.deps.planner.afterWrite(result, message);
   }
 
   async toggleChannel(v: IndexedVariant, channel: Channel, on: boolean): Promise<boolean> {

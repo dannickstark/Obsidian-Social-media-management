@@ -8,6 +8,7 @@
   import { useOsmm } from "../ui/context";
   import ActionsBar from "./ActionsBar.svelte";
   import Checks from "./Checks.svelte";
+  import MediaPanel from "./MediaPanel.svelte";
   import PostAs from "./PostAs.svelte";
   import SchedulePanel from "./SchedulePanel.svelte";
   import type { ComposerSession } from "./session";
@@ -95,6 +96,7 @@
         <PostAs {variant} />
         <Checks {variant} {issues} counters={counterList} />
         <SchedulePanel {variant} {issues} />
+        <MediaPanel {variant} {media} />
         <ActionsBar {variant} />
       </aside>
     </div>
