@@ -23,6 +23,8 @@ const RESULT_LABEL: Readonly<Record<AttemptEntry["result"], string>> = {
   awaiting_you: "waiting for you",
   overdue: "overdue",
   check_needed: "check needed",
+  updated: "updated on the platform",
+  update_failed: "update failed",
 };
 
 /** First entry line of a log file: "- 2026-10-08T…". */

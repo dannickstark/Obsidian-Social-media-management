@@ -1,6 +1,6 @@
 import type { TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
-import type { ContentLoader } from "../composer/content";
+import type { ContentLoader, LoadedContent } from "../composer/content";
 import type { SocialIndex } from "../index/socialIndex";
 import { MINUTE } from "../model/dates";
 import { PLATFORM_META, type Platform } from "../model/platforms";
@@ -114,7 +114,11 @@ export class PublishOrchestrator {
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
-  async run(path: string, channelId: string): Promise<RunResult> {
+  /**
+   * `accept` (publish_now after approval, #77): checked against the exact text this run loads and sends; the
+   * run is refused, before any claim, when it no longer matches what the user approved (M2b P3).
+   */
+  async run(path: string, channelId: string, accept?: (v: Variant, content: LoadedContent) => boolean): Promise<RunResult> {
     const v = this.deps.index.getVariant(path);
     if (!v) return { status: "refused", reason: "The note is gone." };
     const channel = this.deps.channels.get(channelId);
@@ -122,6 +126,7 @@ export class PublishOrchestrator {
     const adapter = this.deps.adapters.get(v.platform);
     if (!adapter?.publish) return { status: "refused", reason: `There is no ${PLATFORM_META[v.platform].label} API adapter yet; use Copy & open.` };
     const content = await this.deps.content.load(v);
+    if (accept && !accept(v, content)) return { status: "refused", reason: "The post changed after it was approved, so nothing was sent." };
     const def = platformDef(v.platform);
     const secretId = channel.secretId;
     const start = this.deps.now();

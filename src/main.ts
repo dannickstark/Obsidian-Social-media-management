@@ -8,6 +8,8 @@ import { ComposerView } from "./composer/ComposerView";
 import { overdueRows } from "./index/queries";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
+import { ApprovalGate } from "./mcp/approval";
+import { openApprovalModal } from "./mcp/ApprovalModal";
 import { registerAllTools } from "./mcp/index";
 import { McpDispatcher } from "./mcp/protocol";
 import { McpService } from "./mcp/service";
@@ -77,6 +79,8 @@ export default class OsmmPlugin extends Plugin {
   log!: VaultLog;
   /** MCP tools for Claude Code (spec §6.1); the server exposes them only on a desktop, when switched on. */
   tools!: ToolRegistry;
+  /** Asks the user in Obsidian before Claude publishes (#77). */
+  approvals!: ApprovalGate;
   mcp!: McpService;
   private unloaded = false;
   /** Set once the startup reconcile has run; later role changes run their own (M3 P2). */
@@ -240,6 +244,11 @@ export default class OsmmPlugin extends Plugin {
       redact: (text) => this.secrets.redact(text, allSecretIds(this.channels.list())),
       onCall: (name, ok) => this.mcp.record(ok ? name : `${name} (refused)`),
     });
+    this.approvals = new ApprovalGate({
+      open: (req, answer) => openApprovalModal(this.app, req, answer),
+      allowedWithoutAsking: (id) => this.settings.publishWithoutAsking.includes(id),
+    });
+    this.register(() => this.approvals.dispose());
     registerAllTools(this.tools, {
       app: this.app,
       index: this.index,
@@ -253,6 +262,7 @@ export default class OsmmPlugin extends Plugin {
       settings: () => this.settings,
       now: () => Date.now(),
       isPublisher: () => this.publisher.isPublisher(),
+      approvals: this.approvals,
     });
     const dispatcher = new McpDispatcher({ tools: this.tools, version: this.manifest.version });
     this.mcp = new McpService({

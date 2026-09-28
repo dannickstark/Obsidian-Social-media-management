@@ -73,3 +73,8 @@
 .osmm-steps { flex-wrap: wrap; }
 body.is-phone .osmm-assisted button { min-height: 40px; }
 body.is-phone .osmm-composer-main { padding: 8px; }
+.osmm-approval-summary { font-weight: 600; }
+.osmm-approval-channels { margin: 0 0 8px; padding-left: 1.2em; color: var(--text-muted); }
+.osmm-approval-note { color: var(--text-muted); font-style: italic; }
+.osmm-approval-text { max-height: 40vh; overflow: auto; white-space: pre-wrap; padding: 8px; border-radius: var(--radius-s); background: var(--background-secondary); font-family: var(--font-text); }
+.osmm-approval textarea { width: 100%; margin-top: 8px; }

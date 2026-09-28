@@ -1,4 +1,5 @@
 import type { McpToolDeps } from "./deps";
+import { registerPublishTools } from "./tools/publish";
 import { registerReadTools } from "./tools/read";
 import { registerScheduleTools } from "./tools/schedule";
 import { registerSlotTools } from "./tools/slots";
@@ -11,4 +12,5 @@ export function registerAllTools(registry: ToolRegistry, deps: McpToolDeps): voi
   registerWriteTools(registry, deps);
   registerScheduleTools(registry, deps);
   registerSlotTools(registry, deps);
+  registerPublishTools(registry, deps);
 }

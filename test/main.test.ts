@@ -4,6 +4,7 @@ import type { PublishDeps } from "../src/publish/actions";
 import { App, Modal, Notice, requestUrlMock, setPlatform, Setting, type ButtonComponent, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin, { LINK_READY_TIMEOUT_MS } from "../src/main";
 import { formatDateTime } from "../src/model/dates";
+import { CLOSED } from "../src/mcp/approval";
 import { indexed, nextChange, settle, writeNote } from "./helpers";
 import { freePort, portIsFree } from "./mcp/net";
 import { NTFY } from "./reminders/ntfy/fixtures";
@@ -839,5 +840,19 @@ describe("Claude Code server (#73)", () => {
     plugin.unload();
     await plugin.mcp.apply();
     expect(await portIsFree(port)).toBe(true);
+  });
+
+  it("asks in an Obsidian modal before Claude publishes, and unload answers no (#77)", async () => {
+    const { plugin } = await loaded();
+    expect(plugin.tools.names()).toEqual(expect.arrayContaining(["publish_now", "push_update"]));
+    const before = Modal.opened.length;
+    const req = { action: "publish" as const, title: "T", path: "p.md", platformLabel: "Telegram", channels: [{ id: "tg/x", name: "X", how: "posts through the API now" }], text: "hi" };
+    const answer = plugin.approvals.request(req);
+    expect(Modal.opened.length).toBe(before + 1);
+    expect(Modal.opened.at(-1)!.titleEl.textContent).toBe("Claude wants to publish");
+    plugin.unload();
+    expect(await answer).toEqual({ approved: false, reason: CLOSED });
+    expect(Modal.opened.at(-1)!.isOpen).toBe(false);
+    expect(await plugin.approvals.request(req)).toEqual({ approved: false, reason: CLOSED });
   });
 });

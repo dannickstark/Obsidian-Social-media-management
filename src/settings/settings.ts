@@ -1,7 +1,7 @@
 import { normalizePath } from "obsidian";
 import { isRecord } from "../model/frontmatter";
 import { DEFAULT_TEMPLATES, zScheduleTemplate, type ScheduleTemplate } from "../planner/templates";
-import { zChannel, zChannelGroup, zMinutes, zMinutesList } from "../model/schemas";
+import { zChannel, zChannelGroup, zChannelId, zMinutes, zMinutesList } from "../model/schemas";
 import type { Channel, ChannelGroup } from "../model/types";
 
 /** The device that publishes (spec §4.3), as recorded in the synced settings. The device id itself never syncs. */
@@ -11,7 +11,7 @@ export interface PublisherRecord {
   since: number;
 }
 
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 export interface OsmmSettings {
   schemaVersion: typeof SETTINGS_VERSION;
@@ -24,6 +24,8 @@ export interface OsmmSettings {
   autoPostLateMinutes: number;
   /** Null until the user picks a publisher device: nothing is dispatched or marked overdue meanwhile. */
   publisher: PublisherRecord | null;
+  /** Channels Claude may publish to without the approval question (#77). Everything else asks. */
+  publishWithoutAsking: string[];
   channels: Channel[];
   channelGroups: ChannelGroup[];
   scheduleTemplates: ScheduleTemplate[];
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: OsmmSettings = {
   autoPostLate: false,
   autoPostLateMinutes: 15,
   publisher: null,
+  publishWithoutAsking: [],
   channels: [],
   channelGroups: [],
   scheduleTemplates: structuredClone(DEFAULT_TEMPLATES),
@@ -50,6 +53,7 @@ const MIGRATIONS: Record<number, (raw: RawSettings) => RawSettings> = {
   0: (raw) => ({ ...raw, schemaVersion: 1 }),
   1: (raw) => ({ ...raw, schemaVersion: 2, scheduleTemplates: structuredClone(DEFAULT_TEMPLATES) }),
   2: (raw) => ({ ...raw, schemaVersion: 3, publisher: null }),
+  3: (raw) => ({ ...raw, schemaVersion: 4, publishWithoutAsking: [] }),
 };
 
 function sanitizePublisher(raw: unknown): PublisherRecord | null {
@@ -82,6 +86,7 @@ function sanitize(raw: RawSettings): OsmmSettings {
     autoPostLate: raw.autoPostLate === true,
     autoPostLateMinutes: lateMinutes.success && lateMinutes.data >= 1 && lateMinutes.data <= 240 ? lateMinutes.data : DEFAULT_SETTINGS.autoPostLateMinutes,
     publisher: sanitizePublisher(raw.publisher),
+    publishWithoutAsking: (Array.isArray(raw.publishWithoutAsking) ? raw.publishWithoutAsking : []).filter((id): id is string => zChannelId.safeParse(id).success),
     channels,
     channelGroups: groups,
     scheduleTemplates: templates,

@@ -8,19 +8,19 @@ const channel = { id: "li/me", platform: "linkedin", name: "Me", kind: "profile"
 describe("migrateSettings", () => {
   it("returns defaults for empty data", () => {
     expect(migrateSettings(null)).toEqual(DEFAULT_SETTINGS);
-    expect(migrateSettings(undefined).schemaVersion).toBe(3);
+    expect(migrateSettings(undefined).schemaVersion).toBe(4);
   });
 
   it("migrates v0 data and normalizes the root folder", () => {
     const s = migrateSettings({ rootFolder: "/Content//Social/", weekStartsOn: 0 });
-    expect(s.schemaVersion).toBe(3);
+    expect(s.schemaVersion).toBe(4);
     expect(s.rootFolder).toBe("Content/Social");
     expect(s.weekStartsOn).toBe(0);
   });
 
   it("migrates v1 settings to v3 with default templates", () => {
     const s = migrateSettings({ schemaVersion: 1, rootFolder: "Social" });
-    expect(s.schemaVersion).toBe(3);
+    expect(s.schemaVersion).toBe(4);
     expect(s.scheduleTemplates.map((t) => t.name)).toEqual(["Launch"]);
   });
 
@@ -44,6 +44,11 @@ describe("migrateSettings", () => {
     expect(migrateSettings({ schemaVersion: 3, publisher }).publisher).toEqual(publisher);
     expect(migrateSettings({ schemaVersion: 3, publisher: { name: "x" } }).publisher).toBeNull();
     expect(migrateSettings({ schemaVersion: 3, publisher: { deviceId: "d-1", name: " ", since: "x" } }).publisher).toEqual({ deviceId: "d-1", name: "another device", since: 0 });
+  });
+
+  it("adds publishWithoutAsking in schema 4 and keeps only channel ids", () => {
+    expect(migrateSettings({ schemaVersion: 3 }).publishWithoutAsking).toEqual([]);
+    expect(migrateSettings({ schemaVersion: 4, publishWithoutAsking: ["tg/event-x", "nope", 3] }).publishWithoutAsking).toEqual(["tg/event-x"]);
   });
 
   it("refuses settings from a newer plugin version", () => {
