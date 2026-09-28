@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layoutDay, minutesOfDay, weekCells, weekRange } from "../../src/planner/calendar";
+import { layoutDay, minutesOfDay, weekCells, weekRange, dropMinutes } from "../../src/planner/calendar";
 import type { PostRow } from "../../src/index/queries";
 
 const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
@@ -28,5 +28,29 @@ describe("week helpers", () => {
       ["b", 555, 1, 2],
       ["c", 600, 0, 1],
     ]);
+  });
+});
+
+describe("dropMinutes (G2)", () => {
+  // PX_PER_MINUTE is 0.8, so one hour is 48px.
+  it("maps the column top to 00:00", () => {
+    expect(dropMinutes(100, 100)).toBe(0);
+    expect(dropMinutes(90, 100)).toBe(0);
+  });
+
+  it("maps a point in the middle of the column to its time", () => {
+    expect(dropMinutes(100 + 12 * 48, 100)).toBe(720);
+  });
+
+  it("rounds to 15 minutes", () => {
+    expect(dropMinutes(100 + 7 * 0.8, 100)).toBe(0);
+    expect(dropMinutes(100 + 8 * 0.8, 100)).toBe(15);
+    expect(dropMinutes(100 + 23 * 0.8, 100)).toBe(30);
+  });
+
+  it("clamps the bottom to 23:45 so a drop never rolls over to the next day", () => {
+    expect(dropMinutes(100 + 24 * 48, 100)).toBe(1425);
+    expect(dropMinutes(100 + 24 * 48 - 1, 100)).toBe(1425);
+    expect(dropMinutes(5000, 100)).toBe(1425);
   });
 });

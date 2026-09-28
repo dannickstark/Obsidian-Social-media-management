@@ -73,6 +73,14 @@ export function groupByDay(rows: readonly PostRow[]): Map<string, PostRow[]> {
 
 export const PX_PER_MINUTE = 0.8;
 
+/**
+ * Minute of the day for a drop at `clientY` on a day column whose top is at `rectTop`, rounded to
+ * 15 minutes and clamped to 00:00–23:45 (so the bottom edge never rolls over to the next day).
+ */
+export function dropMinutes(clientY: number, rectTop: number): number {
+  return Math.min(1425, Math.max(0, Math.round((clientY - rectTop) / PX_PER_MINUTE / 15) * 15));
+}
+
 export function weekCells(anchor: number, weekStartsOn: 0 | 1, today: number): DayCell[] {
   const d = new Date(anchor);
   const offset = (d.getDay() - weekStartsOn + 7) % 7;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PostRow } from "../index/queries";
-  import { PX_PER_MINUTE, groupByDay, layoutDay, minutesOfDay, weekCells } from "../planner/calendar";
+  import { PX_PER_MINUTE, dropMinutes, groupByDay, layoutDay, minutesOfDay, weekCells } from "../planner/calendar";
   import { useOsmm } from "../ui/context";
   import Chip from "./Chip.svelte";
 
@@ -36,7 +36,7 @@
         style:height="{24 * 60 * PX_PER_MINUTE}px"
         tabindex="-1"
         ondragover={(e) => e.preventDefault()}
-        ondrop={(e) => actions.dropOnSlot(e, c.date, Math.round(e.offsetY / PX_PER_MINUTE / 15) * 15)}>
+        ondrop={(e) => actions.dropOnSlot(e, c.date, dropMinutes(e.clientY, e.currentTarget.getBoundingClientRect().top))}>
         {#if c.isToday}<div class="osmm-now-line" style:top="{minutesOfDay($now) * PX_PER_MINUTE}px"></div>{/if}
         {#each layoutDay(byDay.get(c.key) ?? []) as p (p.row.key)}
           <div
