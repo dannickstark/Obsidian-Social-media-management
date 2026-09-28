@@ -155,8 +155,9 @@ export class PublishOrchestrator {
     try {
       const res = await p.publish(job);
       const at = this.deps.now();
-      await this.settle(p.file, p.channelId, (d) => transition(d, "published", { url: res.url, remoteId: res.remoteId, at }));
+      const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "published", { url: res.url, remoteId: res.remoteId, at }));
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: res.url });
+      if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       return { done: true, result: { status: "published", url: res.url } };
     } catch (e) {
       // Ruling P4: an error the adapter did not classify itself, and which carries no HTTP status, is
@@ -168,8 +169,10 @@ export class PublishOrchestrator {
       const retry = err.kind === "transient" && attempt <= BACKOFF_MS.length;
       const wait = retry ? Math.max(BACKOFF_MS[attempt - 1]!, err.retryAfterMs ?? 0) : 0;
       const stored = retry ? `${message} (retrying in ${Math.round(wait / MINUTE)} min)` : message;
-      await this.settle(p.file, p.channelId, (d) => transition(d, "failed", { error: stored }));
-      void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: retry ? "retry" : "failed", error: message });
+      const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "failed", { error: stored }));
+      void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: retry && settled === true ? "retry" : "failed", error: message });
+      // The state changed while the request was out (check_needed from a reconcile, a user decision): never retry over it.
+      if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       if (retry) return { done: false, wait };
       this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: err.kind, error: message });
       return { done: true, result: { status: "failed", kind: err.kind, error: message } };
@@ -178,16 +181,27 @@ export class PublishOrchestrator {
 
   /** Ruling P4: park on check_needed and try lookup() once; never retried automatically. */
   private async checkNeeded(p: Prepared, job: DeliveryJob, message: string): Promise<Attempt> {
-    await this.settle(p.file, p.channelId, (d) => transition(d, "check_needed", { error: message }));
+    const parked = await this.settle(p.file, p.channelId, (d) => transition(d, "check_needed", { error: message }));
+    if (parked !== true) {
+      void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
+      return { done: true, result: changedUnderneath(parked) };
+    }
     const remote = p.adapter.lookup ? await p.adapter.lookup(job).catch(() => null) : null;
     if (remote?.published) {
       const at = this.deps.now();
-      await this.settle(p.file, p.channelId, (d) => {
-        const next = transition(d, "published", { url: remote.url, remoteId: remote.remoteId, at });
-        delete next.error;
-        return next;
-      });
+      // The only settle allowed to start from check_needed: the lookup found the post on the platform.
+      const settled = await this.settle(
+        p.file,
+        p.channelId,
+        (d) => {
+          const next = transition(d, "published", { url: remote.url, remoteId: remote.remoteId, at });
+          delete next.error;
+          return next;
+        },
+        FROM_CHECK_NEEDED,
+      );
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: remote.url });
+      if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       return { done: true, result: { status: "published", url: remote.url ?? "" } };
     }
     void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
@@ -215,12 +229,33 @@ export class PublishOrchestrator {
     return { variant: box.variant!, delivery: box.delivery! };
   }
 
-  /** Writes the next state only while the delivery is still where the orchestrator left it. */
-  private async settle(file: TFile, channelId: string, next: (d: Delivery) => Delivery): Promise<void> {
-    await this.deps.writer.updateVariant(file, (fresh) => {
+  /**
+   * Writes the next state only while the delivery is still where the orchestrator left it: `publishing`
+   * (only the lookup-resolved write may start from `check_needed`). True when written; otherwise the status
+   * found instead, and nothing is written.
+   */
+  private async settle(
+    file: TFile,
+    channelId: string,
+    next: (d: Delivery) => Delivery,
+    from: ReadonlySet<DeliveryStatus> = FROM_PUBLISHING,
+  ): Promise<true | { found: DeliveryStatus | undefined }> {
+    let found: DeliveryStatus | undefined;
+    const result = await this.deps.writer.updateVariant(file, (fresh) => {
       const d = fresh.deliveries[channelId];
-      if (d?.status !== "publishing" && d?.status !== "check_needed") return { refuse: "The delivery changed while it was being published." };
+      found = d?.status;
+      if (!d || !from.has(d.status)) return { refuse: "The delivery changed while it was being published." };
       return { deliveries: { [channelId]: next(d) } };
     });
+    return "refuse" in result ? { found } : true;
   }
+}
+
+const FROM_PUBLISHING: ReadonlySet<DeliveryStatus> = new Set(["publishing"]);
+const FROM_CHECK_NEEDED: ReadonlySet<DeliveryStatus> = new Set(["check_needed"]);
+
+/** Final review Important 4: a settle refused because the state changed underneath; never retried. */
+function changedUnderneath(settled: { found: DeliveryStatus | undefined }): RunResult {
+  if (settled.found === "check_needed") return { status: "check_needed" };
+  return { status: "refused", reason: `It changed while it was being published${settled.found ? ` (it is ${settled.found.replace(/_/g, " ")} now)` : ""}.` };
 }

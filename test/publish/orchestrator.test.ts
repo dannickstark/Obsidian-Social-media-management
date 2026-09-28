@@ -242,6 +242,34 @@ describe("PublishOrchestrator", () => {
     expect(calls).toBe(1);
   });
 
+  it("never retries when the delivery moved to check_needed while the attempt was in flight (final review Important 4)", async () => {
+    let calls = 0;
+    const { c, orchestrator, delays, failures } = await setup(async () => {
+      calls++;
+      // e.g. the startup reconcile (or another device) marked the stuck `publishing` entry meanwhile.
+      await c.writer.transitionDelivery(c.app.vault.getFileByPath(P)! as never, "tg/event-x", "check_needed");
+      throw http(503);
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "check_needed" });
+    expect(calls).toBe(1);
+    expect(delays).toEqual([]);
+    expect(failures).toEqual([]);
+    expect(((await fm(c)).deliveries as Record<string, { status: string }>)["tg/event-x"]?.status).toBe("check_needed");
+  });
+
+  it("does not overwrite a check_needed set meanwhile with an unknown-outcome error either", async () => {
+    let calls = 0;
+    const { c, orchestrator, delays } = await setup(async () => {
+      calls++;
+      await c.writer.transitionDelivery(c.app.vault.getFileByPath(P)! as never, "tg/event-x", "check_needed");
+      throw new Error("socket hang up");
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "check_needed" });
+    expect(calls).toBe(1);
+    expect(delays).toEqual([]);
+    expect(((await fm(c)).deliveries as Record<string, { status: string; error?: string }>)["tg/event-x"]).toMatchObject({ status: "check_needed" });
+  });
+
   it("publishes one delivery per platform at a time", async () => {
     const P2 = "Social/Posts/Tg 2.md";
     let active = 0;

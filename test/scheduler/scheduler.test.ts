@@ -25,14 +25,16 @@ const note = (path: string, at: number, extra: Record<string, unknown> = {}) => 
 });
 const key = (path: string, at: number) => `${path}#bs/you@${at}`;
 
-function build(c: TestCtx, over: Partial<SchedulerDeps> = {}) {
+/** A scheduler past its startup reconcile (ticks before it are no-ops), run as a non-publisher so it does nothing. */
+async function build(c: TestCtx, over: Partial<SchedulerDeps> = {}) {
   const calls = { dispatched: [] as string[], overdue: [] as string[] };
   const warnings: string[] = [];
+  let reconciled = false;
+  const publisher = over.isPublisher ?? (() => true);
   const scheduler = new Scheduler({
     index: c.index,
     settings: () => get(c.settings),
     now: () => get(c.now),
-    isPublisher: () => true,
     autoPostLateMs: () => null,
     publish: {
       dispatch: async (i: DueItem) => void calls.dispatched.push(i.key),
@@ -42,7 +44,10 @@ function build(c: TestCtx, over: Partial<SchedulerDeps> = {}) {
     },
     warn: (m) => warnings.push(m),
     ...over,
+    isPublisher: () => reconciled && publisher(),
   });
+  await scheduler.reconcile();
+  reconciled = true;
   return { scheduler, calls, warnings };
 }
 
@@ -66,7 +71,7 @@ describe("due items", () => {
 describe("Scheduler", () => {
   it("dispatches a due delivery exactly once", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T - MIN });
-    const { scheduler, calls } = build(c);
+    const { scheduler, calls } = await build(c);
     await scheduler.tick();
     expect(calls.dispatched).toEqual([]);
     c.now.set(T + 10_000);
@@ -80,7 +85,7 @@ describe("Scheduler", () => {
   it("after a sleep, posts what just fell due and sends the rest to the Overdue tray (review focus 3)", async () => {
     const wake = T + 3 * 60 * MIN;
     const c = await makeCtx({ notes: [note(A, T), note(B, wake - MIN)], now: T - MIN });
-    const { scheduler, calls } = build(c);
+    const { scheduler, calls } = await build(c);
     await scheduler.tick();
     c.now.set(wake);
     await scheduler.tick();
@@ -89,7 +94,7 @@ describe("Scheduler", () => {
 
   it("posts late items within the auto-post window when that setting is on", async () => {
     const c = await makeCtx({ notes: [note(A, T), note(B, T - 30 * MIN)], now: T + 20 * MIN });
-    const { scheduler, calls } = build(c, { autoPostLateMs: () => 30 * MIN });
+    const { scheduler, calls } = await build(c, { autoPostLateMs: () => 30 * MIN });
     await scheduler.tick();
     expect(calls).toEqual({ dispatched: [key(A, T)], overdue: [key(B, T - 30 * MIN)] });
   });
@@ -97,7 +102,7 @@ describe("Scheduler", () => {
   it("stays passive when this device is not the publisher, but still ticks", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T });
     const ticks: Array<[number, number | null]> = [];
-    const { scheduler, calls } = build(c, { isPublisher: () => false, onTick: (now, previous) => void ticks.push([now, previous]) });
+    const { scheduler, calls } = await build(c, { isPublisher: () => false, onTick: (now, previous) => void ticks.push([now, previous]) });
     await scheduler.tick();
     c.now.set(T + 30_000);
     await scheduler.tick();
@@ -110,7 +115,7 @@ describe("Scheduler", () => {
 
   it("still dispatches due items in the same tick when onTick throws or rejects (fix round 1)", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T });
-    const { scheduler, calls, warnings } = build(c, {
+    const { scheduler, calls, warnings } = await build(c, {
       onTick: () => {
         throw new Error("reminder boom");
       },
@@ -120,7 +125,7 @@ describe("Scheduler", () => {
     expect(warnings).toEqual(["reminder boom"]);
 
     const c2 = await makeCtx({ notes: [note(B, T)], now: T });
-    const { scheduler: scheduler2, calls: calls2, warnings: warnings2 } = build(c2, {
+    const { scheduler: scheduler2, calls: calls2, warnings: warnings2 } = await build(c2, {
       onTick: async () => Promise.reject(new Error("reminder rejected")),
     });
     await scheduler2.tick();
@@ -130,7 +135,7 @@ describe("Scheduler", () => {
 
   it("never dispatches an unreadable entry and warns once (review focus 1)", async () => {
     const c = await makeCtx({ notes: [note(A, T, { deliveries: { "bs/you": { status: "Scheduled!" } } })], now: T });
-    const { scheduler, calls, warnings } = build(c);
+    const { scheduler, calls, warnings } = await build(c);
     await scheduler.tick();
     await scheduler.tick();
     expect(calls).toEqual({ dispatched: [], overdue: [] });
@@ -144,7 +149,7 @@ describe("Scheduler", () => {
       return 7;
     });
     const clear = vi.fn();
-    const { scheduler, calls } = build(c, { timers: { set, clear } });
+    const { scheduler, calls } = await build(c, { timers: { set, clear } });
     scheduler.start();
     scheduler.start();
     expect(set).toHaveBeenCalledOnce();
@@ -155,12 +160,37 @@ describe("Scheduler", () => {
   });
 });
 
+describe("Scheduler before the startup reconcile (final review Important 4)", () => {
+  it("ignores ticks until reconcile has run", async () => {
+    const c = await makeCtx({ notes: [note(A, T)], now: T });
+    const onTick = vi.fn();
+    const dispatch = vi.fn(async () => undefined);
+    const scheduler = new Scheduler({
+      index: c.index,
+      settings: () => get(c.settings),
+      now: () => get(c.now),
+      isPublisher: () => true,
+      autoPostLateMs: () => null,
+      publish: { dispatch, markOverdue: async () => undefined, markCheckNeeded: async () => false, resolveCheck: async () => undefined },
+      onTick,
+      warn: () => undefined,
+    });
+    expect(await scheduler.tick()).toEqual({ dispatched: [], overdue: [] });
+    expect(onTick).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(await scheduler.reconcile()).toMatchObject({ dispatched: 1 });
+    await scheduler.tick();
+    expect(onTick).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+});
+
 describe("dispatch through PublishActions", () => {
   it("assisted: the delivery waits for the user and a reminder goes out", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T });
     const due = vi.fn();
     c.ctx.publish.notifier = { due, failed: vi.fn() };
-    const { scheduler } = build(c, { publish: c.ctx.publish });
+    const { scheduler } = await build(c, { publish: c.ctx.publish });
     await scheduler.tick();
     await indexed(c.index, () => c.index.getVariant(A)?.deliveries["bs/you"]?.status === "awaiting_you");
     expect(due).toHaveBeenCalledWith(A, "bs/you");
@@ -170,7 +200,7 @@ describe("dispatch through PublishActions", () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T });
     await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("bs/you")!, method: "api" });
     c.adapters.register({ platform: "bluesky", publish: async () => ({ remoteId: "1", url: "https://bsky.app/profile/you/post/1" }) });
-    const { scheduler } = build(c, { publish: c.ctx.publish });
+    const { scheduler } = await build(c, { publish: c.ctx.publish });
     await scheduler.tick();
     await indexed(c.index, () => c.index.getVariant(A)?.status === "published");
     expect(c.index.getVariant(A)!.deliveries["bs/you"]?.url).toBe("https://bsky.app/profile/you/post/1");
@@ -178,7 +208,7 @@ describe("dispatch through PublishActions", () => {
 
   it("late: the delivery becomes overdue", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T + 60 * MIN });
-    const { scheduler } = build(c, { publish: c.ctx.publish });
+    const { scheduler } = await build(c, { publish: c.ctx.publish });
     await scheduler.tick();
     await indexed(c.index, () => c.index.getVariant(A)?.deliveries["bs/you"]?.status === "overdue");
     expect(c.log.entries.map((e) => e.result)).toEqual(["overdue"]);
@@ -187,7 +217,7 @@ describe("dispatch through PublishActions", () => {
   it("native without an adapter falls back to the assisted flow", async () => {
     const M = "Social/Posts/M.md";
     const c = await makeCtx({ notes: [{ ...note(M, T), frontmatter: { ...note(M, T).frontmatter, platform: "mastodon", channels: ["ma/you"], deliveries: undefined } }], now: T });
-    const { scheduler } = build(c, { publish: c.ctx.publish });
+    const { scheduler } = await build(c, { publish: c.ctx.publish });
     await scheduler.tick();
     await indexed(c.index, () => c.index.getVariant(M)?.deliveries["ma/you"]?.status === "awaiting_you");
   });

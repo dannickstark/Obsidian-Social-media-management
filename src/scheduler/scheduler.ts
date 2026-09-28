@@ -47,6 +47,8 @@ export class Scheduler {
   private handle: unknown = null;
   private lastTick: number | null = null;
   private running = false;
+  /** Set by reconcile(): a tick before the startup reconcile is a no-op (a stuck `publishing` is checked first). */
+  private ready = false;
   private readonly handled = new Set<string>();
   private readonly warned = new Set<string>();
 
@@ -74,7 +76,7 @@ export class Scheduler {
 
   async tick(): Promise<TickResult> {
     const result: TickResult = { dispatched: [], overdue: [] };
-    if (this.running) return result;
+    if (this.running || !this.ready) return result;
     this.running = true;
     try {
       const now = this.deps.now();
@@ -110,8 +112,16 @@ export class Scheduler {
     }
   }
 
-  /** Runs once at startup, before the loop (publisher only). */
+  /** Runs once at startup, before the loop (publisher only); ticks are no-ops until it has run. */
   async reconcile(): Promise<ReconcileSummary> {
+    try {
+      return await this.reconcileOnce();
+    } finally {
+      this.ready = true;
+    }
+  }
+
+  private async reconcileOnce(): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { checkNeeded: 0, overdue: 0, dispatched: 0 };
     if (!this.deps.isPublisher()) return summary;
     const plan = reconcilePlan(this.deps.index.variants(), this.deps.now(), this.deps.settings().defaultStaggerMinutes, this.deps.autoPostLateMs());
