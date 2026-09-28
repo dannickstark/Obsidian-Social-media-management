@@ -1,0 +1,51 @@
+/* Stylized platform previews: approximations built from Obsidian variables, not copies of each platform's design. */
+.osmm-preview { margin: 0; color: var(--text-normal); font-size: var(--font-ui-small); }
+.osmm-preview[data-width="mobile"] { max-width: 380px; }
+.osmm-preview[data-width="desktop"] { max-width: 560px; }
+.osmm-pv-feed, .osmm-pv-chat, .osmm-pv-link, .osmm-pv-article {
+  border: 1px solid var(--osmm-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  overflow: hidden;
+}
+.osmm-pv-post { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.osmm-pv-post.is-reply { border-top: 1px solid var(--osmm-border); }
+.osmm-pv-head { display: flex; align-items: center; gap: 8px; }
+.osmm-pv-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--osmm-avatar);
+  color: var(--osmm-badge-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+.osmm-pv-avatar.is-round { border-radius: 50%; }
+.osmm-pv-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.osmm-pv-handle, .osmm-pv-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.osmm-pv-meta { margin-left: auto; }
+.osmm-pv-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.osmm-pv-link, .osmm-pv-tag { color: var(--text-accent); }
+.osmm-pv-more { align-self: flex-start; height: auto; padding: 0; background: transparent; box-shadow: none; color: var(--text-muted); }
+.osmm-pv-media { display: grid; gap: 2px; border-radius: 10px; overflow: hidden; }
+.osmm-pv-media:not([data-count="1"]) { grid-template-columns: 1fr 1fr; }
+.osmm-pv-tile { min-height: 80px; background: var(--background-secondary); }
+.osmm-pv-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.osmm-pv-tile.is-missing { display: flex; align-items: center; justify-content: center; padding: 12px; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.osmm-pv-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--osmm-border);
+  border-radius: 10px;
+  color: var(--text-normal);
+  text-decoration: none;
+}
+.osmm-pv-card-domain { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.osmm-pv-card-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.osmm-pv-over { margin: 0; color: var(--text-error); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }

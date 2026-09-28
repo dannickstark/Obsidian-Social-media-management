@@ -1,0 +1,370 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`previewModel > bluesky model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 100,
+      "limit": 300,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "Bluesky",
+  "layout": "thread",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "bluesky",
+}
+`;
+
+exports[`previewModel > facebook model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 100,
+      "limit": 63206,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "Facebook",
+  "layout": "feed",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "facebook",
+}
+`;
+
+exports[`previewModel > instagram model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 100,
+      "limit": 2200,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "Instagram",
+  "layout": "feed",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "crop": {
+        "height": 900,
+        "ratio": 1.7777777777777777,
+        "rect": {
+          "height": 900,
+          "width": 1600,
+          "x": 0,
+          "y": 0,
+        },
+        "width": 1600,
+      },
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "instagram",
+}
+`;
+
+exports[`previewModel > linkedin model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 100,
+      "limit": 3000,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "LinkedIn",
+  "layout": "feed",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "linkedin",
+}
+`;
+
+exports[`previewModel > mastodon model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 96,
+      "limit": 500,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "Mastodon",
+  "layout": "thread",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "crop": {
+        "height": 900,
+        "ratio": 1.7777777777777777,
+        "rect": {
+          "height": 900,
+          "width": 1600,
+          "x": 0,
+          "y": 0,
+        },
+        "width": 1600,
+      },
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "mastodon",
+}
+`;
+
+exports[`previewModel > x model snapshot 1`] = `
+{
+  "author": {
+    "color": "#888888",
+    "handle": "@eventx",
+    "initials": "EX",
+    "name": "Event X",
+    "round": true,
+  },
+  "dialect": "plain",
+  "items": [
+    {
+      "chars": 96,
+      "limit": 280,
+      "over": false,
+      "segments": [
+        {
+          "text": "Event X is back on the 12th.
+
+Eighty makers, one evening. ",
+        },
+        {
+          "tag": true,
+          "text": "#events",
+        },
+        {
+          "text": "
+
+RSVP: ",
+        },
+        {
+          "href": "https://example.com/event-x",
+          "text": "https://example.com/event-x",
+        },
+      ],
+    },
+  ],
+  "label": "X",
+  "layout": "thread",
+  "markdown": "**Event X** is back on the 12th.
+
+Eighty makers, one evening. #events
+
+RSVP: https://example.com/event-x",
+  "media": [
+    {
+      "alt": "An image",
+      "crop": {
+        "height": 900,
+        "ratio": 1.7777777777777777,
+        "rect": {
+          "height": 900,
+          "width": 1600,
+          "x": 0,
+          "y": 0,
+        },
+        "width": 1600,
+      },
+      "kind": "image",
+      "src": "app://local/Social/cover.png",
+      "target": "cover.png",
+    },
+  ],
+  "platform": "x",
+}
+`;
