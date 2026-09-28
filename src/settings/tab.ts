@@ -16,11 +16,19 @@ import { publisherDescription } from "./publisher";
 import { parseMinutesList } from "./settings";
 
 const ABOUT_PHONE =
-  "Pushes your reminders to the free ntfy app on your phone, so they arrive even when this computer is asleep. The publisher device books each reminder up to 72 hours ahead. Privacy: on a public server such as ntfy.sh, anyone who knows the topic can read these pushes: the post title, the post text (inside the pre-filled link) and links. Keep the long random topic, or use your own ntfy server with an access token.";
+  "Pushes your reminders to the free ntfy app on your phone, so they arrive even when this computer is asleep. The publisher device books each reminder up to 72 hours ahead. Privacy: on a public server such as ntfy.sh, anyone who knows the topic can read these pushes: the post title, the post text (inside the pre-filled link), links, and the vault name and the note's path (in the Obsidian links). Keep the long random topic, or use your own ntfy server with an access token.";
 const SETUP_PHONE =
   "1. Install ntfy from the App Store or Google Play. 2. In the app, tap + and enter the topic above; for your own server, turn on “Use another server” and enter its address. 3. Tap “Send test” below: it should arrive within a few seconds.";
 const TOKEN_DESC = "Only for protected topics (your own server, or a reserved ntfy.sh topic). Stored in this device's secret storage.";
 const HTTP_TOKEN_WARNING = "Warning: this server uses http, so the token travels unencrypted. Use an https address.";
+/** Server and Topic edits apply this long after the last keystroke, or when the field loses focus (final review 1). */
+export const TARGET_EDIT_DELAY_MS = 1_500;
+
+/** A Server or Topic value typed but not applied yet. */
+interface TargetEdit {
+  server?: string;
+  topic?: string;
+}
 
 function plainHttp(server: string): boolean {
   try {
@@ -32,12 +40,23 @@ function plainHttp(server: string): boolean {
 
 export class OsmmSettingTab extends PluginSettingTab {
   private channelsUi: Mounted | null = null;
+  /** Server/Topic edits waiting for the pause after the last keystroke (final review 1). */
+  private pendingTarget: TargetEdit = {};
+  private targetTimer: number | null = null;
+  /** Applied edits run one after the other: each withdraws from the target the previous one set. */
+  private targetChain: Promise<void> = Promise.resolve();
+  private unloaded = false;
 
   constructor(
     app: App,
     private readonly osmm: OsmmPlugin,
   ) {
     super(app, osmm);
+    osmm.register(() => {
+      this.unloaded = true;
+      this.clearTargetTimer();
+      this.pendingTarget = {};
+    });
   }
 
   override display(): void {
@@ -100,7 +119,11 @@ export class OsmmSettingTab extends PluginSettingTab {
           const name = cleanDeviceName(value);
           if (!name) return;
           this.osmm.setDevice({ deviceName: name });
-          await this.osmm.publisher.renamed();
+          try {
+            await this.osmm.publisher.renamed();
+          } catch (e) {
+            new Notice(`Couldn't update the publisher name: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }),
       );
 
@@ -205,37 +228,41 @@ export class OsmmSettingTab extends PluginSettingTab {
       );
     if (!ntfy.enabled) return;
 
-    // Task 5 ruling: a token sent to an http server travels unencrypted.
-    const tokenDesc = () => (plainHttp(osmm.device.ntfy.server) && osmm.secrets.get(SecretIds.ntfyToken) ? `${TOKEN_DESC} ${HTTP_TOKEN_WARNING}` : TOKEN_DESC);
+    // Task 5 ruling: a token sent to an http server travels unencrypted (the server being typed counts).
+    const tokenDesc = () =>
+      plainHttp(this.pendingTarget.server ?? osmm.device.ntfy.server) && osmm.secrets.get(SecretIds.ntfyToken) ? `${TOKEN_DESC} ${HTTP_TOKEN_WARNING}` : TOKEN_DESC;
     let tokenSetting: Setting | null = null;
+    const onTargetFieldBlur = (el: HTMLElement) => el.addEventListener("blur", () => this.applyTargetEdits(() => tokenSetting?.setDesc(tokenDesc())));
 
     new Setting(containerEl)
       .setName("Server")
       .setDesc("https://ntfy.sh, or the address of your own ntfy server.")
-      .addText((t) =>
-        t
-          .setPlaceholder(DEFAULT_NTFY_SERVER)
-          .setValue(ntfy.server)
+      .addText((t) => {
+        onTargetFieldBlur(t.inputEl);
+        t.setPlaceholder(DEFAULT_NTFY_SERVER)
+          .setValue(this.pendingTarget.server ?? ntfy.server)
           .onChange((value) => {
             const server = normalizeServer(value.trim() || DEFAULT_NTFY_SERVER);
-            if (!server) return;
-            osmm.phone.forget();
-            setNtfy({ server });
+            // Only a valid address that differs from the one in use is a change (a trailing "/" is not).
+            if (server && server !== normalizeServer(osmm.device.ntfy.server)) this.pendingTarget.server = server;
+            else delete this.pendingTarget.server;
+            this.scheduleTargetEdits(() => tokenSetting?.setDesc(tokenDesc()));
             tokenSetting?.setDesc(tokenDesc());
-          }),
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName("Topic")
-      .setDesc("Subscribe to this topic in the ntfy app. Letters, digits, - and _ only. Stored in this device's secret storage.")
-      .addText((t) =>
-        t.setValue(osmm.secrets.get(SecretIds.ntfyTopic) ?? "").onChange((value) => {
+      .setDesc("Subscribe to this topic in the ntfy app. At least 8 letters, digits, - and _. Stored in this device's secret storage.")
+      .addText((t) => {
+        onTargetFieldBlur(t.inputEl);
+        t.setValue(this.pendingTarget.topic ?? osmm.secrets.get(SecretIds.ntfyTopic) ?? "").onChange((value) => {
           const topic = value.trim();
-          if (!TOPIC_RE.test(topic)) return;
-          osmm.phone.forget();
-          osmm.secrets.set(SecretIds.ntfyTopic, topic);
-        }),
-      )
+          if (TOPIC_RE.test(topic) && topic !== osmm.secrets.get(SecretIds.ntfyTopic)) this.pendingTarget.topic = topic;
+          else delete this.pendingTarget.topic;
+          this.scheduleTargetEdits(() => tokenSetting?.setDesc(tokenDesc()));
+        });
+      })
       .addButton((b) =>
         b.setButtonText("Copy").onClick(async () => {
           const topic = osmm.secrets.get(SecretIds.ntfyTopic);
@@ -246,6 +273,7 @@ export class OsmmSettingTab extends PluginSettingTab {
         b.setButtonText("New topic").onClick(async () => {
           const ok = await confirmDialog(this.app, "Make a new random topic? Your phone must subscribe to it again. Reminders already booked on the old topic are cancelled where the server allows it.", "New topic");
           if (!ok) return;
+          delete this.pendingTarget.topic;
           // The cancels go to the old topic, so they run before it is replaced, for at most 10 s (Task 9 ruling).
           await settlesWithin(osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
           // Then drop what is left for the old topic (pushes it couldn't cancel, a late record of an abandoned
@@ -264,7 +292,7 @@ export class OsmmSettingTab extends PluginSettingTab {
         t.setPlaceholder("tk_…")
           .setValue(osmm.secrets.get(SecretIds.ntfyToken) ?? "")
           .onChange((value) => {
-            osmm.phone.forget();
+            // The token changes neither the server nor the topic: the bookings stay valid (final review 1).
             osmm.secrets.set(SecretIds.ntfyToken, value.trim());
             tokenSetting?.setDesc(tokenDesc());
           });
@@ -285,11 +313,46 @@ export class OsmmSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Push publishing results")
-      .setDesc("Also push a confirmation when a post goes out automatically, and an alert when one fails (sent by the publisher device).")
+      .setDesc("Also push a confirmation when a post goes out through a platform connection, and an alert when one fails (sent by the publisher device).")
       .addToggle((t) => t.setValue(ntfy.results).onChange((value) => setNtfy({ results: value })));
   }
 
+  /** Applies the pending Server/Topic edits 1.5 s after the last keystroke. */
+  private scheduleTargetEdits(done: () => void): void {
+    this.clearTargetTimer();
+    this.targetTimer = window.setTimeout(() => this.applyTargetEdits(done), TARGET_EDIT_DELAY_MS);
+  }
+
+  private clearTargetTimer(): void {
+    if (this.targetTimer !== null) window.clearTimeout(this.targetTimer);
+    this.targetTimer = null;
+  }
+
+  /**
+   * Final review 1: a real Server or Topic change first withdraws the bookings from the old target (for at most
+   * 10 s, as New topic does), then forgets them (60 s hold, M3 P13) and only then switches to the new target.
+   */
+  private applyTargetEdits(done: () => void = () => undefined): void {
+    this.clearTargetTimer();
+    const edit = this.pendingTarget;
+    this.pendingTarget = {};
+    if (this.unloaded || (edit.server === undefined && edit.topic === undefined)) return;
+    const osmm = this.osmm;
+    this.targetChain = this.targetChain.then(async () => {
+      const server = edit.server !== undefined && edit.server !== normalizeServer(osmm.device.ntfy.server) ? edit.server : undefined;
+      const topic = edit.topic !== undefined && edit.topic !== osmm.secrets.get(SecretIds.ntfyTopic) ? edit.topic : undefined;
+      if (server === undefined && topic === undefined) return;
+      await settlesWithin(osmm.phone.withdraw(), WITHDRAW_WAIT_MS);
+      if (this.unloaded) return;
+      osmm.phone.forget();
+      if (server !== undefined) osmm.setDevice({ ntfy: { ...osmm.device.ntfy, server } });
+      if (topic !== undefined) osmm.secrets.set(SecretIds.ntfyTopic, topic);
+      done();
+    });
+  }
+
   override hide(): void {
+    this.applyTargetEdits();
     this.channelsUi?.destroy();
     this.channelsUi = null;
   }

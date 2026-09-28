@@ -28,6 +28,8 @@ export interface PublisherDeps {
   settings(): Pick<OsmmSettings, "publisher">;
   update(patch: { publisher: PublisherRecord | null }): Promise<void>;
   now(): number;
+  /** Called after this device claimed the role (final review 3: point to the phone reminder setup). */
+  claimed?(): void;
 }
 
 /** Spec §4.3: exactly one device publishes. The choice is synced; each device knows only its own id. */
@@ -49,6 +51,7 @@ export class PublisherService {
   async claim(): Promise<void> {
     const d = this.deps.device();
     await this.deps.update({ publisher: { deviceId: d.deviceId, name: d.deviceName, since: this.deps.now() } });
+    this.deps.claimed?.();
   }
 
   /** Claims the role; asks first when another device holds it. False when the user declined. */

@@ -47,6 +47,8 @@ Until one device is chosen, scheduled posts are neither posted nor marked overdu
 
 To move the role, click **Publish from this device instead** in the banner on the other device and confirm. The first device stops as soon as the change reaches it through sync. Until the first device shows the change, don't edit the plugin settings there: it could write the old choice back through sync.
 
+Phone reminders are set up per device and only the publisher books them. When you move the role, set up phone reminders on the new publisher (a notice reminds you if they are off there): otherwise they stop. Pushes the old publisher already booked still arrive until it is opened again and learns, through sync, that it no longer publishes; until then you may get some reminders twice.
+
 ## 7. Get reminders on your phone (2 minutes, optional)
 
 On the publisher device, open **Settings → Social Planner → Phone reminders (ntfy)** and turn on **Phone reminders on this device**. A long random topic is created for you.
@@ -57,7 +59,7 @@ On the publisher device, open **Settings → Social Planner → Phone reminders 
 
 From now on, each reminder arrives on the phone at its time, even when the computer is asleep. Tap the push to open the platform's compose page with the text filled in; **Copy & open** opens the post in Obsidian on the phone with the text ready to paste; **Open note** opens the note; **Snooze 10 min** brings it back later (with an access token the third button is **Done**, which opens the step where you paste the live link). Reminders are booked up to 72 hours ahead, so open Obsidian on the publisher device at least every couple of days. If you edit or move a post, its booked pushes are replaced; on a server that can't cancel pushes, tapping goes through Obsidian so you always get the current text.
 
-The pushes carry the post's title and, in the tap link, its text. On the public ntfy.sh server anyone who knows the topic can read them. Keep the random topic private, or run your own ntfy server with an access token (use https: over plain http the token travels unencrypted, and the settings warn you).
+The pushes carry the post's title and, in the tap link, its text; the buttons that open Obsidian also carry the vault name and the note's path. On the public ntfy.sh server anyone who knows the topic can read them. Keep the random topic private, or run your own ntfy server with an access token (use https: over plain http the token travels unencrypted, and the settings warn you).
 
 ## When something goes wrong
 

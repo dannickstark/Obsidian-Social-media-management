@@ -9,6 +9,12 @@ import { WITHDRAW_WAIT_MS } from "../src/reminders/ntfy/booker";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
 
+/** The user leaves a settings field: pending Server/Topic edits are applied (final review 1). */
+async function blur(setting: Setting): Promise<void> {
+  (setting.components[0] as TextComponent).inputEl.dispatchEvent(new FocusEvent("blur"));
+  await settle(20);
+}
+
 async function loaded() {
   const app = new App();
   const plugin = new OsmmPlugin(app as never, manifest);
@@ -152,9 +158,14 @@ describe("OsmmPlugin", () => {
     expect(Notice.messages.join(" ")).not.toContain(topic);
 
     await (last("Server").components[0] as TextComponent).change("https://push.example.org/");
+    await blur(last("Server"));
     expect(plugin.device.ntfy.server).toBe("https://push.example.org");
     await (last("Server").components[0] as TextComponent).change("not a server");
+    await blur(last("Server"));
     expect(plugin.device.ntfy.server).toBe("https://push.example.org");
+    // Final review 10 and 5: the privacy copy names the Obsidian links; the results copy covers every API publish.
+    expect(last("About phone reminders").desc).toContain("the vault name and the note's path (in the Obsidian links)");
+    expect(last("Push publishing results").desc).toBe("Also push a confirmation when a post goes out through a platform connection, and an alert when one fails (sent by the publisher device).");
     plugin.unload();
   });
 
@@ -181,18 +192,98 @@ describe("OsmmPlugin", () => {
     plugin.unload();
   });
 
-  it("holds booking after a Server, Topic or Token edit (M3 P13)", async () => {
-    const { plugin } = await loaded();
+  it("forgets the bookings only for a real Server or Topic change, never for the token (final review 1)", async () => {
+    const { app, plugin } = await loaded();
     const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
     const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
     plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
     Setting.all = [];
     tab.display();
     const forget = vi.spyOn(plugin.phone, "forget");
-    await (last("Server").components[0] as TextComponent).change("https://push.example.org");
-    await (last("Topic").components[0] as TextComponent).change("osmm-half");
+    const withdraw = vi.spyOn(plugin.phone, "withdraw");
+    await (last("Server").components[0] as TextComponent).change("https://ntfy.sh/");
+    await blur(last("Server"));
+    await (last("Topic").components[0] as TextComponent).change(" osmm-oldtopic ");
+    await blur(last("Topic"));
     await (last("Access token").components[0] as TextComponent).change("tk_x");
-    expect(forget).toHaveBeenCalledTimes(3);
+    await blur(last("Access token"));
+    expect(app.secretStorage.getSecret("osmm-ntfy-token")).toBe("tk_x");
+    expect([forget.mock.calls.length, withdraw.mock.calls.length]).toEqual([0, 0]);
+
+    // Typed key by key: nothing is applied until 1.5 s after the last keystroke (or on blur), and then only once.
+    vi.useFakeTimers();
+    try {
+      for (const typed of ["osmm-n", "osmm-new", "osmm-newt", "osmm-newtopic"]) {
+        await (last("Topic").components[0] as TextComponent).change(typed);
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      expect(app.secretStorage.getSecret("osmm-ntfy-topic")).toBe("osmm-oldtopic");
+      await vi.advanceTimersByTimeAsync(500);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+    expect(app.secretStorage.getSecret("osmm-ntfy-topic")).toBe("osmm-newtopic");
+    expect([forget.mock.calls.length, withdraw.mock.calls.length]).toEqual([1, 1]);
+    plugin.unload();
+  });
+
+  it("moves booked reminders to a new Server or Topic: cancelled on the old target first, rebooked after the hold (final review 1)", async () => {
+    const { app, plugin } = await loaded();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    await writeNote(app as never, "Social/Posts/R.md", { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: formatDateTime(Date.now() + 2 * 3_600_000), reminders: [60] }, "Hi");
+    await indexed(plugin.index, () => plugin.index.variants().length === 1);
+    app.secretStorage.setSecret("osmm-ntfy-topic", "osmm-oldtopic");
+    plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+    requestUrlMock.queue.push(NTFY.scheduled);
+    await plugin.publisher.claim();
+    await settle(50);
+    expect(requestUrlMock.calls).toHaveLength(1);
+    Setting.all = [];
+    tab.display();
+
+    requestUrlMock.queue.push(NTFY.cancelled);
+    await (last("Topic").components[0] as TextComponent).change("osmm-newtopic");
+    await blur(last("Topic"));
+    expect(requestUrlMock.calls[1]).toMatchObject({ method: "DELETE", url: `https://ntfy.sh/osmm-oldtopic/${JSON.parse(NTFY.scheduled().text).id}` });
+    expect(app.secretStorage.getSecret("osmm-ntfy-topic")).toBe("osmm-newtopic");
+    expect((await plugin.phone.sync()).booked).toEqual([]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    try {
+      requestUrlMock.queue.push(NTFY.scheduled);
+      expect((await plugin.phone.sync()).booked).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(JSON.parse(String(requestUrlMock.calls[2]!.body)).topic).toBe("osmm-newtopic");
+    plugin.unload();
+  });
+
+  it("points to the phone reminder setup after this device becomes the publisher without them (final review 3)", async () => {
+    const { plugin } = await loaded();
+    Notice.messages = [];
+    await plugin.publisher.claim();
+    expect(Notice.messages).toContain("Phone reminders are off on this device — set them up under Phone reminders (ntfy).");
+    await plugin.publisher.release();
+    plugin.setDevice({ ntfy: { ...plugin.device.ntfy, enabled: true } });
+    Notice.messages = [];
+    await plugin.publisher.claim();
+    expect(Notice.messages).not.toContain("Phone reminders are off on this device — set them up under Phone reminders (ntfy).");
+    plugin.unload();
+  });
+
+  it("shows a Notice when keeping the publisher name in step fails (final review 13)", async () => {
+    const { plugin } = await loaded();
+    const tab = (plugin as unknown as { settingTabs: Array<{ display(): void }> }).settingTabs[0]!;
+    const last = (n: string) => Setting.all.filter((s) => s.name === n).at(-1)!;
+    Setting.all = [];
+    tab.display();
+    vi.spyOn(plugin.publisher, "renamed").mockRejectedValue(new Error("Couldn't save the settings."));
+    Notice.messages = [];
+    await (last("Device name").components[0] as TextComponent).change("Studio iMac");
+    expect(Notice.messages).toEqual(["Couldn't update the publisher name: Couldn't save the settings."]);
     plugin.unload();
   });
 

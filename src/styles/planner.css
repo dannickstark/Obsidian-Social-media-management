@@ -1,4 +1,4 @@
-.osmm-planner { display: flex; flex-direction: column; height: 100%; }
+.osmm-planner { display: flex; flex-direction: column; height: 100%; container-type: inline-size; }
 .osmm-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--osmm-border); }
 .osmm-title { margin: 0; font-size: var(--font-ui-large); font-weight: 600; }
 .osmm-spacer { flex: 1; }
@@ -71,7 +71,6 @@
 .osmm-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--background-secondary); color: var(--osmm-muted); font-size: var(--font-ui-small); }
 .osmm-planner > .osmm-banner { margin: 0 16px 8px; }
 .osmm-banner.is-warning { background: rgba(var(--color-orange-rgb), 0.1); color: var(--text-normal); }
-.osmm-planner { container-type: inline-size; }
 .osmm-toolbar { flex-wrap: wrap; }
 .osmm-agenda { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
 .osmm-agenda-day { display: flex; flex-direction: column; gap: 6px; }

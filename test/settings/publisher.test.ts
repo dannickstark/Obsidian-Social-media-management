@@ -98,6 +98,25 @@ describe("PublisherService", () => {
     expect(laptop.isPublisher()).toBe(true);
   });
 
+  it("reports each successful claim, but not a declined takeover (final review 3)", async () => {
+    let synced: OsmmSettings = { ...migrateSettings(null), publisher: { deviceId: "other", name: "Work laptop", since: 1 } };
+    const claimed: number[] = [];
+    const service = new PublisherService({
+      device: () => ({ deviceId: "d1", deviceName: "Mac" }),
+      settings: () => synced,
+      update: async (p) => void (synced = { ...synced, ...p }),
+      now: () => T,
+      claimed: () => void claimed.push(T),
+    });
+    await service.takeOver(async () => false);
+    expect(claimed).toEqual([]);
+    await service.takeOver(async () => true);
+    expect(claimed).toHaveLength(1);
+    await service.release();
+    await service.claim();
+    expect(claimed).toHaveLength(2);
+  });
+
   it("releases the role only on the publisher", async () => {
     const { laptop, phone, synced } = twoDevices();
     await laptop.claim();

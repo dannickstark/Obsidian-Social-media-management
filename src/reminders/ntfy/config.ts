@@ -10,8 +10,11 @@ export interface NtfyConfig {
 }
 
 export const DEFAULT_NTFY_SERVER = "https://ntfy.sh";
-/** ntfy topic names: letters, digits, - and _, at most 64 characters. */
-export const TOPIC_RE = /^[-_A-Za-z0-9]{1,64}$/;
+/**
+ * ntfy topic names: letters, digits, - and _, at most 64 characters. At least 8 (final review 9): on a public
+ * server a short topic is easy to guess, and anyone who knows it can read the pushes.
+ */
+export const TOPIC_RE = /^[-_A-Za-z0-9]{8,64}$/;
 
 export function normalizeServer(raw: string): string | null {
   const s = raw.trim().replace(/\/+$/, "");
@@ -21,7 +24,8 @@ export function normalizeServer(raw: string): string | null {
   } catch {
     return null;
   }
-  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.search || url.hash || !url.host) return null;
+  // No credentials in the address (final review 9): they would travel in every URL and error text. Use a token.
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.search || url.hash || !url.host || url.username || url.password) return null;
   return s;
 }
 

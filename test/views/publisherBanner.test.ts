@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { get } from "svelte/store";
-import { Modal } from "../fakes/obsidian";
+import { Modal, Notice } from "../fakes/obsidian";
+import { vi } from "vitest";
 import { osmmContext } from "../../src/ui/context";
 import PublisherBanner from "../../src/views/PublisherBanner.svelte";
 import Sidebar from "../../src/views/Sidebar.svelte";
@@ -28,5 +29,15 @@ describe("PublisherBanner", () => {
     await settle();
     expect(c.publisher.isPublisher()).toBe(true);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows a Notice when the takeover fails (final review 13)", async () => {
+    const c = await makeCtx();
+    vi.spyOn(c.publisher, "takeOver").mockRejectedValue(new Error("Couldn't save the settings."));
+    Notice.messages = [];
+    render(PublisherBanner, { context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Make this device the publisher" }));
+    await settle();
+    expect(Notice.messages).toEqual(["Couldn't make this device the publisher: Couldn't save the settings."]);
   });
 });

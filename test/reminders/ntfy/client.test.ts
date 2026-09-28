@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, requestUrlMock } from "../../fakes/obsidian";
 import { NtfyClient, NtfyError, MIN_DELAY_MS, REQUEST_TIMEOUT_MS, testMessage, type NtfyMessage } from "../../../src/reminders/ntfy/client";
-import { DEFAULT_NTFY_SERVER, normalizeServer, ntfyTarget, randomTopic, type NtfyConfig } from "../../../src/reminders/ntfy/config";
+import { DEFAULT_NTFY_SERVER, normalizeServer, ntfyTarget, randomTopic, TOPIC_RE, type NtfyConfig } from "../../../src/reminders/ntfy/config";
 import { SecretIds, Secrets } from "../../../src/secrets/secrets";
 import { loadDeviceSettings } from "../../../src/settings/device";
 import { NTFY } from "./fixtures";
@@ -122,6 +122,14 @@ describe("ntfy configuration", () => {
     expect(normalizeServer("ftp://x")).toBeNull();
     expect(normalizeServer("https://ntfy.sh/?a=1")).toBeNull();
     expect(normalizeServer("ntfy.sh")).toBeNull();
+    // Final review 9: credentials in the address would end up in logs and error texts.
+    expect(normalizeServer("https://user:pass@ntfy.example.org")).toBeNull();
+    expect(normalizeServer("https://user@ntfy.example.org")).toBeNull();
+  });
+
+  it("accepts only topics of 8 to 64 letters, digits, - and _ (final review 9)", () => {
+    expect(["osmm-abc", "a".repeat(64), randomTopic()].map((t) => TOPIC_RE.test(t))).toEqual([true, true, true]);
+    expect(["osmm", "osmm-ab", "a".repeat(65), "osmm topic", "osmm/topic1"].map((t) => TOPIC_RE.test(t))).toEqual([false, false, false, false, false]);
   });
 
   it("makes long random topics", () => {

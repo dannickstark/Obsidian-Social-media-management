@@ -103,6 +103,10 @@ export default class OsmmPlugin extends Plugin {
       settings: () => this.settings,
       update: (patch) => this.updateSettings(patch),
       now: () => Date.now(),
+      // Final review 3: phone reminders are booked by the publisher only, and set up per device.
+      claimed: () => {
+        if (!this.device.ntfy.enabled) new Notice("Phone reminders are off on this device — set them up under Phone reminders (ntfy).");
+      },
     });
     this.secrets = new Secrets(this.app);
     this.writer = new SafeWriter(this.app);

@@ -38,7 +38,7 @@ Follow [the getting-started guide](docs/getting-started.md): add a channel, writ
 - Channels live in the plugin settings. Credentials, the ntfy topic and the ntfy token are kept in Obsidian's per-device secret storage, never in your notes or in synced settings.
 - Every publish attempt is appended to `Social/_log.md` (earlier months move to `Social/_log/`). Secrets are never written there.
 - Reminders, notification settings, the device name and the phone-reminder setup are per device. The synced settings only record which device publishes (its id and name).
-- Phone reminders go through an ntfy server and carry the post's title, platform and text (the tap link opens the compose page with the text filled in). On the public ntfy.sh server anyone who knows the topic can read them: keep the random topic private, or run your own ntfy server with an access token over https.
+- Phone reminders go through an ntfy server and carry the post's title, platform and text (the tap link opens the compose page with the text filled in), plus the vault name and the note's path (in the links that open Obsidian). On the public ntfy.sh server anyone who knows the topic can read them: keep the random topic private, or run your own ntfy server with an access token over https.
 
 ## Development
 

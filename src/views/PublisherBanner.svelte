@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Notice } from "obsidian";
   import { publisherState } from "../settings/publisher";
   import { useOsmm } from "../ui/context";
 
@@ -6,7 +7,9 @@
   const state = $derived(publisherState($settings.publisher, publisher.deviceId));
 
   function claim(): void {
-    void publisher.takeOver((message) => actions.confirm(message, "Make this device the publisher"));
+    publisher
+      .takeOver((message) => actions.confirm(message, "Make this device the publisher"))
+      .catch((e: unknown) => new Notice(`Couldn't make this device the publisher: ${e instanceof Error ? e.message : String(e)}`));
   }
 </script>
 
