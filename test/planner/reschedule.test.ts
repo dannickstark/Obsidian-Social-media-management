@@ -51,6 +51,18 @@ describe("planReschedule", () => {
     expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30), "handed_over"), { at: T(9, 9) })).toMatchObject({ ok: true, needsConfirm: true });
   });
 
+  it("does not ask for confirmation for a handed-over sibling with its own time, which does not move (G5)", () => {
+    const v = variant({ deliveries: { "li/acme": { status: "handed_over", at: T(8, 20) } } });
+    const plan = planReschedule(rowOf(v, "li/me", T(8, 17, 30)), { at: T(9, 9) });
+    expect(plan).toMatchObject({ ok: true, needsConfirm: false });
+    expect(plan.ok && plan.patch.deliveries?.["li/acme"]).toEqual({ status: "handed_over", at: T(8, 20) });
+  });
+
+  it("still asks for a handed-over sibling without its own time, which moves with the post (G5)", () => {
+    const v = variant({ deliveries: { "li/acme": { status: "handed_over" } } });
+    expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30)), { at: T(9, 9) })).toMatchObject({ ok: true, needsConfirm: true });
+  });
+
   it.each(["published", "publishing", "skipped"] as const)("refuses to move %s rows", (status) => {
     const v = variant({});
     expect(planReschedule(rowOf(v, "li/me", T(8, 17, 30), status), { at: T(9, 9) }).ok).toBe(false);

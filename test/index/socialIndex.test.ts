@@ -1,8 +1,38 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SocialIndex } from "../../src/index/socialIndex";
-import { createApp, nextChange, settle, writeNote } from "../helpers";
+import type { App } from "obsidian";
+import { createApp, indexed, nextChange, settle, writeNote } from "../helpers";
 
 let index: SocialIndex | undefined;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+/**
+ * Hold the listed `cachedRead` calls (1-based) until released; `started(n)` resolves once call n
+ * has begun, so tests order concurrent reads without timing guesses.
+ */
+function gateReads(app: App, gated: number[]) {
+  const started = new Map<number, ReturnType<typeof deferred>>();
+  const gates = new Map<number, ReturnType<typeof deferred>>();
+  const get = (map: Map<number, ReturnType<typeof deferred>>, n: number) => {
+    if (!map.has(n)) map.set(n, deferred());
+    return map.get(n)!;
+  };
+  const cachedRead = app.vault.cachedRead.bind(app.vault);
+  let count = 0;
+  app.vault.cachedRead = async (f) => {
+    const n = ++count;
+    const content = await cachedRead(f);
+    get(started, n).resolve();
+    if (gated.includes(n)) await get(gates, n).promise;
+    return content;
+  };
+  return { started: (n: number) => get(started, n).promise, release: (n: number) => get(gates, n).resolve() };
+}
 afterEach(() => index?.stop());
 
 async function vaultWithCampaign() {
@@ -154,30 +184,20 @@ describe("SocialIndex", () => {
     // finishes and deletes the token → change C claims a token and is still reading → build()
     // finishes and must not treat itself as fresh just because its claimed number (1) got reused;
     // C's newer result must win once it resolves.
-    let callCount = 0;
-    const gateResolvers: Record<number, () => void> = {};
-    const cachedRead = app.vault.cachedRead.bind(app.vault);
-    app.vault.cachedRead = async (f) => {
-      const content = await cachedRead(f);
-      const n = ++callCount;
-      if (n === 1 || n === 3) {
-        await new Promise<void>((resolve) => (gateResolvers[n] = resolve));
-      }
-      return content;
-    };
+    const reads = gateReads(app, [1, 3]);
     index = new SocialIndex(app, 0);
     index.start();
     const built = index.build();
-    await settle(5); // build() claims its token and blocks on read #1
+    await reads.started(1); // build() claimed its token and is blocked on read #1
     await writeNote(app, path, { type: "social-post", platform: "x", title: "V2" });
-    await settle(5); // change B claims, reads (#2, unblocked), stores "V2" and deletes its token
+    await indexed(index, () => index!.getVariant(path)?.displayTitle === "V2"); // change B read (#2) and stored "V2"
     await writeNote(app, path, { type: "social-post", platform: "x", title: "V3" });
-    await settle(5); // change C claims a token and blocks on read #3, still in flight
-    gateResolvers[1]?.(); // let build()'s stale read resolve first
-    await settle(5); // build() must not (mis)treat its stale claim as still current
-    gateResolvers[3]?.(); // now let C's newer read resolve
-    await built;
-    await settle(5);
+    await reads.started(3); // change C claimed a token and is blocked on read #3
+    reads.release(1); // let build()'s stale read resolve first
+    await built; // build() must not (mis)treat its stale claim as still current
+    expect(index.getVariant(path)?.displayTitle).toBe("V2");
+    reads.release(3); // now let C's newer read resolve
+    await indexed(index, () => index!.getVariant(path)?.displayTitle === "V3");
     expect(index.getVariant(path)?.displayTitle).toBe("V3");
   });
 
@@ -186,27 +206,16 @@ describe("SocialIndex", () => {
     const path = "Social/Posts/Solo.md";
     const file = await writeNote(app, path, { type: "social-post", platform: "x", title: "Old" });
     await settle();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const cachedRead = app.vault.cachedRead.bind(app.vault);
-    let first = true;
-    app.vault.cachedRead = async (f) => {
-      const content = await cachedRead(f);
-      if (first) {
-        first = false;
-        await gate;
-      }
-      return content;
-    };
+    const reads = gateReads(app, [1]);
     index = new SocialIndex(app, 0);
     index.start();
     const built = index.build();
-    await settle(5); // let build() claim its token under the old path and start its (blocked) read
+    await reads.started(1); // build() claimed its token under the old path and its read is blocked
     await app.vault.rename(file, "Social/Posts/Renamed.md");
-    await settle(5); // let the rename's own reindex run and complete under the new path
-    release();
+    // The rename's own reindex runs and completes under the new path.
+    await indexed(index, () => index!.getVariant("Social/Posts/Renamed.md") !== undefined);
+    reads.release(1);
     await built;
-    await settle(5);
     expect(index.getVariant("Social/Posts/Renamed.md")?.displayTitle).toBe("Old");
     expect(index.getVariant(path)).toBeUndefined();
     expect((index as unknown as { sequence: Map<string, number> }).sequence.has(path)).toBe(false);

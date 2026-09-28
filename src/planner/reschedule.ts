@@ -61,7 +61,9 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
     const d = deliveries[id];
     if (d?.status === "overdue") deliveries[id] = transition(d, "scheduled");
   }
-  const needsConfirm = affected.some((id) => deliveries[id]?.status === "handed_over");
+  // Only deliveries that actually move need confirming: a sibling with its own explicit time stays put.
+  const moving = explicit ? affected : affected.filter((id) => id === row.channelId || v.deliveries[id]?.at === undefined);
+  const needsConfirm = moving.some((id) => deliveries[id]?.status === "handed_over");
 
   return {
     ok: true,
