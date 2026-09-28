@@ -12,8 +12,8 @@ export function safeFileName(name: string): string {
     .replace(ILLEGAL_RE, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/^\.+/, "")
-    .trim()
+    // Leading dots and spaces, repeatedly: ". .hidden" or "../.obsidian" must not become a hidden name.
+    .replace(/^[.\s]+/, "")
     .slice(0, 120)
     .replace(/[.\s]+$/, "");
   return cleaned || "Untitled";
@@ -39,7 +39,7 @@ export class NoteFactory {
     private readonly opts: FactoryOptions,
   ) {}
 
-  async createCampaign(input: { title: string; anchorDate?: number; link?: string }): Promise<TFile> {
+  async createCampaign(input: { title: string; anchorDate?: number; link?: string; brief?: string }): Promise<TFile> {
     const title = input.title.trim();
     if (!title) throw new Error("Campaign title is required");
     const name = safeFileName(title);
@@ -47,7 +47,10 @@ export class NoteFactory {
     const fm: Record<string, unknown> = { type: "social-campaign", title, status: "active" };
     if (input.anchorDate !== undefined) fm.anchor_date = formatDateTime(input.anchorDate);
     if (input.link) fm.link = input.link;
-    const body = "\n## Brief\n\n\n## Variants\n\n```social-variants\n```\n";
+    const brief = input.brief?.trim();
+    const body = brief
+      ? `\n## Brief\n\n${brief}\n\n## Variants\n\n\`\`\`social-variants\n\`\`\`\n`
+      : "\n## Brief\n\n\n## Variants\n\n```social-variants\n```\n";
     return this.app.vault.create(this.uniquePath(folder, name), render(fm, body));
   }
 
@@ -88,6 +91,10 @@ export class NoteFactory {
       const current = parseVariant(orig, file.path).value;
       if (!current) throw new Error(`${file.path} is not a valid social post`);
       if (!current.channels.includes(channelId)) throw new Error(`${channelId} is not a channel of this post`);
+      // Frozen: the fork would drop the raw entry and the channel could be posted again.
+      if (current.invalidDeliveries?.includes(channelId)) throw new Error(`${channelId}'s delivery entry can't be read. Fix its status in the note before forking it.`);
+      // In flight: the run's result lands on this note, where the forked channel would no longer exist (M4 P4).
+      if (current.deliveries[channelId]?.status === "publishing") throw new Error(`${channelName} is being published right now. Try again in a minute.`);
       if (current.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
       const copy = structuredClone(orig);
       const channels = current.channels.filter((c) => c !== channelId);

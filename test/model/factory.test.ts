@@ -21,6 +21,8 @@ describe("safeFileName (review focus 5)", () => {
     ["Q&A: what/why?", "Q&A what why"],
     ["#launch [beta] ^1", "launch beta 1"],
     ["...hidden", "hidden"],
+    ["../../.obsidian/plugins", "obsidian plugins"],
+    [". . .hidden", "hidden"],
     ["Coming soon...", "Coming soon"],
     ["Trailing . . ", "Trailing"],
     ["   ", "Untitled"],
@@ -144,5 +146,28 @@ describe("NoteFactory", () => {
     const file = await writeNote(app, "p.md", { type: "social-post", platform: "linkedin", channels: ["li/me"] });
     await expect(factory.forkVariant(file, "li/me", "Me")).rejects.toThrow(/only channel/);
     await expect(factory.forkVariant(file, "li/other", "Other")).rejects.toThrow(/not a channel/);
+  });
+  it("writes the brief into a new campaign", async () => {
+    const { app, factory } = setup();
+    const file = await factory.createCampaign({ title: "Event Y", brief: "Monthly makers evening.\nFree." });
+    expect(await app.vault.read(file)).toContain("## Brief\n\nMonthly makers evening.\nFree.\n\n## Variants\n\n```social-variants\n```\n");
+  });
+
+  it("refuses to fork a channel whose delivery entry can't be read (frozen)", async () => {
+    const { app, factory } = setup();
+    const file = await writeNote(app, "Social/P.md", { type: "social-post", platform: "linkedin", channels: ["li/me", "li/acme"], status: "scheduled", deliveries: { "li/me": { status: "publishd" } } }, "Body\n");
+    await expect(factory.forkVariant(file, "li/me", "Me")).rejects.toThrow("li/me's delivery entry can't be read");
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "publishd" } });
+    expect((await fmOf(app, file)).channels).toEqual(["li/me", "li/acme"]);
+  });
+
+  it("refuses to fork a channel that is being published right now (M4 P4)", async () => {
+    const { app, factory } = setup();
+    const deliveries = { "li/me": { status: "publishing" }, "li/acme": { status: "scheduled" } };
+    const file = await writeNote(app, "Social/P.md", { type: "social-post", platform: "linkedin", channels: ["li/me", "li/acme"], status: "scheduled", scheduled_at: "2026-10-08T09:00:00+02:00", deliveries }, "Body\n");
+    await expect(factory.forkVariant(file, "li/me", "Me")).rejects.toThrow("Me is being published right now. Try again in a minute.");
+    expect((await fmOf(app, file)).deliveries).toEqual(deliveries);
+    expect((await fmOf(app, file)).channels).toEqual(["li/me", "li/acme"]);
+    expect(app.vault.getFileByPath("Social/P – Me.md")).toBeNull();
   });
 });

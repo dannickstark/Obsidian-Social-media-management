@@ -232,4 +232,19 @@ describe("SafeWriter", () => {
     await new SafeWriter(app).updateDeliveries(file, { "li/me": { status: "ready" } });
     expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "ready", note: "keep me" } });
   });
+  it("replaces the body and keeps the frontmatter byte for byte, in the same queue as field writes", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "publishd" } } }, "Old body\n");
+    const writer = new SafeWriter(app);
+    await Promise.all([writer.setFields(file, { title: "T" }), writer.editBody(file, (body) => `${body.trim()} and more`)]);
+    expect((await app.vault.read(file)).endsWith("---\nOld body and more\n")).toBe(true);
+    expect((await fmOf(app, file)).title).toBe("T");
+    const head = (text: string) => text.slice(0, getFrontMatterInfo(text).contentStart);
+    const before = head(await app.vault.read(file));
+    await writer.editBody(file, () => "New");
+    const after = await app.vault.read(file);
+    expect(head(after)).toBe(before);
+    expect(after.endsWith("---\nNew\n")).toBe(true);
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "publishd" } });
+  });
 });

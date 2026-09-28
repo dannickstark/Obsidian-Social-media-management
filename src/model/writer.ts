@@ -1,4 +1,4 @@
-import type { App, TFile } from "obsidian";
+import { getFrontMatterInfo, type App, type TFile } from "obsidian";
 import { isRecord, parseVariant, serializeDelivery, variantFields, type VariantPatch } from "./frontmatter";
 import { rollupStatus, transition } from "./stateMachine";
 import type { Delivery, DeliveryStatus, Variant } from "./types";
@@ -67,22 +67,37 @@ export class SafeWriter {
 
   constructor(private readonly app: App) {}
 
-  run<T>(file: TFile, fn: (fm: Frontmatter) => T): Promise<T> {
+  /** One queue per file (object identity), for frontmatter and body writes alike. */
+  private enqueue<T>(file: TFile, task: () => Promise<T>): Promise<T> {
     const previous = this.queues.get(file) ?? Promise.resolve();
-    let result!: T;
-    const next = previous
-      .catch(() => undefined)
-      .then(() =>
-        this.app.fileManager.processFrontMatter(file, (fm: Frontmatter) => {
-          result = fn(fm);
-        }),
-      )
-      .then(() => result);
+    const next = previous.catch(() => undefined).then(task);
     this.queues.set(
       file,
       next.catch(() => undefined),
     );
     return next;
+  }
+
+  run<T>(file: TFile, fn: (fm: Frontmatter) => T): Promise<T> {
+    return this.enqueue(file, async () => {
+      let result!: T;
+      await this.app.fileManager.processFrontMatter(file, (fm: Frontmatter) => {
+        result = fn(fm);
+      });
+      return result;
+    });
+  }
+
+  /** Replaces the note's body; the frontmatter block is kept exactly as it is. */
+  editBody(file: TFile, edit: (body: string) => string): Promise<void> {
+    return this.enqueue(file, async () => {
+      await this.app.vault.process(file, (content) => {
+        const info = getFrontMatterInfo(content);
+        const head = info.exists ? content.slice(0, info.contentStart) : "";
+        const next = edit(info.exists ? content.slice(info.contentStart) : content);
+        return head + (next.endsWith("\n") ? next : `${next}\n`);
+      });
+    });
   }
 
   setFields(file: TFile, fields: Frontmatter): Promise<void> {

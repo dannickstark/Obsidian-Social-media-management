@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planSelectGroup, planToggleChannel } from "../../src/composer/channels";
+import { planSelectGroup, planSetChannels, planToggleChannel } from "../../src/composer/channels";
 import type { Variant } from "../../src/model/types";
 
 const v = (extra: Partial<Variant> = {}): Variant => ({
@@ -96,5 +96,32 @@ describe("planSelectGroup", () => {
       fields: { channels: ["li/me", "li/osmm", "li/maker"] },
       deliveries: { "li/maker": { status: "scheduled" } },
     });
+  });
+});
+
+describe("planSetChannels", () => {
+  const nameOf = (id: string) => ({ "li/me": "Me", "li/acme": "Acme" })[id] ?? id;
+
+  it("replaces the list, keeping the order of the channels that stay", () => {
+    expect(planSetChannels(v(), [ch("li/acme"), ch("li/osmm")], nameOf)).toEqual({ fields: { channels: ["li/acme", "li/osmm"] } });
+  });
+
+  it("adds with the inherited status and removes records of dropped channels", () => {
+    const scheduled = v({ status: "scheduled", scheduledAt: 1, deliveries: { "li/me": { status: "scheduled" }, "li/acme": { status: "scheduled" } } });
+    expect(planSetChannels(scheduled, [ch("li/me"), ch("li/osmm")], nameOf)).toEqual({
+      fields: { channels: ["li/me", "li/osmm"] },
+      deliveries: { "li/acme": null, "li/osmm": { status: "scheduled" } },
+    });
+  });
+
+  it("keeps history: published, awaiting and unreadable channels stay", () => {
+    expect(planSetChannels(v({ deliveries: { "li/me": { status: "published" } } }), [ch("li/acme")], nameOf)).toEqual({ refuse: "Me was already published, so it stays on this post." });
+    expect(planSetChannels(v({ deliveries: { "li/me": { status: "awaiting_you" } } }), [ch("li/acme")], nameOf)).toEqual({ refuse: "Me is awaiting you to post manually, so it stays on this post." });
+    expect(planSetChannels(v({ invalidDeliveries: ["li/me"] }), [ch("li/acme")], nameOf)).toEqual({ refuse: "Me's delivery status can't be read from the note, so it stays on this post until you fix it." });
+  });
+
+  it("refuses another platform's channel and an empty list on a scheduled post", () => {
+    expect(planSetChannels(v(), [ch("x/you", "@you", "x")], nameOf)).toEqual({ refuse: "@you is not a LinkedIn channel." });
+    expect(planSetChannels(v({ status: "scheduled", scheduledAt: 1 }), [], nameOf)).toEqual({ refuse: "A scheduled post needs at least one channel. Unschedule it first." });
   });
 });
