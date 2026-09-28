@@ -8,6 +8,7 @@
   import { useOsmm } from "../ui/context";
   import Checks from "./Checks.svelte";
   import PostAs from "./PostAs.svelte";
+  import SchedulePanel from "./SchedulePanel.svelte";
   import type { ComposerSession } from "./session";
 
   let { session, openVariant }: { session: ComposerSession; openVariant: (path: string) => void } = $props();
@@ -92,6 +93,7 @@
         <p class="osmm-progress">{PLATFORM_META[variant.platform].label} · {VARIANT_STATUS_LABEL[variant.status]}</p>
         <PostAs {variant} />
         <Checks {variant} {issues} counters={counterList} />
+        <SchedulePanel {variant} {issues} />
       </aside>
     </div>
   </div>

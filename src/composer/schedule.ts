@@ -1,0 +1,53 @@
+import { deliveryTime, transition } from "../model/stateMachine";
+import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
+import type { OsmmSettings } from "../settings/settings";
+
+export interface ScheduleRequest {
+  at: number;
+  reminders: number[];
+}
+
+export type SchedulePlan =
+  | { fields: { scheduledAt: number; reminders: number[] }; deliveries: Record<string, Delivery> }
+  | { refuse: string };
+
+/** Channels that keep their status and their time: done, in flight, or already on the platform. */
+const KEEP = new Set<DeliveryStatus>(["published", "skipped", "publishing", "handed_over", "check_needed"]);
+
+export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defaultStagger: number): SchedulePlan {
+  if (!fresh.channels.length) return { refuse: "Pick at least one channel before scheduling." };
+  if (fresh.channels.some((id) => fresh.deliveries[id]?.status === "publishing")) return { refuse: "This post is being published right now." };
+  const hasRecords = fresh.channels.some((id) => fresh.deliveries[id] !== undefined);
+  if (!hasRecords && (fresh.status === "published" || fresh.status === "partial")) return { refuse: "This post was already published." };
+  const deliveries: Record<string, Delivery> = {};
+  for (const id of fresh.channels) {
+    const d = fresh.deliveries[id];
+    if (d && KEEP.has(d.status)) {
+      if (d.at === undefined) {
+        const effective = deliveryTime(fresh, id, defaultStagger);
+        if (effective !== undefined) deliveries[id] = { ...d, at: effective };
+      }
+      continue;
+    }
+    const base: Delivery = d ?? { status: "draft" };
+    const next: Delivery = base.status === "scheduled" ? { ...base } : transition(base, "scheduled");
+    delete next.at;
+    delete next.error;
+    deliveries[id] = next;
+  }
+  return { fields: { scheduledAt: req.at, reminders: req.reminders }, deliveries };
+}
+
+export function scheduleNeeds(v: Pick<Variant, "channels" | "deliveries">, at: number, now: number): { past: boolean; handedOver: boolean } {
+  return { past: at < now, handedOver: v.channels.some((id) => v.deliveries[id]?.status === "handed_over") };
+}
+
+/** Static in v1: the first selected channel with a usual posting time. */
+export function bestSlot(channels: readonly Channel[]): { time: string; channel: string } | null {
+  const c = channels.find((x) => x.defaultTime);
+  return c?.defaultTime ? { time: c.defaultTime, channel: c.name } : null;
+}
+
+export function reminderDefaults(v: Pick<Variant, "reminders">, channels: readonly Channel[], settings: Pick<OsmmSettings, "defaultReminders">): number[] {
+  return [...(v.reminders ?? channels.find((c) => c.defaultReminders)?.defaultReminders ?? settings.defaultReminders)];
+}

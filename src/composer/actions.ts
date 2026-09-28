@@ -2,7 +2,7 @@ import { Notice, type App, type WorkspaceLeaf } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
-import type { Channel, ChannelGroup, Issue, Variant } from "../model/types";
+import type { Channel, ChannelGroup, Delivery, Issue, PostMode, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { MediaInspector } from "../media/mediaInfo";
 import { planSelectGroup, planToggleChannel } from "./channels";
@@ -10,11 +10,13 @@ import { slugify } from "./fixes";
 import { scheduleDeliveries } from "../planner/board";
 import { deliveryChanges, type WriteRecord } from "../planner/changes";
 import { blocking, counters, validateAll, type Counter } from "../platforms/checks";
-import { platformDef, type AdapterRegistry } from "../platforms/registry";
+import { effectiveMethod, platformDef, type AdapterRegistry, type EffectiveMethod } from "../platforms/registry";
 import { previewModel, type PreviewModel } from "../previews/model";
 import type { OsmmSettings } from "../settings/settings";
 import { VIEW_COMPOSER, VIEW_PREVIEW_GRID, type PlannerActions } from "../ui/actions";
+import { formatShortDate, formatTime } from "../ui/format";
 import { ContentLoader, type LoadedContent } from "./content";
+import { planComposerSchedule, scheduleNeeds, type ScheduleRequest } from "./schedule";
 import { composerSession, type ComposerSession } from "./session";
 
 export interface ComposerDeps {
@@ -163,6 +165,40 @@ export class ComposerActions {
     const members = group.channelIds.map((id) => this.deps.channels.get(id)).filter((c): c is Channel => c !== undefined);
     const result = await this.deps.planner.write(v.file, (fresh) => planSelectGroup(fresh, members));
     this.deps.planner.afterWrite(result, `Added the channels of ${group.name}.`);
+  }
+
+  methodFor(v: Pick<Variant, "mode" | "platform">, channel: Channel): EffectiveMethod {
+    return effectiveMethod(v.mode, channel, this.deps.adapters.get(v.platform));
+  }
+
+  async setMode(v: IndexedVariant, mode: PostMode): Promise<void> {
+    const result = await this.deps.planner.write(v.file, () => ({ fields: { mode } }));
+    this.deps.planner.afterWrite(result, mode === "assisted" ? "This post will always be assisted." : "This post will auto-post where possible.");
+  }
+
+  /** Writes scheduled_at, reminders and delivery states in one write. */
+  async schedule(v: IndexedVariant, req: ScheduleRequest, issues: readonly Issue[]): Promise<boolean> {
+    const { planner } = this.deps;
+    if (blocking(issues)) {
+      new Notice("Fix the blocking issues first.");
+      return false;
+    }
+    const needs = scheduleNeeds(v, req.at, this.deps.now());
+    if (needs.past && !(await planner.confirm("That time is in the past, so the post will show as overdue right away. Schedule anyway?", "Schedule"))) return false;
+    if (
+      needs.handedOver &&
+      !(await planner.confirm("Some channels were already handed over to the platform. Changing the time here won't change it there until you push an update. Continue?", "Continue"))
+    ) {
+      return false;
+    }
+    const stagger = this.deps.settings().defaultStaggerMinutes;
+    const result = await planner.write(v.file, (fresh) => {
+      const plan = planComposerSchedule(fresh, req, stagger);
+      if ("refuse" in plan) return plan;
+      return { fields: plan.fields, deliveries: deliveryChanges(fresh, plan.deliveries as Record<string, Delivery>) };
+    });
+    planner.afterWrite(result, `Scheduled for ${formatShortDate(req.at)} ${formatTime(req.at)}.`);
+    return result.ok;
   }
 
   async setStagger(v: IndexedVariant, minutes: number): Promise<void> {

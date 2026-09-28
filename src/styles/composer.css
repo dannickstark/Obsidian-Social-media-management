@@ -49,3 +49,6 @@
 .osmm-ok { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-success); }
 .osmm-issue-head { margin: 4px 0 0; font-size: var(--font-ui-smaller); }
 .osmm-issue-list li { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+.osmm-chip-token { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 10px; background: var(--osmm-hover); }
+.osmm-methods { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.osmm-methods li { display: flex; justify-content: space-between; gap: 8px; }
