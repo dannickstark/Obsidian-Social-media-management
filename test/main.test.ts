@@ -930,7 +930,7 @@ describe("Claude Code server (#73)", () => {
     await (last("Connect Claude Code").components[0] as ButtonComponent).click();
     expect(browser.clipboard.at(-1)).toEqual({
       kind: "text",
-      text: `claude mcp add --transport http --scope user --header "Authorization: Bearer ${token}" osmm http://127.0.0.1:${port}/mcp`,
+      text: `claude mcp add --transport http --scope user osmm http://127.0.0.1:${port}/mcp --header "Authorization: Bearer ${token}"`,
     });
     await (last("Test connection").components[0] as ButtonComponent).click();
     expect(Notice.messages.at(-1)).toBe("The server answers. Claude Code can connect.");
@@ -953,6 +953,9 @@ describe("Claude Code server (#73)", () => {
     [...Modal.opened.at(-1)!.contentEl.querySelectorAll("button")].find((b) => b.textContent === "New token")!.click();
     await clicked;
     expect(plugin.mcp.token()).not.toBe(old);
+    // Final review 2: re-running setup is two explicit steps, remove then add.
+    expect(Notice.messages.at(-1)).toBe("New token made. In a terminal, run claude mcp remove --scope user osmm first, then copy and run the new setup command.");
+    expect(last("Connect Claude Code").desc).toContain("run claude mcp remove --scope user osmm first, then the new setup command");
     await (last("Port").components[0] as TextComponent).change("80");
     await (last("Port").components[1] as ButtonComponent).click();
     expect(Notice.messages.at(-1)).toBe("Use a port between 1024 and 65535.");

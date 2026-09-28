@@ -35,8 +35,9 @@ export interface McpServiceDeps {
   loadHttp?(): Promise<HttpModule>;
 }
 
+/** Final review 1: the server name and URL come before --header, which takes one or more values. */
 export function setupCommand(port: number, token: string): string {
-  return `claude mcp add --transport http --scope user --header "Authorization: Bearer ${token}" ${SERVER_NAME} http://127.0.0.1:${port}${MCP_PATH}`;
+  return `claude mcp add --transport http --scope user ${SERVER_NAME} http://127.0.0.1:${port}${MCP_PATH} --header "Authorization: Bearer ${token}"`;
 }
 
 /** Starts and stops the local MCP server to match this device's settings; owns its token (spec §2.6, §6.1). */

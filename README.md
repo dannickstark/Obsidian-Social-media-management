@@ -35,7 +35,7 @@ Follow [the getting-started guide](docs/getting-started.md): add a channel, writ
 
 ## Claude Code
 
-1. In Obsidian: **Settings → Social Planner → Claude Code**, turn on **MCP server on this device**, click **Copy setup command** and run it in a terminal. `claude mcp list` should show `osmm` as connected.
+1. In Obsidian: **Settings → Social Planner → Claude Code**, turn on **MCP server on this device**, click **Copy setup command** and run it in a terminal. The command has the form `claude mcp add --transport http --scope user osmm http://127.0.0.1:<port>/mcp --header "Authorization: Bearer <token>"`. `claude mcp list` should show `osmm` as connected. After **New token** or a port change, run `claude mcp remove --scope user osmm` first, then copy and run the new setup command.
 2. Install the skill: `claude plugin marketplace add dannickstark/Obsidian-Social-media-management`, then `claude plugin install osmm@osmm-social-planner`.
 3. In Claude Code: `/osmm:social plan the launch of <your product> on LinkedIn, X and Mastodon for next week`.
 

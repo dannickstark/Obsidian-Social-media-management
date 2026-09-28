@@ -76,7 +76,7 @@ describe("McpService", () => {
     expect(get(service.status)).toEqual({ state: "on", port });
     expect(await service.testConnection()).toEqual({ ok: true });
     expect(service.setupCommand()).toBe(setupCommand(port, token));
-    expect(service.setupCommand()).toBe(`claude mcp add --transport http --scope user --header "Authorization: Bearer ${token}" osmm http://127.0.0.1:${port}/mcp`);
+    expect(service.setupCommand()).toBe(`claude mcp add --transport http --scope user osmm http://127.0.0.1:${port}/mcp --header "Authorization: Bearer ${token}"`);
     expect(service.maskedSetupCommand()).not.toContain(token);
     expect(await status(port, token)).toBe(200);
   });

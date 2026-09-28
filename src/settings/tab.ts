@@ -33,8 +33,9 @@ const ABOUT_CLAUDE =
   "Lets Claude Code read your plan, draft, check and schedule posts in this vault through a local MCP server. It listens on this computer only (127.0.0.1) and needs a secret token. Claude asks you here before it publishes or updates a live post; a post it schedules goes out at its time without asking again.";
 // P9: the setup command carries the token in the clear, and running it stores that token in Claude Code's own
 // user config (and possibly the shell history) — the copy here must say so, not claim it stays in secret storage.
+// Final review 2: Claude Code refuses to add a server name that already exists, so re-running is two steps.
 const CONNECT_CLAUDE =
-  "Paste this into a terminal once. Running it stores the token in Claude Code's own configuration, and possibly your shell history. Run it again after a new token or a port change:";
+  "Paste this into a terminal once. Running it stores the token in Claude Code's own configuration, and possibly your shell history. After a new token or a port change, run claude mcp remove --scope user osmm first, then the new setup command:";
 
 export function mcpStatusText(status: McpStatus, activity: McpActivity): string {
   const parts: string[] = [];
@@ -428,7 +429,7 @@ export class OsmmSettingTab extends PluginSettingTab {
     let port = String(osmm.device.mcp.port);
     new Setting(containerEl)
       .setName("Port")
-      .setDesc("From 1024 to 65535; 27150 by default. Run the setup command again after a change.")
+      .setDesc("From 1024 to 65535; 27150 by default. After a change, connect Claude Code again (below).")
       .addText((t) => t.setValue(port).onChange((value) => void (port = value)))
       .addButton((b) =>
         b.setButtonText("Apply").onClick(async () => {
@@ -472,7 +473,7 @@ export class OsmmSettingTab extends PluginSettingTab {
           const ok = await confirmDialog(this.app, "Make a new token? Claude Code stops connecting until you copy and run the setup command again.", "New token");
           if (!ok) return;
           osmm.mcp.rotateToken();
-          new Notice("New token made. Copy the setup command again.");
+          new Notice("New token made. In a terminal, run claude mcp remove --scope user osmm first, then copy and run the new setup command.");
           this.display();
         }),
       );
