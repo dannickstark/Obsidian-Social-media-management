@@ -6,6 +6,7 @@ import type { NoteFactory } from "../model/factory";
 import { PLATFORM_META } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
 import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliveries, type BoardColumn } from "../planner/board";
+import { uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
 import type { OsmmSettings } from "../settings/settings";
@@ -178,5 +179,51 @@ export class PlannerActions {
     const channel = this.deps.channels.get(v.channels[0] ?? "");
     const at = await pickDateTime(this.deps.app, "Schedule post", defaultScheduleTime(this.deps.now(), v, channel?.defaultTime));
     if (at !== null) await this.schedule(v, at);
+  }
+
+  async bulkShift(rows: PostRow[], deltaMs: number): Promise<{ moved: number; skipped: number }> {
+    let moved = 0;
+    let skipped = 0;
+    for (const v of uniqueVariants(rows)) {
+      const movable = v.scheduledAt !== undefined && !Object.values(v.deliveries).some((d) => ["published", "publishing", "handed_over"].includes(d.status));
+      if (!movable) {
+        skipped++;
+        continue;
+      }
+      const deliveries = Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, d.at === undefined ? d : { ...d, at: d.at + deltaMs }]));
+      await this.deps.writer.patchVariant(v.file, { scheduledAt: v.scheduledAt! + deltaMs, deliveries });
+      moved++;
+    }
+    new Notice(`Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`);
+    return { moved, skipped };
+  }
+
+  async bulkSetStatus(rows: PostRow[], status: "idea" | "draft" | "ready"): Promise<{ changed: number; skipped: number }> {
+    let changed = 0;
+    let skipped = 0;
+    const target = status === "ready" ? "ready" : "draft";
+    for (const v of uniqueVariants(rows)) {
+      const ds = Object.entries(v.deliveries);
+      if (ds.some(([, d]) => d.status !== "draft" && d.status !== "ready")) {
+        skipped++;
+        continue;
+      }
+      const deliveries: typeof v.deliveries = {};
+      for (const [id, d] of ds) deliveries[id] = d.status === target ? d : { ...d, status: target };
+      await this.deps.writer.patchVariant(v.file, { status, deliveries });
+      changed++;
+    }
+    new Notice(`Changed ${changed} post${changed === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} already scheduled or published` : ""}.`);
+    return { changed, skipped };
+  }
+
+  async bulkTrash(rows: PostRow[]): Promise<number> {
+    const variants = uniqueVariants(rows);
+    if (!variants.length) return 0;
+    const ok = await this.confirm(`Move ${variants.length} note${variants.length === 1 ? "" : "s"} to the trash?`, "Move to trash");
+    if (!ok) return 0;
+    for (const v of variants) await this.deps.app.fileManager.trashFile(v.file);
+    new Notice(`Moved ${variants.length} note${variants.length === 1 ? "" : "s"} to the trash.`);
+    return variants.length;
   }
 }

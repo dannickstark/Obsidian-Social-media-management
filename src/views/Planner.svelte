@@ -10,12 +10,13 @@
   import BoardView from "./BoardView.svelte";
   import FilterBar from "./FilterBar.svelte";
   import Legend from "./Legend.svelte";
+  import ListView from "./ListView.svelte";
   import MonthView from "./MonthView.svelte";
   import ViewSwitcher from "./ViewSwitcher.svelte";
   import WeekView from "./WeekView.svelte";
 
   const { snapshot, settings, viewState, channels, now } = useOsmm();
-  const MODES: PlannerMode[] = ["month", "week", "board"];
+  const MODES: PlannerMode[] = ["month", "week", "board", "list"];
 
   let anchor = $state(startOfLocalDay(get(now)));
   const mode = $derived(MODES.includes($viewState.mode) ? $viewState.mode : "month");
@@ -33,6 +34,7 @@
   });
   const title = $derived.by(() => {
     if (mode === "board") return "Pipeline";
+    if (mode === "list") return "All posts";
     if (mode !== "week") return monthTitle(year, month);
     const cells = weekCells(anchor, $settings.weekStartsOn, 0);
     return weekTitle(cells[0]!.date, cells[6]!.date);
@@ -75,6 +77,8 @@
       <WeekView {anchor} rows={visible} />
     {:else if mode === "board"}
       <BoardView variants={boardVariants} />
+    {:else if mode === "list"}
+      <ListView {rows} />
     {/if}
   </div>
 </div>
