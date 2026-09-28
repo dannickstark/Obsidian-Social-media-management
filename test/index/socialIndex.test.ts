@@ -98,7 +98,7 @@ describe("SocialIndex", () => {
   it("re-links variants when a campaign is renamed and links are updated (review focus 4)", async () => {
     const { app, index } = await vaultWithCampaign();
     await app.vault.rename(app.vault.getFileByPath("Social/Event X/Event X.md")!, "Social/Event X/Event X 2026.md");
-    await settle(5);
+    await indexed(index, () => index.variants()[0]?.campaignPath === undefined);
     expect(index.variants()[0]?.campaignPath).toBeUndefined();
     const change = nextChange(index);
     await writeNote(app, "Social/Event X/Event X – LinkedIn.md", { type: "social-post", campaign: "[[Event X 2026]]", platform: "linkedin", channels: ["li/me"] });
@@ -147,7 +147,7 @@ describe("SocialIndex", () => {
     index.start();
     const built = index.build();
     await writeNote(app, path, { type: "social-post", platform: "x", title: "New" });
-    await settle(5);
+    await indexed(index, () => index!.getVariant(path)?.displayTitle === "New");
     expect(index.getVariant(path)?.displayTitle).toBe("New");
     release();
     await built;
@@ -160,7 +160,7 @@ describe("SocialIndex", () => {
     await writeNote(app, "Social/Posts/Solo.md", { type: "social-post", platform: "x", title: "Solo" });
     await writeNote(app, "Notes/Other.md", { tags: ["y"] });
     await change;
-    await settle(5);
+    await indexed(index, () => (index as unknown as { sequence: Map<string, number> }).sequence.size === 0);
     expect((index as unknown as { sequence: Map<string, number> }).sequence.size).toBe(0);
   });
 
