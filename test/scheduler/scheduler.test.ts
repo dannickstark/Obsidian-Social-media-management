@@ -108,6 +108,26 @@ describe("Scheduler", () => {
     ]);
   });
 
+  it("still dispatches due items in the same tick when onTick throws or rejects (fix round 1)", async () => {
+    const c = await makeCtx({ notes: [note(A, T)], now: T });
+    const { scheduler, calls, warnings } = build(c, {
+      onTick: () => {
+        throw new Error("reminder boom");
+      },
+    });
+    await scheduler.tick();
+    expect(calls).toEqual({ dispatched: [key(A, T)], overdue: [] });
+    expect(warnings).toEqual(["reminder boom"]);
+
+    const c2 = await makeCtx({ notes: [note(B, T)], now: T });
+    const { scheduler: scheduler2, calls: calls2, warnings: warnings2 } = build(c2, {
+      onTick: async () => Promise.reject(new Error("reminder rejected")),
+    });
+    await scheduler2.tick();
+    expect(calls2).toEqual({ dispatched: [key(B, T)], overdue: [] });
+    expect(warnings2).toEqual(["reminder rejected"]);
+  });
+
   it("never dispatches an unreadable entry and warns once (review focus 1)", async () => {
     const c = await makeCtx({ notes: [note(A, T, { deliveries: { "bs/you": { status: "Scheduled!" } } })], now: T });
     const { scheduler, calls, warnings } = build(c);

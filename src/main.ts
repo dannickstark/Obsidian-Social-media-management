@@ -96,7 +96,10 @@ export default class OsmmPlugin extends Plugin {
       isPublisher: () => true,
       autoPostLateMs: () => autoPostLateMs(this.settings),
       publish: ui.publish,
-      onTick: (now, previous) => void this.reminders.tick(now, previous),
+      onTick: (now, previous) =>
+        Promise.resolve()
+          .then(() => void this.reminders.tick(now, previous))
+          .catch((e) => void new Notice(e instanceof Error ? e.message : String(e), 0)),
       warn: (message) => new Notice(message, 0),
     });
     this.register(() => this.scheduler.stop());

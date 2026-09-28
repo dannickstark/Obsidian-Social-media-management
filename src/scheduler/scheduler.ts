@@ -80,7 +80,11 @@ export class Scheduler {
       const now = this.deps.now();
       const previous = this.lastTick;
       this.lastTick = now;
-      await this.deps.onTick?.(now, previous);
+      try {
+        await this.deps.onTick?.(now, previous);
+      } catch (e) {
+        this.deps.warn(e instanceof Error ? e.message : String(e));
+      }
       if (!this.deps.isPublisher()) return result;
       this.warnUnreadable();
       const stagger = this.deps.settings().defaultStaggerMinutes;

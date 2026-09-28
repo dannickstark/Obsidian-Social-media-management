@@ -28,6 +28,7 @@ export class Notifier implements DeliveryNotifier {
   constructor(private readonly deps: NotifierDeps) {}
 
   reminder(item: ReminderItem): void {
+    if (!this.deps.enabled()) return;
     if (!this.deps.ledger.add(item.key)) return;
     this.showReminder(item);
   }

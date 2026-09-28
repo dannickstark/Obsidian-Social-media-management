@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Notice } from "../fakes/obsidian";
 import { browser, FakeNotification } from "../fakes/browser";
 import { NotifiedLedger } from "../../src/reminders/ledger";
@@ -27,6 +27,11 @@ function build(over: Partial<NotifierDeps> = {}, app = createApp()) {
 }
 
 const lastNoticeButton = (label: string) => [...Notice.last!.noticeEl.querySelectorAll("button")].find((b) => b.textContent === label)!;
+
+beforeEach(() => {
+  // jsdom doesn't implement window.focus(); the notifier calls it when a system notification is clicked.
+  vi.spyOn(window, "focus").mockImplementation(() => undefined);
+});
 
 describe("Notifier", () => {
   it("shows an in-app notice with Open & post and Snooze while Obsidian is focused", () => {
@@ -83,6 +88,18 @@ describe("Notifier", () => {
     notifier.reminder(item);
     notifier.due("p.md", "bs/you");
     expect(Notice.messages.length).toBe(count);
+  });
+
+  it("doesn't record a reminder as shown when it arrives while notifications are off (fix round 1)", () => {
+    const app = createApp();
+    let enabled = false;
+    const { notifier } = build({ enabled: () => enabled }, app);
+    notifier.reminder(item);
+    const count = Notice.messages.length;
+    enabled = true;
+    notifier.reminder(item);
+    expect(Notice.messages.length).toBe(count + 1);
+    expect(Notice.messages.at(-1)).toContain("In 10 min: Event X is back");
   });
 
   it("reports due posts and failures with their actions", () => {
