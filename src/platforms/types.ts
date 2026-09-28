@@ -107,3 +107,29 @@ export interface PlatformAdapter {
   cancel?(job: DeliveryJob): Promise<void>;
   lookup?(job: DeliveryJob): Promise<RemoteState | null>;
 }
+
+/** One thing for the user to paste: text, or an image file from the vault. */
+export type ClipItem = { label: string; text: string } | { label: string; imagePath: string };
+
+/** What the assisted flow opens and copies for one delivery (the spec's assistedUrl, plus the clipboard steps). */
+export interface AssistedTarget {
+  /** Pre-filled compose or submit page; null when there is none to open. */
+  url: string | null;
+  /** App deep link used on phones instead of `url`. */
+  mobileUrl?: string;
+  /** What to paste, in order; the first item is copied when the page opens. */
+  clipboard: ClipItem[];
+  /** One short instruction for the page. */
+  hint: string;
+}
+
+export interface AssistedJob {
+  variant: Variant;
+  channel: Channel;
+  /** The whole post as the platform receives it. */
+  text: string;
+  items: string[];
+  media: MediaInfo[];
+}
+
+export type AssistedBuilder = (job: AssistedJob) => AssistedTarget;
