@@ -42,12 +42,28 @@ export class RequestTimeoutError extends Error {
   }
 }
 
+/** The connection failed (no HTTP answer). The message is fixed: requestUrl's own error may name the URL, which can carry a credential; it is kept as `cause` only. */
+export class ConnectionFailedError extends Error {
+  constructor(cause: unknown) {
+    super("The connection failed.", { cause });
+    this.name = "ConnectionFailedError";
+  }
+}
+
 const TIMED_OUT = Symbol("timed out");
 
-/** Sends one request; a request with no answer within the timeout rejects with RequestTimeoutError. */
+/**
+ * Sends one request; a request with no answer within the timeout rejects with RequestTimeoutError, and a failed
+ * connection with ConnectionFailedError.
+ */
 export async function send(http: HttpFn, req: HttpRequest, timeoutMs: number): Promise<HttpResponse> {
   const { timeoutMs: own, ...param } = req;
-  const res = await withTimeout(http({ ...param, throw: false }), own ?? timeoutMs, TIMED_OUT);
+  let res: HttpResponse | typeof TIMED_OUT;
+  try {
+    res = await withTimeout(http({ ...param, throw: false }), own ?? timeoutMs, TIMED_OUT);
+  } catch (e) {
+    throw new ConnectionFailedError(e);
+  }
   if (res === TIMED_OUT) throw new RequestTimeoutError();
   return res;
 }
@@ -95,6 +111,12 @@ export interface ApiFailure {
 /** prepare: before the post exists; commit: creates, changes or deletes it; read: lookups and connection tests. */
 export type Phase = "prepare" | "commit" | "read";
 
+/**
+ * How to classify an HTTP answer that isn't 2xx: the phase of the request it answers. An adapter that classifies the
+ * answer to a `read` (a lookup, a connection test) passes `{ phase: "prepare" }`: nothing was posted by it.
+ */
+export type ErrorPhase = { phase: "prepare" } | { phase: "commit"; retrySafe: boolean };
+
 export interface CommitOptions {
   /**
    * M5 P2: a retry of this commit is exactly de-duplicated or idempotent (an Idempotency-Key, a de-dup check before
@@ -102,11 +124,6 @@ export interface CommitOptions {
    * outcome.
    */
   retrySafe?: boolean;
-}
-
-export interface ErrorOptions extends CommitOptions {
-  /** The answer is to a commit request (from `exchange("commit", …)`). */
-  commit?: boolean;
 }
 
 export interface ApiClientOptions {
@@ -133,14 +150,14 @@ export class ApiClient {
   /** A request made before the post exists (login, upload, id lookups). */
   async prepare(req: HttpRequest): Promise<HttpResponse> {
     const res = await this.exchange("prepare", req);
-    if (!isOk(res)) throw this.error(res);
+    if (!isOk(res)) throw this.error(res, { phase: "prepare" });
     return res;
   }
 
   /** The request that creates, changes or deletes the post. */
   async commit(req: HttpRequest, options: CommitOptions = {}): Promise<HttpResponse> {
     const res = await this.exchange("commit", req);
-    if (!isOk(res)) throw this.error(res, { commit: true, retrySafe: options.retrySafe });
+    if (!isOk(res)) throw this.error(res, { phase: "commit", retrySafe: options.retrySafe ?? false });
     return res;
   }
 
@@ -151,6 +168,8 @@ export class ApiClient {
 
   /** Like the phase's method, but HTTP errors come back to the caller (an expired session, a 404 that means "gone"). */
   async exchange(phase: Phase, req: HttpRequest): Promise<HttpResponse> {
+    // Adapters request https:// addresses only (M5 G2); the address itself never goes into the message.
+    if (!/^https:\/\//i.test(req.url)) throw new NeedsUserError(`${this.label}: only https:// addresses can be used; nothing was sent.`);
     try {
       return await send(this.opts.http, req, this.opts.timeoutMs ?? HTTP_TIMEOUT_MS);
     } catch (e) {
@@ -162,14 +181,18 @@ export class ApiClient {
   }
 
   /**
-   * The classified error for an HTTP answer that isn't 2xx. Pass `{ commit: true, retrySafe }` for an answer to a
-   * commit request (M5 P2): a 5xx is then an unknown outcome unless the commit is retry-safe.
+   * The classified error for an HTTP answer that isn't 2xx, for the phase of the request it answers (a `read` answer
+   * counts as "prepare", see ErrorPhase). On a commit (M5 P2), a 5xx is an unknown outcome unless the commit is
+   * retry-safe, and an answer below 400 (a redirect, status 0) is always an unknown outcome.
    */
-  error(res: HttpResponse, options: ErrorOptions = {}): PublishError {
-    if (options.commit && !options.retrySafe && res.status >= 500) {
+  error(res: HttpResponse, at: ErrorPhase): PublishError {
+    if (at.phase === "commit" && res.status < 400) {
+      return new UnknownOutcomeError(`${this.label}: the server gave an unexpected answer (HTTP ${res.status}) while posting, so it is not known whether it went out.`);
+    }
+    if (at.phase === "commit" && !at.retrySafe && res.status >= 500) {
       return new UnknownOutcomeError(`${this.label}: the server answered with an error (HTTP ${res.status}) while posting, so it is not known whether it went out.`);
     }
-    const f = this.opts.failure(res);
+    const f = this.failure(res);
     const message = `${this.label}: ${f.message} (HTTP ${res.status})`;
     switch (f.kind ?? kindForStatus(res.status)) {
       case "transient":
@@ -180,6 +203,15 @@ export class ApiClient {
         return new UnknownOutcomeError(message);
       case "needs_user":
         return new NeedsUserError(message);
+    }
+  }
+
+  /** The platform's reading of its error body; a body it can't read gets a generic message. */
+  private failure(res: HttpResponse): ApiFailure {
+    try {
+      return this.opts.failure(res);
+    } catch {
+      return { message: "the server answered with an error" };
     }
   }
 }

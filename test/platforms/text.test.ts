@@ -80,4 +80,15 @@ describe("withLink", () => {
     expect(withLink("", "https://event.example/x")).toBe("https://event.example/x");
     expect(withLink("Doors open", undefined)).toBe("Doors open");
   });
+
+  it("matches the whole link, not a prefix of a longer one, and ignores a trailing slash", () => {
+    expect(withLink("See https://event.example/x-2026", "https://event.example/x")).toBe("See https://event.example/x-2026\n\nhttps://event.example/x");
+    expect(withLink("See https://event.example/x/.", "https://event.example/x")).toBe("See https://event.example/x/.");
+    expect(withLink("See https://event.example/x", "https://event.example/x/")).toBe("See https://event.example/x");
+  });
+
+  it("drops trailing blank space before adding the link", () => {
+    expect(withLink("Doors open\n\n  \n", "https://event.example/x")).toBe("Doors open\n\nhttps://event.example/x");
+    expect(withLink("  \n", "https://event.example/x")).toBe("https://event.example/x");
+  });
 });

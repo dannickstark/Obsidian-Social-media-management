@@ -1,4 +1,4 @@
-import { classifyError, NeedsUserError } from "./errors";
+import { classifyError, NeedsUserError, PublishError, statusOf, type ErrorKind } from "./errors";
 import type { MediaInfo } from "./types";
 
 /** The bytes of a resolved image. Checks block missing media before scheduling; this covers a file deleted since. */
@@ -17,9 +17,21 @@ export function fileName(m: Pick<MediaInfo, "path" | "target">): string {
   return name.replace(/[^\w.-]+/g, "-") || "image";
 }
 
-/** A thread stopped after its first part(s): the post is out, the rest is not (or may not be). */
+/**
+ * A thread stopped after its first part(s): the post is out, the rest is not (or may not be). A PublishError keeps its
+ * kind; an HTTP error is classified by its status; anything else (no status) is an unknown outcome (M2b T6).
+ */
 export function partialNote(index: number, total: number, e: unknown): string {
-  const err = classifyError(e);
-  const what = err.kind === "unknown" ? "may not have been posted" : "was not posted";
-  return `Part ${index + 1} of ${total} ${what}, nor any after it: ${err.message}`;
+  let kind: ErrorKind;
+  let message: string;
+  if (e instanceof PublishError || statusOf(e) !== undefined) {
+    const err = classifyError(e);
+    kind = err.kind;
+    message = err.message;
+  } else {
+    kind = "unknown";
+    message = e instanceof Error ? e.message : String(e);
+  }
+  if (kind === "unknown") return `Part ${index + 1} of ${total} may have been posted; check on the platform. Nothing after it was posted: ${message}`;
+  return `Part ${index + 1} of ${total} was not posted, nor any after it: ${message}`;
 }

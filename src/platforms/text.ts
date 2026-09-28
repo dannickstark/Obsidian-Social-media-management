@@ -92,8 +92,11 @@ export function urlsIn(text: string): string[] {
   return [...text.matchAll(LINK_RE)].map((m) => m[0].replace(/[.,;:!?]+$/, ""));
 }
 
-/** The text with `url` on its own last line, unless the text already contains it (Telegram, Discord, Mastodon). */
+const sameUrl = (a: string, b: string): boolean => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+
+/** The text with `url` on its own last line, unless the text already contains that link (Telegram, Discord, Mastodon). */
 export function withLink(text: string, url: string | undefined): string {
-  if (!url || text.includes(url)) return text;
-  return text ? `${text}\n\n${url}` : url;
+  if (!url || urlsIn(text).some((u) => sameUrl(u, url))) return text;
+  const body = text.trimEnd();
+  return body ? `${body}\n\n${url}` : url;
 }

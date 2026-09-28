@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InvalidContentError, NeedsUserError, TransientError, UnknownOutcomeError } from "../../src/platforms/errors";
-import { ApiClient, header, isOk, kindForStatus, obsidianHttp, parseJson, RequestTimeoutError, retryAfterMs, send, type ApiFailure, type HttpResponse } from "../../src/platforms/http";
+import { ApiClient, ConnectionFailedError, header, isOk, kindForStatus, obsidianHttp, parseJson, RequestTimeoutError, retryAfterMs, send, type ApiFailure, type HttpResponse } from "../../src/platforms/http";
+import { requestUrlMock } from "../fakes/obsidian";
 import { call, hang, json, netError, queue, text } from "./http";
 
 const NOW = Date.UTC(2026, 9, 8, 8);
@@ -135,11 +136,12 @@ describe("ApiClient phases (M2b P4, M5 P2)", () => {
 
   it("error(): a commit's HTTP answer from exchange is classified with the same rule", async () => {
     const res: HttpResponse = { status: 502, headers: {}, text: JSON.stringify({ error: "Bad gateway" }), arrayBuffer: new ArrayBuffer(0) };
-    expect(client().error(res, { commit: true })).toBeInstanceOf(UnknownOutcomeError);
-    expect(client().error(res, { commit: true }).message).toBe(UNKNOWN_5XX(502));
-    expect(client().error(res, { commit: true, retrySafe: true })).toBeInstanceOf(TransientError);
-    expect(client().error(res)).toBeInstanceOf(TransientError);
-    expect(client().error({ ...res, status: 429 }, { commit: true })).toBeInstanceOf(TransientError);
+    expect(client().error(res, { phase: "commit", retrySafe: false })).toBeInstanceOf(UnknownOutcomeError);
+    expect(client().error(res, { phase: "commit", retrySafe: false }).message).toBe(UNKNOWN_5XX(502));
+    expect(client().error(res, { phase: "commit", retrySafe: true })).toBeInstanceOf(TransientError);
+    expect(client().error(res, { phase: "prepare" })).toBeInstanceOf(TransientError);
+    expect(client().error({ ...res, status: 429 }, { phase: "commit", retrySafe: false })).toBeInstanceOf(TransientError);
+    expect(client().error({ ...res, status: 404 }, { phase: "prepare" })).toBeInstanceOf(NeedsUserError);
   });
 
   it("reads the wait from Retry-After, in seconds or as a date", async () => {
@@ -171,7 +173,45 @@ describe("ApiClient phases (M2b P4, M5 P2)", () => {
   it("read returns every status and lets network errors through as they are", async () => {
     queue(json(404, { error: "x" }), netError);
     expect((await client().read({ url: "https://x.example/p" })).status).toBe(404);
-    await expect(client().read({ url: "https://x.example/p" })).rejects.toThrow("net::ERR_CONNECTION_RESET");
+    const e = await client().read({ url: TOKEN_URL }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ConnectionFailedError);
+    expect((e as Error).message).toBe("The connection failed.");
+    expect(((e as Error).cause as Error).message).toBe("net::ERR_CONNECTION_RESET");
+  });
+
+  it("send: a raw requestUrl error becomes a fixed message that keeps the original as its cause, never the URL", async () => {
+    queue(() => new Error(`Request to ${TOKEN_URL} failed`));
+    const e = await send(obsidianHttp, { url: TOKEN_URL }, 1000).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ConnectionFailedError);
+    expect((e as Error).message).toBe("The connection failed.");
+    expect((e as Error).message).not.toContain("SECRET");
+    expect(((e as Error).cause as Error).message).toContain("SECRET");
+  });
+
+  it("commit: any other answer that isn't 2xx and is below 400 (a redirect, status 0) is an unknown outcome", async () => {
+    queue(json(302, {}), json(0, {}), json(304, {}));
+    for (const status of [302, 0, 304]) {
+      const e = await client().commit({ url: TOKEN_URL, method: "POST" }, { retrySafe: true }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(UnknownOutcomeError);
+      expect((e as Error).message).toBe(`Mastodon: the server gave an unexpected answer (HTTP ${status}) while posting, so it is not known whether it went out.`);
+    }
+  });
+
+  it("falls back to a generic message when the error body can't be read", async () => {
+    queue(text(404, "<html>Not found</html>"), text(422, ""));
+    const e = await client().prepare({ url: "https://x.example/p" }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(NeedsUserError);
+    expect((e as Error).message).toBe("Mastodon: the server answered with an error (HTTP 404)");
+    await expect(client().commit({ url: "https://x.example/p" }, { retrySafe: false })).rejects.toBeInstanceOf(InvalidContentError);
+  });
+
+  it.each(["http://x.example/p", "ftp://x.example/p", "x.example/p", "HTTP://x.example/p"])("refuses %s without sending it, in every phase", async (url) => {
+    for (const phase of ["prepare", "commit", "read"] as const) {
+      const e = await client().exchange(phase, { url: `${url}?token=SECRET` }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(NeedsUserError);
+      expect((e as Error).message).toBe("Mastodon: only https:// addresses can be used; nothing was sent.");
+    }
+    expect(requestUrlMock.calls).toHaveLength(0);
   });
 
   it("exchange applies the phase to network errors but returns HTTP errors to the caller", async () => {

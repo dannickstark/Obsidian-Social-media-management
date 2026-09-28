@@ -43,4 +43,9 @@ describe("multipart", () => {
     ]);
     expect(parseForm(body, contentType)).toEqual({ a_b: { value: "x", size: 1 }, f: { filename: "x___.png", type: "image/png", size: 1 } });
   });
+
+  it("replaces every control character, quote and backslash in a header value", () => {
+    const { body, contentType } = multipart([{ name: "f", filename: "a\u0000b\tc\u001fd\\e\u007f.png", contentType: "image/png\u000b", data: new Uint8Array([1]).buffer }]);
+    expect(parseForm(body, contentType)).toEqual({ f: { filename: "a_b_c_d_e\u007f.png", type: "image/png_", size: 1 } });
+  });
 });

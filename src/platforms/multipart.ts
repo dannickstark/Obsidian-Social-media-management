@@ -3,8 +3,9 @@ import { randomString } from "../model/ids";
 export type Part = { name: string; value: string } | { name: string; filename: string; contentType: string; data: ArrayBuffer };
 
 const encoder = new TextEncoder();
-/** Quotes, CR and LF would end the header early. */
-const safe = (s: string): string => s.replace(/["\r\n\\]/g, "_");
+/** Quotes, backslashes and control characters (CR, LF, NUL, ...) would end or corrupt the header. */
+// eslint-disable-next-line no-control-regex
+const safe = (s: string): string => s.replace(/[\x00-\x1f"\\]/g, "_");
 
 /** A multipart/form-data body for requestUrl (which takes an ArrayBuffer and a content type). */
 export function multipart(parts: readonly Part[], boundary = `osmm-${randomString(24)}`): { body: ArrayBuffer; contentType: string } {
