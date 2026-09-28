@@ -256,16 +256,17 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
         }
         const result = await deps.planner.write(v.file, (fresh) => {
           if (fresh.channels.some((id) => fresh.deliveries[id]?.status === "publishing")) return { refuse: "This post is being published right now. Try again in a minute." };
-          if (!resolved) return { fields };
+          // WordPress fields merge into the fresh ones in the same write, so they are part of the undo record.
+          const all = a.wordpress ? { ...fields, wordpress: mergeWordPress(fresh.wordpress, a.wordpress) } : fields;
+          if (!resolved) return { fields: all };
           const plan = planSetChannels(fresh, resolved, nameOf);
           if ("refuse" in plan) return plan;
-          return { fields: { ...fields, ...plan.fields }, ...(plan.deliveries ? { deliveries: plan.deliveries } : {}) };
+          return { fields: { ...all, ...plan.fields }, ...(plan.deliveries ? { deliveries: plan.deliveries } : {}) };
         });
         if (!result.ok) return fail(result.reason, issues);
-        if (a.wordpress) await deps.writer.setFields(v.file, wordpressFields(a.wordpress));
         const bodyChanged = a.body !== undefined && a.body !== content.body;
         if (bodyChanged) await deps.writer.editBody(v.file, () => a.body as string);
-        const changed = result.record.fields.length + result.record.deliveries.length > 0 || !!a.wordpress || bodyChanged;
+        const changed = result.record.fields.length + result.record.deliveries.length > 0 || bodyChanged;
         if (changed) {
           await untilIndexed(deps.index, () => deps.index.getVariant(v.path) !== v);
           claudeNotice(deps, `Claude updated ${v.displayTitle}.`, v.path);

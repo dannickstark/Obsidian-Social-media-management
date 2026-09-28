@@ -121,6 +121,25 @@ describe("update_variant", () => {
     expect((await fm(c, "Social/Posts/Frozen.md")).deliveries).toEqual({ "li/me": { status: "publishd" } });
   });
 
+  it("writes WordPress fields in the same single write, so Undo reverts them", async () => {
+    const c = await mcpCtx();
+    const WP = "Social/Event X/Event X – WordPress.md";
+    const write = vi.spyOn(c.ctx.actions, "write");
+    const setFields = vi.spyOn(c.writer, "setFields");
+    const r = await c.call("update_variant", { path: WP, title: "Event X, again", wordpress: { slug: "event-x-again", excerpt: "Again.", tags: ["events", "berlin"] } });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(setFields).not.toHaveBeenCalled();
+    expect(await fm(c, WP)).toMatchObject({ title: "Event X, again", slug: "event-x-again", excerpt: "Again.", categories: ["Community"], tags: ["events", "berlin"] });
+    const result = (await write.mock.results[0]!.value) as R;
+    expect(result.record.fields.map((f: R) => f.key).sort()).toEqual(["title", "wordpress"]);
+    await c.ctx.actions.undo([result.record]);
+    const undone = await fm(c, WP);
+    expect(undone).toMatchObject({ title: "We're hosting Event X again", slug: "hosting-event-x-again", categories: ["Community"], tags: ["events"] });
+    expect(undone.excerpt).toBeUndefined();
+    expect(undone.deliveries).toEqual({ "wp/eventx-berlin": expect.objectContaining({ status: "handed_over", remote_id: "412" }) });
+  });
+
   it("refuses WordPress fields on another platform", async () => {
     const c = await mcpCtx();
     expect((await c.call("update_variant", { path: LI, wordpress: { slug: "x" } })).error).toBe("wordpress fields are only for platform wordpress.");
@@ -228,6 +247,16 @@ describe("fork_variant guards", () => {
     expect((await fm(c, "Social/Posts/Busy.md")).deliveries).toEqual(busy);
     expect((await c.call("fork_variant", { path: "Social/Posts/Frozen.md", channel: "li/me" })).error).toBe("li/me's delivery entry can't be read. Fix its status in the note before forking it.");
     expect((await fm(c, "Social/Posts/Frozen.md")).deliveries).toEqual(frozen);
+    expect(c.app.vault.getFiles().filter((f) => f.basename.includes("– Me"))).toEqual([]);
+  });
+
+  it("refuses a channel that needs a check (P4, extended): a pending lookup still targets this note", async () => {
+    const deliveries = { "li/me": { status: "check_needed", error: "Timed out" }, "li/acme-studio": { status: "scheduled" } };
+    const c = await mcpCtx({
+      notes: [{ path: "Social/Posts/Check.md", frontmatter: { type: "social-post", platform: "linkedin", title: "Check", channels: ["li/me", "li/acme-studio"], status: "attention", scheduled_at: "2026-10-08T09:00:00+02:00", deliveries }, body: "Hello" }],
+    });
+    expect((await c.call("fork_variant", { path: "Social/Posts/Check.md", channel: "li/me" })).error).toBe("Me needs a check first (did it go out?). Resolve it in Needs attention, then try again.");
+    expect(await fm(c, "Social/Posts/Check.md")).toMatchObject({ channels: ["li/me", "li/acme-studio"], deliveries });
     expect(c.app.vault.getFiles().filter((f) => f.basename.includes("– Me"))).toEqual([]);
   });
 });

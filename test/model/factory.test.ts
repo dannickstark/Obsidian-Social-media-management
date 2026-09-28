@@ -161,6 +161,15 @@ describe("NoteFactory", () => {
     expect((await fmOf(app, file)).channels).toEqual(["li/me", "li/acme"]);
   });
 
+  it("refuses to fork a channel that needs a check (M4 P4, extended)", async () => {
+    const { app, factory } = setup();
+    const deliveries = { "li/me": { status: "check_needed" }, "li/acme": { status: "scheduled" } };
+    const file = await writeNote(app, "Social/P.md", { type: "social-post", platform: "linkedin", channels: ["li/me", "li/acme"], status: "attention", scheduled_at: "2026-10-08T09:00:00+02:00", deliveries }, "Body\n");
+    await expect(factory.forkVariant(file, "li/me", "Me")).rejects.toThrow("Me needs a check first (did it go out?). Resolve it in Needs attention, then try again.");
+    expect(await fmOf(app, file)).toMatchObject({ channels: ["li/me", "li/acme"], deliveries });
+    expect(app.vault.getFileByPath("Social/P – Me.md")).toBeNull();
+  });
+
   it("refuses to fork a channel that is being published right now (M4 P4)", async () => {
     const { app, factory } = setup();
     const deliveries = { "li/me": { status: "publishing" }, "li/acme": { status: "scheduled" } };

@@ -95,6 +95,10 @@ export class NoteFactory {
       if (current.invalidDeliveries?.includes(channelId)) throw new Error(`${channelId}'s delivery entry can't be read. Fix its status in the note before forking it.`);
       // In flight: the run's result lands on this note, where the forked channel would no longer exist (M4 P4).
       if (current.deliveries[channelId]?.status === "publishing") throw new Error(`${channelName} is being published right now. Try again in a minute.`);
+      // Outcome unknown: a pending lookup still targets this note, and the fork would invite a second post.
+      if (current.deliveries[channelId]?.status === "check_needed") {
+        throw new Error(`${channelName} needs a check first (did it go out?). Resolve it in Needs attention, then try again.`);
+      }
       if (current.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
       const copy = structuredClone(orig);
       const channels = current.channels.filter((c) => c !== channelId);

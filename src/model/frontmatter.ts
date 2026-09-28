@@ -279,6 +279,7 @@ export type VariantPatch = Partial<
     | "title"
     | "url"
     | "deliveries"
+    | "wordpress"
   >
 >;
 
@@ -296,5 +297,14 @@ export function variantFields(patch: VariantPatch): Record<string, unknown> {
   if ("title" in patch) out.title = patch.title;
   if ("url" in patch) out.url = patch.url;
   if ("deliveries" in patch) out.deliveries = patch.deliveries ? serializeDeliveries(patch.deliveries) : undefined;
+  if ("wordpress" in patch) {
+    // WordPress fields are top-level keys; an empty value removes its key.
+    const wp = patch.wordpress;
+    out.slug = wp?.slug || undefined;
+    out.excerpt = wp?.excerpt || undefined;
+    out.categories = wp?.categories.length ? wp.categories : undefined;
+    out.tags = wp?.tags.length ? wp.tags : undefined;
+    out.featured_image = wp?.featuredImage ? `[[${wp.featuredImage}]]` : undefined;
+  }
   return out;
 }
