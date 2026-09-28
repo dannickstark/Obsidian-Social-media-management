@@ -1,0 +1,26 @@
+import type { HttpFn } from "./http";
+import type { PlatformAdapter } from "./types";
+
+/** A file embedded in a note's body, resolved in the vault (WordPress uploads it). */
+export interface EmbedFile {
+  path: string;
+  name: string;
+  mime: string;
+}
+
+/** What adapters get from the plugin; tests pass the fake requestUrl and short timeouts. */
+export interface AdapterDeps {
+  http: HttpFn;
+  now(): number;
+  readBinary(path: string): Promise<ArrayBuffer>;
+  /** Waits between polls (Mastodon media processing). */
+  sleep(ms: number): Promise<void>;
+  timeoutMs?: number;
+  /** Resolves an image embedded in a body (`![[cover.png]]`) to a vault file; null when it isn't an image in the vault. */
+  resolveEmbed?(target: string, fromPath: string): EmbedFile | null;
+}
+
+/** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
+export function createAdapters(_deps: AdapterDeps): PlatformAdapter[] {
+  return [];
+}

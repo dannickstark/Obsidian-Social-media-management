@@ -10,6 +10,8 @@ import { indexed, nextChange, settle, writeNote } from "./helpers";
 import { freePort, portIsFree } from "./mcp/net";
 import { NTFY } from "./reminders/ntfy/fixtures";
 import { WITHDRAW_WAIT_MS } from "../src/reminders/ntfy/booker";
+import { createAdapters } from "../src/platforms/adapters";
+import { PLATFORMS } from "../src/model/platforms";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
 
@@ -698,6 +700,15 @@ describe("OsmmPlugin", () => {
     await app.vault.create("Social/q.md", "---\ntype: social-post\nplatform: x\n---\n");
     await settle(80);
     expect(fired).toBe(false);
+  });
+
+  it("registers every API adapter the plugin ships (M5)", async () => {
+    const { plugin } = await loaded();
+    const shipped = createAdapters({ http: async () => ({ status: 200, headers: {}, text: "", arrayBuffer: new ArrayBuffer(0) }), now: () => 0, readBinary: async () => new ArrayBuffer(0), sleep: async () => undefined })
+      .map((a) => a.platform)
+      .sort();
+    expect(PLATFORMS.filter((p) => plugin.adapters.get(p)).sort()).toEqual(shipped);
+    plugin.unload();
   });
 });
 

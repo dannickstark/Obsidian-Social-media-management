@@ -3,7 +3,7 @@ import type { Variant } from "../model/types";
 import type { MediaInfo } from "../platforms/types";
 import { imageSize } from "./imageSize";
 
-const IMAGE_MIME: Readonly<Record<string, string>> = {
+export const IMAGE_MIME: Readonly<Record<string, string>> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

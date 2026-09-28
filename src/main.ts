@@ -15,8 +15,11 @@ import { registerAllTools } from "./mcp/index";
 import { McpDispatcher } from "./mcp/protocol";
 import { McpService } from "./mcp/service";
 import { ToolRegistry } from "./mcp/tools";
+import { IMAGE_MIME } from "./media/mediaInfo";
 import { NoteFactory } from "./model/factory";
 import { SafeWriter } from "./model/writer";
+import { createAdapters, type AdapterDeps } from "./platforms/adapters";
+import { obsidianHttp } from "./platforms/http";
 import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
 import { PublishActions } from "./publish/actions";
@@ -121,6 +124,8 @@ export default class OsmmPlugin extends Plugin {
       },
     });
     this.secrets = new Secrets(this.app);
+    // M5: the API adapters (spec §4.2). Registered on every device; only the publisher dispatches through them.
+    for (const adapter of createAdapters(this.adapterDeps())) this.adapters.register(adapter);
     this.writer = new SafeWriter(this.app);
     this.factory = new NoteFactory(this.app, this.writer, {
       rootFolder: () => this.settings.rootFolder,
@@ -383,6 +388,24 @@ export default class OsmmPlugin extends Plugin {
   setDevice(patch: Partial<Omit<DeviceSettings, "deviceId">>): void {
     this.device = { ...this.device, ...patch };
     saveDeviceSettings(this.app, this.device);
+  }
+
+  private adapterDeps(): AdapterDeps {
+    return {
+      http: obsidianHttp,
+      now: () => Date.now(),
+      readBinary: async (path) => {
+        const file = this.app.vault.getFileByPath(path);
+        if (!file) throw new Error(`${path} is not in the vault.`);
+        return this.app.vault.readBinary(file);
+      },
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+      resolveEmbed: (target, fromPath) => {
+        const file = this.app.metadataCache.getFirstLinkpathDest(target, fromPath);
+        const mime = file ? IMAGE_MIME[file.extension.toLowerCase()] : undefined;
+        return file && mime ? { path: file.path, name: file.name, mime } : null;
+      },
+    };
   }
 
   /** Command "Create voice profile" (#83): creates Social/_voice.md from the template if needed, then opens it. */
