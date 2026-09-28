@@ -4,7 +4,7 @@ import { expandRows, type PostRow } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
-import { PLATFORM_META, type Platform } from "../model/platforms";
+import { PLATFORM_META, PLATFORMS, type Platform } from "../model/platforms";
 import type { SafeWriter } from "../model/writer";
 import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliveries, type BoardColumn } from "../planner/board";
 import { uniqueVariants } from "../planner/list";
@@ -16,6 +16,7 @@ import type { OsmmContext } from "./context";
 import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
 import { formatShortDate, formatTime } from "./format";
 import TemplatePreview from "../views/TemplatePreview.svelte";
+import QuickCreate from "../views/QuickCreate.svelte";
 
 export const VIEW_PLANNER = "osmm-planner";
 export const VIEW_SIDEBAR = "osmm-sidebar";
@@ -299,6 +300,44 @@ export class PlannerActions {
     if (!template || !this.context) return;
     const proposals = planTemplate(template, campaign.anchorDate, this.deps.index.variantsOf(campaignPath));
     new SvelteModal(this.deps.app, `Apply "${template.name}"`, TemplatePreview, { proposals }, this.context).open();
+  }
+
+  async createCampaign(input: { title: string; anchorDate?: number; link?: string }): Promise<void> {
+    const file = await this.deps.factory.createCampaign(input);
+    this.openNote(file.path);
+  }
+
+  async createPost(input: { title: string; platform: Platform; channels: string[]; scheduledAt?: number; campaignPath?: string }): Promise<void> {
+    const campaign = input.campaignPath ? (this.deps.app.vault.getFileByPath(input.campaignPath) ?? undefined) : undefined;
+    const file = await this.deps.factory.createVariant({
+      platform: input.platform,
+      campaign,
+      title: input.title,
+      channels: input.channels,
+      scheduledAt: input.scheduledAt,
+    });
+    this.openNote(file.path);
+  }
+
+  quickCreate(kind: "campaign" | "post"): void {
+    if (!this.context) return;
+    new SvelteModal(this.deps.app, kind === "campaign" ? "New campaign" : "New post", QuickCreate, { kind }, this.context).open();
+  }
+
+  /** Command check callback: available when the active note is an indexed campaign. */
+  newVariantForActiveCampaign(checking: boolean): boolean {
+    const file = this.deps.app.workspace.getActiveFile();
+    const campaign = file ? this.deps.index.getCampaign(file.path) : undefined;
+    if (!campaign) return false;
+    if (!checking) {
+      const menu = new Menu();
+      const present = new Set(this.deps.index.variantsOf(campaign.path).map((v) => v.platform));
+      for (const p of PLATFORMS.filter((x) => !present.has(x))) {
+        menu.addItem((i) => i.setTitle(PLATFORM_META[p].label).onClick(() => void this.createVariantForCampaign(campaign.path, p)));
+      }
+      menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight / 3 });
+    }
+    return true;
   }
 
   async bulkTrash(rows: PostRow[]): Promise<number> {

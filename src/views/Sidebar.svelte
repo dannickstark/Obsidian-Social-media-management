@@ -19,6 +19,7 @@
 </script>
 
 <div class="osmm-sidebar">
+  <button type="button" class="mod-cta" onclick={() => actions.quickCreate("campaign")}>New campaign</button>
   {#if overdue.length}
     <section class="osmm-overdue" aria-label={`Overdue · ${overdue.length}`}>
       <h3 class="osmm-section-title">Overdue · {overdue.length}</h3>

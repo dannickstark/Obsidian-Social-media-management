@@ -2,6 +2,7 @@ import { Notice, Plugin } from "obsidian";
 import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
+import { registerCommands } from "./commands";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
 import { NoteFactory } from "./model/factory";
@@ -14,7 +15,7 @@ import { OsmmSettingTab } from "./settings/tab";
 import { PlannerActions, VIEW_PLANNER, VIEW_SIDEBAR } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
 import { SvelteRenderChild } from "./ui/SvelteView";
-import { PlannerView, activateView } from "./views/PlannerView";
+import { PlannerView } from "./views/PlannerView";
 import { SidebarView } from "./views/SidebarView";
 import CampaignTable from "./views/CampaignTable.svelte";
 
@@ -65,11 +66,9 @@ export default class OsmmPlugin extends Plugin {
 
     this.registerView(VIEW_PLANNER, (leaf) => new PlannerView(leaf, this.uiContext()));
     this.registerHoverLinkSource(VIEW_PLANNER, { display: "Social planner", defaultMod: true });
-    this.addRibbonIcon("calendar-days", "Open social planner", () => void activateView(this.app, VIEW_PLANNER, "tab"));
-    this.addCommand({ id: "open-planner", name: "Open planner", callback: () => void activateView(this.app, VIEW_PLANNER, "tab") });
-
     this.registerView(VIEW_SIDEBAR, (leaf) => new SidebarView(leaf, this.uiContext()));
-    this.addCommand({ id: "open-sidebar", name: "Open social queue (sidebar)", callback: () => void activateView(this.app, VIEW_SIDEBAR, "right") });
+
+    registerCommands(this);
 
     this.registerMarkdownCodeBlockProcessor("social-variants", (_source, el, ctx) => {
       ctx.addChild(new SvelteRenderChild(el, CampaignTable, { campaignPath: ctx.sourcePath }, this.uiContext()));
