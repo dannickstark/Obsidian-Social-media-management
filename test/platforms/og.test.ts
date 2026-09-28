@@ -114,6 +114,43 @@ describe("LinkCardFetcher", () => {
     expect(requestUrlMock.calls).toHaveLength(0);
   });
 
+  it("refuses IPv4-mapped IPv6 addresses, in both dotted and hex form (fix round 1)", async () => {
+    const { cards } = fetcher();
+    expect(await cards.get("https://[::ffff:127.0.0.1]/x")).toBeNull();
+    expect(await cards.get("https://[::ffff:7f00:1]/x")).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+  });
+
+  it("refuses IPv6 unique-local addresses, fc00::/7 (fix round 1)", async () => {
+    const { cards } = fetcher();
+    expect(await cards.get("https://[fc00::1]/x")).toBeNull();
+    expect(await cards.get("https://[fdff:ffff::1]/x")).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+  });
+
+  it("refuses IPv6 link-local addresses, fe80::/10 (fix round 1)", async () => {
+    const { cards } = fetcher();
+    expect(await cards.get("https://[fe80::1]/x")).toBeNull();
+    expect(await cards.get("https://[febf:ffff::1]/x")).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+  });
+
+  it("refuses [::] and every form of the IPv6 loopback (fix round 1)", async () => {
+    const { cards } = fetcher();
+    expect(await cards.get("https://[::]/x")).toBeNull();
+    expect(await cards.get("https://[::1]/x")).toBeNull();
+    expect(await cards.get("https://[0:0:0:0:0:0:0:1]/x")).toBeNull();
+    expect(await cards.get("https://[0000:0000:0000:0000:0000:0000:0000:0001]/x")).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+  });
+
+  it("refuses hosts with a trailing dot, case-insensitively (fix round 1)", async () => {
+    const { cards } = fetcher();
+    expect(await cards.get("https://localhost./x")).toBeNull();
+    expect(await cards.get("https://LOCALHOST./x")).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+  });
+
   it("never sends credentials (no Authorization/Cookie header, no basic auth in the url)", async () => {
     const { cards } = fetcher();
     queue(html(200, FULL));
