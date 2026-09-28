@@ -23,7 +23,13 @@ import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
-import { PlannerActions, VIEW_COMPOSER, VIEW_PLANNER, VIEW_PREVIEW_GRID, VIEW_SIDEBAR } from "./ui/actions";
+import {
+  PlannerActions,
+  VIEW_COMPOSER,
+  VIEW_PLANNER,
+  VIEW_PREVIEW_GRID,
+  VIEW_SIDEBAR,
+} from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
 import { SvelteRenderChild } from "./ui/SvelteView";
 import { PlannerView } from "./views/PlannerView";
@@ -59,7 +65,9 @@ export default class OsmmPlugin extends Plugin {
     this.device = loadDeviceSettings(this.app);
     this.secrets = new Secrets(this.app);
     this.writer = new SafeWriter(this.app);
-    this.factory = new NoteFactory(this.app, this.writer, { rootFolder: () => this.settings.rootFolder });
+    this.factory = new NoteFactory(this.app, this.writer, {
+      rootFolder: () => this.settings.rootFolder,
+    });
     this.channels = new ChannelRegistry({
       read: () => this.settings,
       write: async (next) => {
@@ -98,7 +106,9 @@ export default class OsmmPlugin extends Plugin {
       publish: ui.publish,
       onTick: (now, previous) =>
         Promise.resolve()
-          .then(() => void this.reminders.tick(now, previous))
+          .then(async () => {
+            await this.reminders.tick(now, previous);
+          })
           .catch((e) => void new Notice(e instanceof Error ? e.message : String(e), 0)),
       warn: (message) => new Notice(message, 0),
     });
@@ -129,7 +139,14 @@ export default class OsmmPlugin extends Plugin {
     registerCommands(this);
 
     this.registerMarkdownCodeBlockProcessor("social-variants", (_source, el, ctx) => {
-      ctx.addChild(new SvelteRenderChild(el, CampaignTable, { campaignPath: ctx.sourcePath }, this.uiContext()));
+      ctx.addChild(
+        new SvelteRenderChild(
+          el,
+          CampaignTable,
+          { campaignPath: ctx.sourcePath },
+          this.uiContext(),
+        ),
+      );
     });
   }
 
