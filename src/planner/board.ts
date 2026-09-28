@@ -30,6 +30,11 @@ export function columnOf(status: VariantStatus): BoardColumn | null {
 }
 
 const SAFE_TO_UNSCHEDULE = new Set<DeliveryStatus>(["draft", "ready", "scheduled", "overdue", "skipped"]);
+export const UNSCHEDULE_BLOCKED = "Some channels were already handed over or published. Unschedule the remaining ones from the post itself.";
+
+export function unscheduleBlocked(v: Pick<Variant, "deliveries">): boolean {
+  return Object.values(v.deliveries).some((d) => !SAFE_TO_UNSCHEDULE.has(d.status));
+}
 
 export function planBoardMove(
   v: IndexedVariant,
@@ -43,8 +48,7 @@ export function planBoardMove(
     return v.channels.length ? { ok: true, move: { kind: "schedule" } } : { ok: false, reason: "Pick at least one channel before scheduling." };
   }
   if (from === "scheduled") {
-    const blocked = Object.values(v.deliveries).some((d) => !SAFE_TO_UNSCHEDULE.has(d.status));
-    if (blocked) return { ok: false, reason: "Some channels were already handed over or published. Unschedule the remaining ones from the post itself." };
+    if (unscheduleBlocked(v)) return { ok: false, reason: UNSCHEDULE_BLOCKED };
     return { ok: true, move: { kind: "unschedule", status: to } };
   }
   return { ok: true, move: { kind: "setStatus", status: to } };

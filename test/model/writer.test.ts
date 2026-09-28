@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseYaml, getFrontMatterInfo } from "obsidian";
 import { SafeWriter } from "../../src/model/writer";
 import { IllegalTransitionError } from "../../src/model/stateMachine";
@@ -150,5 +150,86 @@ describe("SafeWriter", () => {
     });
     await new SafeWriter(app).updateDeliveries(file, { "li/acme-studio": null, "li/new": { status: "ready" } });
     expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "Published", note: "x" }, "li/new": { status: "ready" } });
+  });
+
+  describe("updateVariant (G1)", () => {
+    const raw = {
+      type: "social-post",
+      platform: "linkedin",
+      channels: ["li/me", "li/acme"],
+      status: "scheduled",
+      scheduled_at: "2026-10-08T09:00:00+02:00",
+      deliveries: {
+        "li/me": { status: "scheduled", note: "keep me" },
+        "li/acme": { status: "Handed-Over", url: "https://x" },
+      },
+    };
+
+    it("plans against fresh frontmatter and patches only the returned delivery keys", async () => {
+      const app = createApp();
+      const file = await writeNote(app, "p.md", raw);
+      const writer = new SafeWriter(app);
+      const seen: unknown[] = [];
+      const applied = await writer.updateVariant(file, (fresh) => {
+        seen.push(fresh.deliveries["li/me"]?.status, fresh.scheduledAt);
+        return { fields: { scheduledAt: Date.UTC(2026, 9, 9, 7) }, deliveries: { "li/me": { status: "ready" } } };
+      });
+      expect(seen).toEqual(["scheduled", Date.UTC(2026, 9, 8, 7)]);
+      expect(applied).toMatchObject({ deliveries: { "li/me": { status: "ready" } } });
+      const fm = await fmOf(app, file);
+      expect(fm.scheduled_at).toBe("2026-10-09T09:00:00+02:00");
+      expect(fm.deliveries).toEqual({
+        "li/me": { status: "ready", note: "keep me" },
+        "li/acme": { status: "Handed-Over", url: "https://x" },
+      });
+    });
+
+    it("writes nothing when the plan refuses", async () => {
+      const app = createApp();
+      const file = await writeNote(app, "p.md", raw);
+      const modify = vi.spyOn(app.vault, "modify");
+      const result = await new SafeWriter(app).updateVariant(file, () => ({ refuse: "no" }));
+      expect(result).toEqual({ refuse: "no" });
+      expect(modify).not.toHaveBeenCalled();
+    });
+
+    it("sees the result of a write queued just before it", async () => {
+      const app = createApp();
+      const file = await writeNote(app, "p.md", raw);
+      const writer = new SafeWriter(app);
+      const first = writer.updateDeliveries(file, { "li/me": { status: "published", url: "https://li/1" } });
+      let seen: string | undefined;
+      const second = writer.updateVariant(file, (fresh) => {
+        seen = fresh.deliveries["li/me"]?.status;
+        return {};
+      });
+      await Promise.all([first, second]);
+      expect(seen).toBe("published");
+    });
+
+    it("rolls up the status and reports the stored status in the applied fields", async () => {
+      const app = createApp();
+      const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "ready" }, "li/acme-studio": { status: "ready" } } });
+      const applied = await new SafeWriter(app).updateVariant(file, () => ({
+        fields: { status: "draft" },
+        deliveries: { "li/me": { status: "scheduled" }, "li/acme-studio": { status: "scheduled" } },
+      }));
+      expect((await fmOf(app, file)).status).toBe("scheduled");
+      expect(!("refuse" in applied) && applied.fields?.status).toBe("scheduled");
+    });
+
+    it("never writes a deliveries key through fields", async () => {
+      const app = createApp();
+      const file = await writeNote(app, "p.md", raw);
+      await new SafeWriter(app).updateVariant(file, () => ({ fields: { deliveries: {} } as never }));
+      expect((await fmOf(app, file)).deliveries).toEqual(raw.deliveries);
+    });
+  });
+
+  it("keeps unknown keys of a patched delivery entry (G1)", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "scheduled", note: "keep me", at: "bad" } } });
+    await new SafeWriter(app).updateDeliveries(file, { "li/me": { status: "ready" } });
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "ready", note: "keep me" } });
   });
 });

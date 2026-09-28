@@ -114,9 +114,14 @@ export interface TemplateProposal {
 
 const LOCKED = new Set(["published", "partial", "skipped"]);
 
+/** Posts a template must not move: done, partly done, or already handed to the platform. */
+export function templateLocked(v: Pick<IndexedVariant, "status" | "deliveries">): boolean {
+  return LOCKED.has(v.status) || Object.values(v.deliveries).some((d) => d.status === "handed_over" || d.status === "published");
+}
+
 export function planTemplate(template: ScheduleTemplate, anchor: number, variants: readonly IndexedVariant[]): TemplateProposal[] {
   const pool = [...variants]
-    .filter((v) => !LOCKED.has(v.status) && !Object.values(v.deliveries).some((d) => d.status === "handed_over" || d.status === "published"))
+    .filter((v) => !templateLocked(v))
     .sort((a, b) => (a.scheduledAt ?? Infinity) - (b.scheduledAt ?? Infinity) || a.path.localeCompare(b.path));
   const used = new Set<string>();
   const a = new Date(anchor);

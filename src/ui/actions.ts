@@ -5,12 +5,22 @@ import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
 import { PLATFORM_META, PLATFORMS, type Platform } from "../model/platforms";
-import type { SafeWriter } from "../model/writer";
-import { defaultScheduleTime, planBoardMove, scheduleDeliveries, unscheduleDeliveries, type BoardColumn } from "../planner/board";
+import type { Variant } from "../model/types";
+import type { SafeWriter, VariantPlan } from "../model/writer";
+import {
+  defaultScheduleTime,
+  planBoardMove,
+  scheduleDeliveries,
+  UNSCHEDULE_BLOCKED,
+  unscheduleBlocked,
+  unscheduleDeliveries,
+  type BoardColumn,
+} from "../planner/board";
+import { deliveryChanges, planUndo, recordWrite, type WriteRecord } from "../planner/changes";
 import { uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
-import { planTemplate, type TemplateProposal } from "../planner/templates";
+import { planTemplate, templateLocked, type TemplateProposal } from "../planner/templates";
 import type { OsmmSettings } from "../settings/settings";
 import type { OsmmContext } from "./context";
 import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
@@ -21,6 +31,14 @@ import QuickCreate from "../views/QuickCreate.svelte";
 export const VIEW_PLANNER = "osmm-planner";
 export const VIEW_SIDEBAR = "osmm-sidebar";
 export const ROW_MIME = "text/x-osmm-row";
+export const UNDO_CONFLICT = "Some changes were kept because the note changed since.";
+
+type WriteResult = { ok: true; record: WriteRecord } | { ok: false; reason: string };
+
+/** The snapshot variant with the fresh frontmatter values laid over it (keeps file, campaignPath, …). */
+function freshIndexed(v: IndexedVariant, fresh: Variant): IndexedVariant {
+  return { ...v, ...fresh };
+}
 
 export interface ActionDeps {
   app: App;
@@ -117,12 +135,52 @@ export class PlannerActions {
       );
       if (!go) return false;
     }
-    const file = row.variant.file;
-    await this.deps.writer.patchVariant(file, plan.patch);
-    this.undoNotice(`Moved to ${formatShortDate(plan.newAt)} ${formatTime(plan.newAt)}.`, () =>
-      this.deps.writer.patchVariant(file, plan.previous),
-    );
+    const stagger = this.deps.settings().defaultStaggerMinutes;
+    let newAt = plan.newAt;
+    const result = await this.write(row.variant.file, (fresh) => {
+      const freshRow = expandRows([freshIndexed(row.variant, fresh)], stagger).find((r) => r.channelId === row.channelId);
+      if (!freshRow) return { refuse: "This post changed since. Try again." };
+      const again = planReschedule(freshRow, target, channel?.defaultTime ?? "09:00", stagger);
+      if (!again.ok) return { refuse: again.reason };
+      if (again.needsConfirm && !plan.needsConfirm) return { refuse: "This post was handed over in the meantime. Try again." };
+      newAt = again.newAt;
+      return { fields: { scheduledAt: again.patch.scheduledAt }, deliveries: deliveryChanges(fresh, again.patch.deliveries ?? {}) };
+    });
+    if (!result.ok) {
+      new Notice(result.reason);
+      return false;
+    }
+    this.undoNotice(`Moved to ${formatShortDate(newAt)} ${formatTime(newAt)}.`, () => this.undo([result.record]));
     return true;
+  }
+
+  /**
+   * Every UI write: `plan` runs against fresh frontmatter inside the writer queue and returns only
+   * what it changes. The stored status is always part of the record so undo can restore it.
+   */
+  private async write(file: TFile, plan: VariantPlan): Promise<WriteResult> {
+    let before: Variant | undefined;
+    const applied = await this.deps.writer.updateVariant(file, (fresh) => {
+      before = fresh;
+      const planned = plan(fresh);
+      if ("refuse" in planned) return planned;
+      return { ...planned, fields: { status: fresh.status, ...planned.fields } };
+    });
+    if ("refuse" in applied) return { ok: false, reason: applied.refuse };
+    return { ok: true, record: recordWrite(file, before!, applied) };
+  }
+
+  /** Reverts recorded writes where the note still holds what they wrote; reports the rest as conflicts. */
+  async undo(records: readonly WriteRecord[]): Promise<void> {
+    let conflicts = 0;
+    for (const record of records) {
+      await this.deps.writer.updateVariant(record.file, (fresh) => {
+        const { update, conflicts: n } = planUndo(record, fresh);
+        conflicts += n;
+        return update;
+      });
+    }
+    if (conflicts > 0) new Notice(UNDO_CONFLICT);
   }
 
   async skip(row: PostRow): Promise<void> {
@@ -171,30 +229,36 @@ export class PlannerActions {
   }
 
   async setStatus(v: IndexedVariant, status: "idea" | "draft" | "ready"): Promise<void> {
-    const previous = {
-      status: v.status,
-      deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, { ...d }])),
-    };
     const target = status === "idea" ? "draft" : status;
-    const deliveries: typeof v.deliveries = {};
-    for (const [id, d] of Object.entries(v.deliveries)) {
-      deliveries[id] = d.status === "draft" || d.status === "ready" ? { ...d, status: target } : d;
-    }
-    await this.deps.writer.patchVariant(v.file, { status, deliveries });
-    this.undoNotice(`Moved to ${STATUS_LABEL[status]}.`, () => this.deps.writer.patchVariant(v.file, previous));
+    const result = await this.write(v.file, (fresh) => {
+      const deliveries: Variant["deliveries"] = {};
+      for (const [id, d] of Object.entries(fresh.deliveries)) {
+        if (d.status === "draft" || d.status === "ready") deliveries[id] = { ...d, status: target };
+      }
+      return { fields: { status }, deliveries: deliveryChanges(fresh, deliveries) };
+    });
+    this.afterWrite(result, `Moved to ${STATUS_LABEL[status]}.`);
   }
 
   async schedule(v: IndexedVariant, at: number): Promise<void> {
-    const previous = { scheduledAt: v.scheduledAt, deliveries: v.deliveries, status: v.status };
-    await this.deps.writer.patchVariant(v.file, { scheduledAt: at, deliveries: scheduleDeliveries(v) });
-    this.undoNotice(`Scheduled for ${formatShortDate(at)} ${formatTime(at)}.`, () => this.deps.writer.patchVariant(v.file, previous));
+    const result = await this.write(v.file, (fresh) => {
+      if (!fresh.channels.length) return { refuse: "Pick at least one channel before scheduling." };
+      return { fields: { scheduledAt: at }, deliveries: deliveryChanges(fresh, scheduleDeliveries(fresh)) };
+    });
+    this.afterWrite(result, `Scheduled for ${formatShortDate(at)} ${formatTime(at)}.`);
   }
 
   async unschedule(v: IndexedVariant, status: "idea" | "draft" | "ready"): Promise<void> {
-    const previous = { deliveries: v.deliveries, status: v.status };
-    const deliveries = unscheduleDeliveries(v, status === "ready" ? "ready" : "draft");
-    await this.deps.writer.patchVariant(v.file, { status, deliveries });
-    this.undoNotice("Unscheduled.", () => this.deps.writer.patchVariant(v.file, previous));
+    const result = await this.write(v.file, (fresh) => {
+      if (unscheduleBlocked(fresh)) return { refuse: UNSCHEDULE_BLOCKED };
+      return { fields: { status }, deliveries: deliveryChanges(fresh, unscheduleDeliveries(fresh, status === "ready" ? "ready" : "draft")) };
+    });
+    this.afterWrite(result, "Unscheduled.");
+  }
+
+  private afterWrite(result: WriteResult, message: string): void {
+    if (result.ok) this.undoNotice(message, () => this.undo([result.record]));
+    else new Notice(result.reason);
   }
 
   async moveOnBoard(v: IndexedVariant, to: BoardColumn): Promise<void> {
@@ -212,60 +276,48 @@ export class PlannerActions {
   }
 
   async bulkShift(rows: PostRow[], deltaMs: number): Promise<{ moved: number; skipped: number }> {
-    let moved = 0;
     let skipped = 0;
-    const changed: Array<[TFile, { scheduledAt?: number; deliveries: IndexedVariant["deliveries"] }]> = [];
+    const records: WriteRecord[] = [];
     for (const v of uniqueVariants(rows)) {
-      const movable = v.scheduledAt !== undefined && !Object.values(v.deliveries).some((d) => ["published", "publishing", "handed_over"].includes(d.status));
-      if (!movable) {
-        skipped++;
-        continue;
-      }
-      const previous = { scheduledAt: v.scheduledAt, deliveries: Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, { ...d }])) };
-      const deliveries = Object.fromEntries(Object.entries(v.deliveries).map(([id, d]) => [id, d.at === undefined ? d : { ...d, at: d.at + deltaMs }]));
-      await this.deps.writer.patchVariant(v.file, { scheduledAt: v.scheduledAt! + deltaMs, deliveries });
-      changed.push([v.file, previous]);
-      moved++;
-    }
-    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`;
-    if (changed.length) {
-      this.undoNotice(summary, async () => {
-        for (const [file, previous] of changed) await this.deps.writer.patchVariant(file, previous);
+      const result = await this.write(v.file, (fresh) => {
+        const movable =
+          fresh.scheduledAt !== undefined && !Object.values(fresh.deliveries).some((d) => ["published", "publishing", "handed_over"].includes(d.status));
+        if (!movable) return { refuse: "frozen" };
+        const deliveries: Variant["deliveries"] = {};
+        for (const [id, d] of Object.entries(fresh.deliveries)) if (d.at !== undefined) deliveries[id] = { ...d, at: d.at + deltaMs };
+        return { fields: { scheduledAt: fresh.scheduledAt! + deltaMs }, deliveries };
       });
-    } else {
-      new Notice(summary);
+      if (result.ok) records.push(result.record);
+      else skipped++;
     }
+    const moved = records.length;
+    const summary = `Moved ${moved} post${moved === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} (published, handed over or unscheduled)` : ""}.`;
+    if (records.length) this.undoNotice(summary, () => this.undo(records));
+    else new Notice(summary);
     return { moved, skipped };
   }
 
   async bulkSetStatus(rows: PostRow[], status: "idea" | "draft" | "ready"): Promise<{ changed: number; skipped: number }> {
-    let changedCount = 0;
     let skipped = 0;
     const target = status === "ready" ? "ready" : "draft";
-    const changed: Array<[TFile, { status: IndexedVariant["status"]; deliveries: IndexedVariant["deliveries"] }]> = [];
+    const records: WriteRecord[] = [];
     for (const v of uniqueVariants(rows)) {
-      const ds = Object.entries(v.deliveries);
-      if (ds.some(([, d]) => d.status !== "draft" && d.status !== "ready")) {
-        skipped++;
-        continue;
-      }
-      const previous = { status: v.status, deliveries: Object.fromEntries(ds.map(([id, d]) => [id, { ...d }])) };
-      const deliveries: typeof v.deliveries = {};
-      for (const [id, d] of ds) deliveries[id] = d.status === target ? d : { ...d, status: target };
-      await this.deps.writer.patchVariant(v.file, { status, deliveries });
-      changed.push([v.file, previous]);
-      changedCount++;
+      const result = await this.write(v.file, (fresh) => {
+        const ds = Object.entries(fresh.deliveries);
+        if (ds.some(([, d]) => d.status !== "draft" && d.status !== "ready")) return { refuse: "frozen" };
+        const deliveries: Variant["deliveries"] = {};
+        for (const [id, d] of ds) if (d.status !== target) deliveries[id] = { ...d, status: target };
+        return { fields: { status }, deliveries };
+      });
+      if (result.ok) records.push(result.record);
+      else skipped++;
     }
+    const changedCount = records.length;
     const summary = `Changed ${changedCount} post${changedCount === 1 ? "" : "s"}, skipped ${skipped} with channels already scheduled, in progress or done.`;
     const summaryNoSkip = `Changed ${changedCount} post${changedCount === 1 ? "" : "s"}.`;
     const notice = skipped ? summary : summaryNoSkip;
-    if (changed.length) {
-      this.undoNotice(notice, async () => {
-        for (const [file, previous] of changed) await this.deps.writer.patchVariant(file, previous);
-      });
-    } else {
-      new Notice(notice);
-    }
+    if (records.length) this.undoNotice(notice, () => this.undo(records));
+    else new Notice(notice);
     return { changed: changedCount, skipped };
   }
 
@@ -284,10 +336,19 @@ export class PlannerActions {
   }
 
   async applyTemplate(proposals: TemplateProposal[]): Promise<void> {
-    for (const p of proposals) await this.deps.writer.patchVariant(p.variant.file, { scheduledAt: p.to });
-    this.undoNotice(`Scheduled ${proposals.length} post${proposals.length === 1 ? "" : "s"} from the template.`, async () => {
-      for (const p of proposals) await this.deps.writer.patchVariant(p.variant.file, { scheduledAt: p.from });
-    });
+    const records: WriteRecord[] = [];
+    let skipped = 0;
+    for (const p of proposals) {
+      const result = await this.write(p.variant.file, (fresh) =>
+        templateLocked(fresh) ? { refuse: "locked" } : { fields: { scheduledAt: p.to } },
+      );
+      if (result.ok) records.push(result.record);
+      else skipped++;
+    }
+    const n = records.length;
+    const summary = `Scheduled ${n} post${n === 1 ? "" : "s"} from the template.${skipped ? ` Skipped ${skipped} already published or handed over.` : ""}`;
+    if (records.length) this.undoNotice(summary, () => this.undo(records));
+    else new Notice(summary);
   }
 
   openTemplatePreview(campaignPath: string, templateId: string): void {
