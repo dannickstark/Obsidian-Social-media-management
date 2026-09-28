@@ -1,12 +1,12 @@
 import type { PostRow } from "../../index/queries";
 import { HOUR, MINUTE } from "../../model/dates";
 import { fireTime, REMINDER_WINDOW_MS, reminderSlots, type ReminderItem } from "../reminders";
-import type { BookingLedger } from "./bookings";
-import { NtfyError, type NtfyClient, type NtfyMessage } from "./client";
+import type { Booking, BookingLedger } from "./bookings";
+import { NtfyError, type CancelOutcome, type NtfyClient, type NtfyMessage } from "./client";
 
 /** ntfy.sh keeps delayed pushes at most 3 days (spec §4.4); 10 minutes of margin for clock skew. */
 export const BOOKING_WINDOW_MS = 72 * HOUR - 10 * MINUTE;
-/** Stay well under public-server rate limits; the rest is booked on the next run. */
+/** Requests (bookings and cancels) per run, to stay well under public-server rate limits; the rest waits for the next run. */
 export const MAX_BOOKINGS_PER_RUN = 20;
 /** Pause after a failed run, so a down server is not called every 30 seconds. */
 export const RETRY_MS = 5 * MINUTE;
@@ -50,6 +50,10 @@ export class NtfyBooker {
   private warned = false;
   /** Bumped by forget(): a run started before it must not send or record anything more (M3 P13). */
   private generation = 0;
+  /** Bumped when withdraw() stops waiting for a hung run: that run sends nothing more, but records what it sent. */
+  private abandoned = 0;
+  /** Reminder keys being published right now, by any run: a later run never books them a second time. */
+  private readonly inFlight = new Set<string>();
 
   constructor(private readonly deps: BookerDeps) {}
 
@@ -59,18 +63,21 @@ export class NtfyBooker {
   }
 
   /**
-   * Cancels every pending booking (where the server allows it). Waits at most 10 s for a run in flight (Task 9 ruling).
-   * Entries whose cancel failed stay in the ledger and are retried by later runs. Ignores the failure pause: the user asked.
+   * Cancels every pending booking (where the server allows it). Waits at most 10 s for a run in flight (Task 9
+   * ruling), then abandons it. Entries whose cancel failed stay in the ledger for later runs; pushes the server
+   * can't cancel stay, marked stale, until their time. Ignores the failure pause: the user asked.
    */
   withdraw(): Promise<SyncResult> {
     const prior = this.running;
     const task = (async () => {
-      if (prior) await waitAtMost(prior, WITHDRAW_WAIT_MS);
+      if (prior && !(await settlesWithin(prior, WITHDRAW_WAIT_MS))) this.abandoned++;
+      const gen = this.generation;
+      const forgotten = () => gen !== this.generation;
       const result = emptyResult();
       try {
-        if (await this.cancelAll(result, this.generation)) this.warned = false;
+        if (await this.cancelAll(result, { left: Number.POSITIVE_INFINITY }, forgotten, forgotten)) this.warned = false;
       } catch (e) {
-        this.pause(e, result, "");
+        if (!forgotten()) this.pause(e, result, "");
       }
       return result;
     })();
@@ -87,7 +94,7 @@ export class NtfyBooker {
     this.warned = false;
   }
 
-  /** False once the server refused a cancel (Task 8 ruling): pushes should then link through Obsidian. */
+  /** False once the server said it can't cancel pushes (Task 8 ruling): pushes should then link through Obsidian. */
   cancelSupported(): boolean {
     return this.deps.ledger.cancelSupported();
   }
@@ -99,25 +106,27 @@ export class NtfyBooker {
     return tracked;
   }
 
-  /** The run must stop: forget() was called, or booking is on hold. */
-  private halted(generation: number): boolean {
-    return generation !== this.generation || this.deps.now() < this.pausedUntil;
-  }
-
   private active(): boolean {
     return this.deps.isPublisher() && this.deps.enabled();
   }
 
   private async run(): Promise<SyncResult> {
     const gen = this.generation;
+    const epoch = this.abandoned;
+    /** Checked before every request or write. */
+    const stopped = () => gen !== this.generation || epoch !== this.abandoned || this.deps.now() < this.pausedUntil;
+    /** Checked after every request: the server's answer is recorded unless forget() cleared the ledger (M3 P13). */
+    const forgotten = () => gen !== this.generation;
     const result = emptyResult();
+    /** Requests left in this run: cancels and bookings alike. */
+    const budget = { left: MAX_BOOKINGS_PER_RUN };
     let current = "";
     try {
       const now = this.deps.now();
       if (now < this.pausedUntil) return result;
       this.deps.ledger.prune(now - HOUR);
       if (!this.active()) {
-        if (await this.cancelAll(result, gen)) this.warned = false;
+        if (await this.cancelAll(result, budget, stopped, forgotten)) this.warned = false;
         return result;
       }
       const rows = this.deps.rows();
@@ -127,117 +136,131 @@ export class NtfyBooker {
       for (const item of reminderSlots(rows, now - REMINDER_WINDOW_MS, now + BOOKING_WINDOW_MS, now, (r) => this.deps.offsets(r))) {
         wanted.set(item.key, item);
       }
-      let budget = MAX_BOOKINGS_PER_RUN;
-      /** Cancelled for an edit: rebooked in this run, their budget already taken by the cancel. */
+      /** Cancelled for an edit: rebooked in this run, their request already counted with the cancel. */
       const rebook = new Set<string>();
       for (const found of this.deps.ledger.all()) {
         let b = found;
         if (b.fireAt <= now) continue;
         if (!wanted.has(b.key)) {
-          if (b.stale) continue;
-          if (this.halted(gen)) return result;
+          if (b.stale || budget.left === 0) continue;
+          if (stopped()) return result;
+          budget.left--;
           current = b.key;
           const outcome = await this.deps.client.cancel(b.messageId);
-          if (this.halted(gen)) return result;
-          if (outcome === "cancelled") {
-            this.deps.ledger.remove(b.key);
-            result.cancelled.push(b.key);
-          } else {
-            // The push still arrives: keep it until its time, so a return to this slot doesn't book a second one.
-            this.deps.ledger.markCancelUnsupported();
-            this.deps.ledger.put({ ...b, stale: true });
-            result.leftStale.push(b.key);
-          }
+          if (forgotten()) return result;
+          this.settleUnwanted(b, outcome, result);
           continue;
         }
         if (b.stale) {
-          if (this.halted(gen)) return result;
+          if (stopped()) return result;
           b = { ...b, stale: false };
           this.deps.ledger.put(b);
         }
         const version = versions.get(b.rowKey);
-        if (version === undefined || version === b.version || budget === 0) continue;
-        if (this.halted(gen)) return result;
-        budget--;
+        if (version === undefined || version === b.version) continue;
+        if (found.stale && !this.cancelSupported()) {
+          // A revived push the server can't cancel: a cancel would be futile.
+          this.deps.ledger.put({ ...b, version });
+          continue;
+        }
+        if (budget.left < 2) continue;
+        if (stopped()) return result;
+        budget.left -= 2; // the cancel and its rebook
         current = b.key;
         const outcome = await this.deps.client.cancel(b.messageId);
-        if (this.halted(gen)) return result;
-        if (outcome === "cancelled") {
+        if (forgotten()) return result;
+        if (outcome === "cancelled" || outcome === "gone") {
           this.deps.ledger.remove(b.key);
           result.cancelled.push(b.key);
           rebook.add(b.key);
         } else {
           // The old push still arrives; don't send a second one, and don't try to cancel it again.
-          this.deps.ledger.markCancelUnsupported();
+          if (outcome === "unsupported") this.deps.ledger.markCancelUnsupported();
           this.deps.ledger.put({ ...b, version });
           result.leftStale.push(b.key);
+          budget.left++;
         }
       }
       const have = new Set(this.deps.ledger.all().map((b) => b.key));
       for (const item of wanted.values()) {
-        if (have.has(item.key)) continue;
+        if (have.has(item.key) || this.inFlight.has(item.key)) continue;
         const reserved = rebook.has(item.key);
-        if (!reserved && budget === 0) continue;
-        if (this.halted(gen) || !this.active()) return result;
-        if (!reserved) budget--;
+        if (!reserved && budget.left === 0) continue;
+        if (stopped() || !this.active()) return result;
+        if (!reserved) budget.left--;
         current = item.key;
-        const version = versions.get(rowKeyOf(item.key)) ?? 0;
-        const message = await this.deps.compose(item);
-        if (this.halted(gen) || !this.active()) return result;
-        const sent = await this.deps.client.publish({ ...message, at: fireTime(item) });
-        // Recorded even if the role was lost meanwhile, so the next run can cancel it; not after forget().
-        if (this.halted(gen)) return result;
-        this.deps.ledger.put({ key: item.key, rowKey: rowKeyOf(item.key), minutes: item.minutes, messageId: sent.id, fireAt: fireTime(item), version });
-        result.booked.push(item.key);
+        this.inFlight.add(item.key);
+        try {
+          const version = versions.get(rowKeyOf(item.key)) ?? 0;
+          const message = await this.deps.compose(item);
+          if (stopped() || !this.active()) return result;
+          const sent = await this.deps.client.publish({ ...message, at: fireTime(item) });
+          // Recorded even after a pause, an abandon or a role change, so it can be cancelled later; not after forget().
+          if (forgotten()) return result;
+          this.deps.ledger.put({ key: item.key, rowKey: rowKeyOf(item.key), minutes: item.minutes, messageId: sent.id, fireAt: fireTime(item), version });
+          result.booked.push(item.key);
+        } finally {
+          this.inFlight.delete(item.key);
+        }
       }
       this.warned = false;
     } catch (e) {
-      if (gen === this.generation) this.pause(e, result, current);
+      if (!forgotten()) this.pause(e, result, current);
     }
     return result;
   }
 
+  /** Records the answer to a cancel of a booking that no longer applies. */
+  private settleUnwanted(b: Booking, outcome: CancelOutcome, result: SyncResult): void {
+    if (outcome === "cancelled" || outcome === "gone") {
+      this.deps.ledger.remove(b.key);
+      result.cancelled.push(b.key);
+      return;
+    }
+    // The push still arrives: keep it until its time, so a return to this slot doesn't book a second one.
+    if (outcome === "unsupported") this.deps.ledger.markCancelUnsupported();
+    this.deps.ledger.put({ ...b, stale: true });
+    result.leftStale.push(b.key);
+  }
+
   /**
-   * Cancels pending bookings one by one, removing each once the server answered. On a failure it pauses and
-   * stops, keeping the rest for a later run. True when every entry was settled.
+   * Cancels pending bookings one by one, recording each answer. Pushes already due or known to be uncancellable are
+   * left for the prune. On a failure it pauses and stops, keeping the rest for a later run. True when all are settled.
    */
-  private async cancelAll(result: SyncResult, gen: number): Promise<boolean> {
+  private async cancelAll(result: SyncResult, budget: { left: number }, stopped: () => boolean, forgotten: () => boolean): Promise<boolean> {
     for (const b of this.deps.ledger.all()) {
-      if (gen !== this.generation) return false;
-      if (b.fireAt <= this.deps.now() || b.stale) {
-        this.deps.ledger.remove(b.key);
-        continue;
-      }
-      let outcome: "cancelled" | "unsupported";
+      if (b.stale || b.fireAt <= this.deps.now()) continue;
+      if (budget.left <= 0 || stopped()) return false;
+      budget.left--;
+      let outcome: CancelOutcome;
       try {
         outcome = await this.deps.client.cancel(b.messageId);
       } catch (e) {
-        if (gen === this.generation) this.pause(e, result, b.key);
+        if (!forgotten()) this.pause(e, result, b.key);
         return false;
       }
-      if (gen !== this.generation) return false;
-      this.deps.ledger.remove(b.key);
-      if (outcome === "unsupported") this.deps.ledger.markCancelUnsupported();
-      (outcome === "cancelled" ? result.cancelled : result.leftStale).push(b.key);
+      if (forgotten()) return false;
+      this.settleUnwanted(b, outcome, result);
     }
     return true;
   }
 
   private pause(e: unknown, result: SyncResult, key: string): void {
+    const now = this.deps.now();
     const wait = e instanceof NtfyError && e.retryAfterMs ? Math.max(e.retryAfterMs, RETRY_MS) : RETRY_MS;
-    this.pausedUntil = this.deps.now() + wait;
+    this.pausedUntil = Math.max(this.pausedUntil, now + wait);
     if (key) result.failed.push(key);
     if (this.warned) return;
     this.warned = true;
     // Only NtfyError messages are shown: they are scrubbed of the topic and token by the client.
     const reason = e instanceof NtfyError ? e.message : "a reminder could not be prepared.";
-    this.deps.warn(`Phone reminders: ${reason} Trying again in ${Math.round(wait / MINUTE)} min.`);
+    this.deps.warn(`Phone reminders: ${reason} Trying again in ${Math.round((this.pausedUntil - now) / MINUTE)} min.`);
   }
 }
 
-/** Resolves when `task` settles or after `ms`, whichever comes first; never rejects. */
-function waitAtMost(task: Promise<unknown>, ms: number): Promise<void> {
+/** True when `task` settles within `ms`; never rejects. */
+function settlesWithin(task: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)));
-  return Promise.race([task.then(() => undefined, () => undefined), timeout]).finally(() => clearTimeout(timer));
+  const timeout = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), ms)));
+  return Promise.race([task.then(() => true, () => true), timeout]).finally(() => clearTimeout(timer));
 }

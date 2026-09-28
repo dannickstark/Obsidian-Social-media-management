@@ -54,13 +54,16 @@ describe("NtfyClient contract (#68)", () => {
     expect(body().actions).toHaveLength(3);
   });
 
-  it("cancels a delayed push, or reports that the server can't", async () => {
-    requestUrlMock.queue.push(NTFY.cancelled, NTFY.notFound);
+  it("cancels a delayed push, or reports that it is gone, that the server can't, or that it refused", async () => {
+    requestUrlMock.queue.push(NTFY.cancelled, NTFY.notFound, NTFY.methodNotAllowed, NTFY.notImplemented, NTFY.delayTooLarge);
     expect(await client().cancel("Zr0Jk2fA9b")).toBe("cancelled");
     expect([requestUrlMock.calls[0]!.url, requestUrlMock.calls[0]!.method]).toEqual(["https://ntfy.sh/osmm-SECRETTOPIC/Zr0Jk2fA9b", "DELETE"]);
+    expect(await client().cancel("Zr0Jk2fA9b")).toBe("gone");
     expect(await client().cancel("Zr0Jk2fA9b")).toBe("unsupported");
-    expect(await client().cancel("../bad")).toBe("unsupported");
-    expect(requestUrlMock.calls).toHaveLength(2);
+    expect(await client().cancel("Zr0Jk2fA9b")).toBe("unsupported");
+    expect(await client().cancel("Zr0Jk2fA9b")).toBe("refused");
+    expect(await client().cancel("../bad")).toBe("refused");
+    expect(requestUrlMock.calls).toHaveLength(5);
   });
 
   it.each([

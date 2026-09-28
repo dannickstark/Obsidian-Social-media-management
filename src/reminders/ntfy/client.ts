@@ -27,11 +27,20 @@ export class NtfyError extends Error {
     readonly kind: NtfyErrorKind,
     message: string,
     readonly retryAfterMs?: number,
+    /** The HTTP status, when the server answered. */
+    readonly status?: number,
   ) {
     super(message);
     this.name = "NtfyError";
   }
 }
+
+/**
+ * "cancelled": the push is withdrawn. "gone": the server no longer has it (404). "unsupported": the server can't
+ * cancel pushes at all (405/501). "refused": the server turned down this cancel (other 4xx, or a malformed id).
+ * With "unsupported" and "refused" the push still arrives.
+ */
+export type CancelOutcome = "cancelled" | "gone" | "unsupported" | "refused";
 
 export type Http = (req: RequestUrlParam) => Promise<RequestUrlResponse>;
 
@@ -81,15 +90,18 @@ export class NtfyClient {
     return { id: json.id, at: delayed ? msg.at! : time };
   }
 
-  /** Cancels a delayed push; "unsupported" when the server can't (older ntfy versions), and it stays booked. */
-  async cancel(id: string): Promise<"cancelled" | "unsupported"> {
+  /** Cancels a delayed push (see CancelOutcome). */
+  async cancel(id: string): Promise<CancelOutcome> {
     const c = this.require();
-    if (!MESSAGE_ID_RE.test(id)) return "unsupported";
+    if (!MESSAGE_ID_RE.test(id)) return "refused";
     try {
       await this.send(c, { url: `${c.server}/${c.topic}/${id}`, method: "DELETE", headers: this.headers(c) });
       return "cancelled";
     } catch (e) {
-      if (e instanceof NtfyError && e.kind === "rejected") return "unsupported";
+      if (!(e instanceof NtfyError)) throw e;
+      if (e.status === 405 || e.status === 501) return "unsupported";
+      if (e.status === 404) return "gone";
+      if (e.kind === "rejected") return "refused";
       throw e;
     }
   }
@@ -121,7 +133,7 @@ export class NtfyClient {
       const seconds = Number(header(res.headers, "retry-after"));
       throw new NtfyError("rate_limited", "The ntfy server is limiting how often this device can send.", Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined);
     }
-    if (res.status >= 500) throw new NtfyError("server", `The ntfy server had a problem (${res.status}).`);
-    throw new NtfyError("rejected", `The ntfy server rejected the request (${res.status}${detail ? `: ${detail}` : ""}).`);
+    if (res.status >= 500) throw new NtfyError("server", `The ntfy server had a problem (${res.status}).`, undefined, res.status);
+    throw new NtfyError("rejected", `The ntfy server rejected the request (${res.status}${detail ? `: ${detail}` : ""}).`, undefined, res.status);
   }
 }

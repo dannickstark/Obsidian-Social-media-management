@@ -17,6 +17,8 @@ export const NTFY = {
   delayTooLarge: res(400, { code: 40006, http: 400, error: "invalid delay parameter: too large, please refer to https://ntfy.sh/docs/publish/#scheduled-delivery" }),
   rateLimited: res(429, { code: 42901, http: 429, error: "limit reached: too many requests" }, { "retry-after": "60" }),
   notFound: res(404, { code: 40401, http: 404, error: "page not found" }),
+  methodNotAllowed: res(405, { code: 40501, http: 405, error: "method not allowed" }),
+  notImplemented: res(501, { code: 50101, http: 501, error: "not implemented" }),
   badGateway: res(502, "<html>Bad gateway</html>"),
   echoesSecrets: res(400, { code: 40009, http: 400, error: "invalid topic osmm-SECRETTOPIC for token tk_SECRETTOKEN" }),
   garbled: res(200, "not json"),
