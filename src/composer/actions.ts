@@ -6,6 +6,7 @@ import type { Channel, ChannelGroup, Issue, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { MediaInspector } from "../media/mediaInfo";
 import { planSelectGroup, planToggleChannel } from "./channels";
+import { slugify } from "./fixes";
 import { scheduleDeliveries } from "../planner/board";
 import { deliveryChanges, type WriteRecord } from "../planner/changes";
 import { blocking, counters, validateAll, type Counter } from "../platforms/checks";
@@ -32,6 +33,11 @@ export interface CardAction {
   label: string;
   icon: string;
   run(v: IndexedVariant): void;
+}
+
+export interface QuickFix {
+  label: string;
+  run(): Promise<void>;
 }
 
 /** Side effects of the preview grid and the composer; writes go through PlannerActions.write (fresh frontmatter, undo). */
@@ -166,5 +172,38 @@ export class ComposerActions {
     }
     const result = await this.deps.planner.write(v.file, () => ({ fields: { staggerMinutes: minutes } }));
     this.deps.planner.afterWrite(result, `Channels are now ${minutes} min apart.`);
+  }
+
+  /** A one-click fix for an issue, when there is an obvious one. */
+  quickFix(v: IndexedVariant, issue: Issue): QuickFix | null {
+    if (issue.code === "missing-url") {
+      const link = v.campaignPath ? this.deps.index.getCampaign(v.campaignPath)?.link : undefined;
+      if (!link) return null;
+      return {
+        label: "Use the campaign link",
+        run: async () => {
+          const result = await this.deps.planner.write(v.file, (fresh) => (fresh.url ? {} : { fields: { url: link } }));
+          this.deps.planner.afterWrite(result, "Link set from the campaign.");
+        },
+      };
+    }
+    if (issue.code === "missing-slug" && v.title) {
+      const slug = slugify(v.title);
+      if (!slug) return null;
+      return {
+        label: `Use slug "${slug}"`,
+        run: async () => {
+          await this.deps.writer.run(v.file, (fm) => {
+            if (!fm.slug) fm.slug = slug;
+          });
+          this.deps.planner.undoNotice(`Slug set to ${slug}.`, () =>
+            this.deps.writer.run(v.file, (fm) => {
+              if (fm.slug === slug) delete fm.slug;
+            }),
+          );
+        },
+      };
+    }
+    return null;
   }
 }

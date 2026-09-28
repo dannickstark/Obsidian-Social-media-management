@@ -6,6 +6,7 @@
   import Preview from "../previews/Preview.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
+  import Checks from "./Checks.svelte";
   import PostAs from "./PostAs.svelte";
   import type { ComposerSession } from "./session";
 
@@ -49,6 +50,8 @@
   const previewChannel = $derived(variantChannels.find((c) => c.id === previewChannelId) ?? variantChannels[0]);
   let width = $state<"mobile" | "desktop">("mobile");
   const model = $derived(variant ? composer.preview(variant, content, previewChannel) : null);
+  const issues = $derived(variant ? composer.check(variant, content) : []);
+  const counterList = $derived(variant ? composer.counters(variant, content, previewChannel) : []);
 </script>
 
 {#if !variant}
@@ -88,6 +91,7 @@
       <aside class="osmm-composer-side" aria-label="Composer panels">
         <p class="osmm-progress">{PLATFORM_META[variant.platform].label} · {VARIANT_STATUS_LABEL[variant.status]}</p>
         <PostAs {variant} />
+        <Checks {variant} {issues} counters={counterList} />
       </aside>
     </div>
   </div>

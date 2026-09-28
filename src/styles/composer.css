@@ -42,3 +42,10 @@
 .osmm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .osmm-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .osmm-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }
+
+.osmm-counters { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.osmm-counters li { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 8px; }
+.osmm-lenbar > span { display: block; height: 100%; border-radius: 2px; background: var(--interactive-accent); }
+.osmm-ok { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-success); }
+.osmm-issue-head { margin: 4px 0 0; font-size: var(--font-ui-smaller); }
+.osmm-issue-list li { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
