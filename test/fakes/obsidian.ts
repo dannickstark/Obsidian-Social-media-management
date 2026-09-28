@@ -281,11 +281,57 @@ export class FileManager {
     const yaml = Object.keys(fm).length ? stringifyYaml(fm) : "";
     await this.app.vault.modify(file, `---\n${yaml}---\n${body}`);
   }
+
+  async trashFile(file: TFile): Promise<void> {
+    await this.app.vault.delete(file);
+  }
+}
+
+export class WorkspaceLeaf {
+  view: ItemView | null = null;
+  viewType: string | null = null;
+  constructor(public app: App) {}
+  async setViewState(state: { type: string; active?: boolean }): Promise<void> {
+    this.viewType = state.type;
+    const factory = this.app.workspace.viewFactories.get(state.type);
+    if (factory) {
+      this.view = factory(this);
+      await this.view.onOpen();
+    }
+    if (!this.app.workspace.leaves.includes(this)) this.app.workspace.leaves.push(this);
+  }
+  async detach(): Promise<void> {
+    await this.view?.onClose();
+    this.app.workspace.leaves = this.app.workspace.leaves.filter((l) => l !== this);
+  }
 }
 
 export class Workspace extends Events {
+  leaves: WorkspaceLeaf[] = [];
+  viewFactories = new Map<string, (leaf: WorkspaceLeaf) => ItemView>();
+  opened: Array<{ linktext: string; newLeaf: boolean }> = [];
+  activeFile: TFile | null = null;
+  constructor(private readonly app: App) {
+    super();
+  }
   onLayoutReady(cb: () => void): void {
     cb();
+  }
+  getLeavesOfType(type: string): WorkspaceLeaf[] {
+    return this.leaves.filter((l) => l.viewType === type);
+  }
+  getLeaf(_newLeaf?: unknown): WorkspaceLeaf {
+    return new WorkspaceLeaf(this.app);
+  }
+  getRightLeaf(_split: boolean): WorkspaceLeaf {
+    return new WorkspaceLeaf(this.app);
+  }
+  async revealLeaf(_leaf: WorkspaceLeaf): Promise<void> {}
+  async openLinkText(linktext: string, _sourcePath: string, newLeaf?: boolean): Promise<void> {
+    this.opened.push({ linktext, newLeaf: !!newLeaf });
+  }
+  getActiveFile(): TFile | null {
+    return this.activeFile;
   }
 }
 
@@ -310,7 +356,7 @@ export class App {
   vault: Vault;
   metadataCache: MetadataCache;
   fileManager: FileManager;
-  workspace = new Workspace();
+  workspace: Workspace;
   secretStorage = new SecretStorage();
   private local = new Map<string, unknown>();
 
@@ -318,6 +364,7 @@ export class App {
     this.vault = new Vault(this);
     this.metadataCache = new MetadataCache(this);
     this.fileManager = new FileManager(this);
+    this.workspace = new Workspace(this);
   }
 
   loadLocalStorage(key: string): any | null {
@@ -358,9 +405,123 @@ export class Component {
   onunload(): void {}
 }
 
+export class ItemView extends Component {
+  app: App;
+  containerEl = document.createElement("div");
+  contentEl = document.createElement("div");
+  constructor(public leaf: WorkspaceLeaf) {
+    super();
+    this.app = leaf.app;
+    this.containerEl.appendChild(this.contentEl);
+  }
+  getViewType(): string {
+    return "";
+  }
+  getDisplayText(): string {
+    return "";
+  }
+  getIcon(): string {
+    return "";
+  }
+  async onOpen(): Promise<void> {}
+  async onClose(): Promise<void> {}
+}
+
+export class MarkdownRenderChild extends Component {
+  constructor(public containerEl: HTMLElement) {
+    super();
+  }
+}
+
+export class Modal {
+  static opened: Modal[] = [];
+  contentEl = document.createElement("div");
+  titleEl = document.createElement("div");
+  modalEl = document.createElement("div");
+  isOpen = false;
+  constructor(public app: App) {}
+  setTitle(title: string): this {
+    this.titleEl.textContent = title;
+    return this;
+  }
+  open(): void {
+    this.isOpen = true;
+    Modal.opened.push(this);
+    this.onOpen();
+  }
+  close(): void {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    this.onClose();
+  }
+  onOpen(): void {}
+  onClose(): void {}
+}
+
+export class MenuItem {
+  title = "";
+  checked: boolean | null = null;
+  disabled = false;
+  private cb: ((evt: MouseEvent) => unknown) | undefined;
+  setTitle(title: string | DocumentFragment): this {
+    this.title = typeof title === "string" ? title : (title.textContent ?? "");
+    return this;
+  }
+  setChecked(checked: boolean | null): this {
+    this.checked = checked;
+    return this;
+  }
+  setIcon(_icon: string | null): this {
+    return this;
+  }
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    return this;
+  }
+  onClick(cb: (evt: MouseEvent) => unknown): this {
+    this.cb = cb;
+    return this;
+  }
+  click(): void {
+    void this.cb?.(new MouseEvent("click"));
+  }
+}
+
+export class Menu {
+  static last: Menu | null = null;
+  items: MenuItem[] = [];
+  addItem(cb: (item: MenuItem) => unknown): this {
+    const item = new MenuItem();
+    this.items.push(item);
+    cb(item);
+    return this;
+  }
+  addSeparator(): this {
+    return this;
+  }
+  showAtMouseEvent(_evt: MouseEvent): this {
+    Menu.last = this;
+    return this;
+  }
+  showAtPosition(_pos: { x: number; y: number }): this {
+    Menu.last = this;
+    return this;
+  }
+}
+
+export interface Command {
+  id: string;
+  name: string;
+  callback?: () => unknown;
+  checkCallback?: (checking: boolean) => boolean | void;
+}
+
 export class Plugin extends Component {
   private data: unknown = null;
   settingTabs: PluginSettingTab[] = [];
+  commands: Command[] = [];
+  codeBlockProcessors = new Map<string, (source: string, el: HTMLElement, ctx: any) => unknown>();
+  ribbon: Array<{ icon: string; title: string; cb: () => unknown }> = [];
   constructor(
     public app: App,
     public manifest: PluginManifest,
@@ -376,6 +537,21 @@ export class Plugin extends Component {
   addSettingTab(tab: PluginSettingTab): void {
     this.settingTabs.push(tab);
   }
+  registerView(type: string, factory: (leaf: WorkspaceLeaf) => ItemView): void {
+    this.app.workspace.viewFactories.set(type, factory);
+  }
+  addCommand(command: Command): Command {
+    this.commands.push(command);
+    return command;
+  }
+  addRibbonIcon(icon: string, title: string, cb: () => unknown): HTMLElement {
+    this.ribbon.push({ icon, title, cb });
+    return document.createElement("div");
+  }
+  registerMarkdownCodeBlockProcessor(lang: string, handler: (source: string, el: HTMLElement, ctx: any) => unknown): void {
+    this.codeBlockProcessors.set(lang, handler);
+  }
+  registerHoverLinkSource(_id: string, _info: { display: string; defaultMod: boolean }): void {}
 }
 
 export class PluginSettingTab {
@@ -472,8 +648,17 @@ export class Setting {
 
 export class Notice {
   static messages: string[] = [];
-  constructor(public message: string) {
-    Notice.messages.push(message);
+  static last: Notice | null = null;
+  noticeEl = document.createElement("div");
+  hidden = false;
+  constructor(message: string | DocumentFragment, _duration?: number) {
+    if (typeof message === "string") this.noticeEl.textContent = message;
+    else this.noticeEl.append(message);
+    Notice.messages.push(this.noticeEl.textContent ?? "");
+    Notice.last = this;
+  }
+  hide(): void {
+    this.hidden = true;
   }
 }
 
