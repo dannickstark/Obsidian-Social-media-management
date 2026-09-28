@@ -31,6 +31,14 @@ describe("OsmmPlugin unload (final review Minor 7)", () => {
 });
 
 describe("OsmmPlugin", () => {
+  it("records publish attempts in Social/_log.md (#65)", async () => {
+    const { app, plugin } = await loaded();
+    await plugin.log.append({ at: Date.UTC(2026, 9, 8, 15, 30), path: "Social/Posts/A.md", channelId: "li/me", result: "published", url: "https://www.linkedin.com/feed/update/1" });
+    const file = app.vault.getFileByPath("Social/_log.md")!;
+    expect(await app.vault.read(file)).toContain("- 2026-10-08T17:30:00+02:00 · li/me · [[Social/Posts/A]] · published · https://www.linkedin.com/feed/update/1");
+    plugin.unload();
+  });
+
   it("wires services and indexes notes created through the factory", async () => {
     const { plugin } = await loaded();
     const change = nextChange(plugin.index);

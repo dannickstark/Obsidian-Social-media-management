@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SecretIds, Secrets, toSecretId } from "../../src/secrets/secrets";
+import { allSecretIds, SecretIds, Secrets, toSecretId } from "../../src/secrets/secrets";
 import { createApp } from "../helpers";
 
 describe("secret ids", () => {
@@ -10,6 +10,11 @@ describe("secret ids", () => {
 
   it("throws when nothing usable remains", () => {
     expect(() => toSecretId("//", "--")).toThrow();
+  });
+
+  it("lists every secret id the plugin may hold, for redaction", () => {
+    const channel = { id: "tg/event-x", platform: "telegram", name: "Event X", kind: "server_channel", avatarColor: "#000", method: "api", secretId: "osmm-channel-tg-event-x" } as never;
+    expect(allSecretIds([channel])).toEqual(["osmm-channel-tg-event-x", "osmm-ntfy-topic", "osmm-ntfy-token", "osmm-openai-key", "osmm-mcp-bearer"]);
   });
 });
 

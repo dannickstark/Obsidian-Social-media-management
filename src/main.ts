@@ -14,13 +14,13 @@ import { AdapterRegistry } from "./platforms/registry";
 import { viewStateStore } from "./planner/viewState";
 import { PublishActions } from "./publish/actions";
 import { ClipboardService } from "./publish/clipboard";
-import { MemoryLog } from "./publish/log";
+import { VaultLog } from "./publish/vaultLog";
 import { PreviewGridView } from "./previews/PreviewGridView";
 import { NotifiedLedger } from "./reminders/ledger";
 import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
-import { Secrets } from "./secrets/secrets";
+import { allSecretIds, Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
@@ -49,7 +49,7 @@ export default class OsmmPlugin extends Plugin {
   scheduler!: Scheduler;
   reminders!: ReminderService;
   readonly adapters = new AdapterRegistry();
-  readonly log = new MemoryLog();
+  log!: VaultLog;
   private unloaded = false;
   private ui: OsmmContext | undefined;
   /** Pending orchestrator retry delays, cleared on unload so no retry fires after the plugin is gone. */
@@ -82,6 +82,13 @@ export default class OsmmPlugin extends Plugin {
         this.settingsStore.set(this.settings);
         await this.saveSettings();
       },
+    });
+    this.log = new VaultLog({
+      app: this.app,
+      rootFolder: () => this.settings.rootFolder,
+      redact: (text) => this.secrets.redact(text, allSecretIds(this.channels.list())),
+      channelName: (id) => this.channels.get(id)?.name ?? id,
+      warn: (message) => new Notice(message, 0),
     });
     this.index = new SocialIndex(this.app);
     this.register(() => this.index.stop());

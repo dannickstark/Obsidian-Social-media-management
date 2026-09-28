@@ -7,7 +7,7 @@ export interface AttemptEntry {
   error?: string;
 }
 
-/** Every publish attempt is recorded (spec §5.6). M3 (#27) appends to Social/_log.md; M2 keeps them in memory. */
+/** Every publish attempt is recorded (spec §5.6). The plugin appends to `<root>/_log.md` (VaultLog); tests use MemoryLog. */
 export interface AttemptLog {
   append(entry: AttemptEntry): void | Promise<void>;
 }
