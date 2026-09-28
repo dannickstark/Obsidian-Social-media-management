@@ -8,7 +8,7 @@ import type { Channel, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import type { AssistedTarget, ClipItem } from "../platforms/types";
 import type { AdapterRegistry } from "../platforms/registry";
-import type { OsmmSettings } from "../settings/settings";
+import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
 import { SvelteModal } from "../ui/dialogs";
 import type { OsmmContext } from "../ui/context";
@@ -24,7 +24,7 @@ import { PublishOrchestrator, type FailureInfo, type RunResult } from "./orchest
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
 import { transition } from "../model/stateMachine";
 import { effectiveMethod } from "../platforms/registry";
-import type { DueItem } from "../scheduler/due";
+import { GRACE_MS, type DueItem } from "../scheduler/due";
 
 export interface PublishDeps {
   app: App;
@@ -73,6 +73,8 @@ export class PublishActions {
       now: () => deps.now(),
       delay: (ms) => deps.delay(ms),
       onFailure: (info) => this.notifier.failed(info),
+      lateWindowMs: () => Math.max(GRACE_MS, autoPostLateMs(deps.settings()) ?? 0),
+      defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
     });
   }
 
@@ -83,6 +85,17 @@ export class PublishActions {
     if (result.status === "published") new Notice(`Published to ${name}.`);
     else if (result.status === "refused") new Notice(`${name}: ${result.reason}`);
     return result;
+  }
+
+  /** Final review Minor 5: an API run started without awaiting it still reports a rejection. */
+  private runApiInBackground(path: string, channelId: string): void {
+    this.runApi(path, channelId).catch((e: unknown) => new Notice(`${this.channelName(channelId)}: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /** Whether "Check again" can ask the platform: the note's adapter has a lookup(). */
+  canLookup(path: string): boolean {
+    const v = this.deps.index.getVariant(path);
+    return !!v && !!this.deps.adapters.get(v.platform)?.lookup;
   }
 
   protected channelName(channelId: string): string {
@@ -168,7 +181,7 @@ export class PublishActions {
     // Native channels are handed over when scheduled (M5). One still pending at its time is posted now, never skipped silently.
     if (method === "native") method = adapter?.publish ? "api" : "assisted";
     if (method === "api") {
-      void this.runApi(item.path, item.channelId);
+      this.runApiInBackground(item.path, item.channelId);
       return;
     }
     if (await this.startAssisted(item.path, item.channelId)) this.notifier.due(item.path, item.channelId);
@@ -206,14 +219,20 @@ export class PublishActions {
     const state = await this.orchestrator.lookup(path, channelId);
     const v = this.deps.index.getVariant(path);
     if (!state || !v) return;
-    await this.deps.writer.updateVariant(v.file, (fresh) => {
+    const at = this.deps.now();
+    const error = "Not found on the platform after an interrupted publish.";
+    const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
       if (d?.status !== "check_needed") return { refuse: "The delivery changed." };
-      if (!state.published) return { deliveries: { [channelId]: transition(d, "failed", { error: "Not found on the platform after an interrupted publish." }) } };
-      const next = transition(d, "published", { ...(state.url ? { url: state.url } : {}), ...(state.remoteId ? { remoteId: state.remoteId } : {}) });
+      if (!state.published) return { deliveries: { [channelId]: transition(d, "failed", { error }) } };
+      const next = transition(d, "published", { at, ...(state.url ? { url: state.url } : {}), ...(state.remoteId ? { remoteId: state.remoteId } : {}) });
       delete next.error;
       return { deliveries: { [channelId]: next } };
     });
+    if ("refuse" in result) return;
+    void this.deps.log.append(
+      state.published ? { at, path, channelId, result: "published", ...(state.url ? { url: state.url } : {}) } : { at, path, channelId, result: "failed", error },
+    );
   }
 
   target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {
@@ -313,7 +332,7 @@ export class PublishActions {
       const method = effectiveMethod(v.mode, this.deps.channels.get(id), adapter);
       return method === "api" || (method === "native" && !!adapter?.publish);
     });
-    for (const id of viaApi) void this.runApi(path, id);
+    for (const id of viaApi) this.runApiInBackground(path, id);
     const assisted = queue.filter((id) => !viaApi.includes(id));
     if (assisted.length) this.openAssisted(path, assisted);
   }
@@ -323,15 +342,17 @@ export class PublishActions {
     const v = this.deps.index.getVariant(path);
     if (!v) return false;
     const name = this.channelName(channelId);
+    const error = "Not published (checked by you).";
     const result = await this.deps.planner.write(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
       if (d?.status !== "check_needed") return { refuse: `${name} no longer needs a check.` };
-      return { deliveries: { [channelId]: transition(d, "failed", { error: "Not published (checked by you)." }) } };
+      return { deliveries: { [channelId]: transition(d, "failed", { error }) } };
     });
     if (!result.ok) {
       new Notice(result.reason);
       return false;
     }
+    void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "failed", error });
     this.deps.planner.undoNotice(`Marked ${name} as not published.`, () => this.deps.planner.undo([result.record]));
     return true;
   }

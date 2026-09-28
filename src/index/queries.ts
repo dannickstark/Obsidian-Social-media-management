@@ -93,8 +93,14 @@ export function rowsBetween(rows: readonly PostRow[], from: number, to: number):
 
 const OVERDUE_CANDIDATES = new Set<RowStatus>(["scheduled", "awaiting_you"]);
 
+/** Rows with an unreadable delivery entry: never offered for posting (overdue tray, reminders). */
+export function unreadableRow(r: Pick<PostRow, "variant" | "channelId">): boolean {
+  return r.channelId !== null && (r.variant.invalidDeliveries?.includes(r.channelId) ?? false);
+}
+
 export function overdueRows(rows: readonly PostRow[], now: number): PostRow[] {
   return rows
+    .filter((r) => !unreadableRow(r))
     .filter((r) => r.status === "overdue" || (OVERDUE_CANDIDATES.has(r.status) && r.at !== undefined && r.at < now))
     .sort(byTime);
 }

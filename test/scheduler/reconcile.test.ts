@@ -81,12 +81,14 @@ describe("startup reconciliation (review focus 2)", () => {
     const { c } = await withLookup(async () => ({ published: true, url: "https://t.me/eventx/5", remoteId: "5" }));
     await scheduler(c).reconcile();
     await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
+    // Final review Minor 9: `at` is when it was found published, and the resolution is logged.
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({
       status: "published",
-      at: T,
+      at: T + 10 * MIN,
       url: "https://t.me/eventx/5",
       remoteId: "5",
     });
+    expect(c.log.entries.at(-1)).toMatchObject({ path: P, channelId: "tg/event-x", result: "published", url: "https://t.me/eventx/5" });
   });
 
   it("marks it failed when lookup() finds nothing", async () => {
@@ -94,6 +96,7 @@ describe("startup reconciliation (review focus 2)", () => {
     await scheduler(c).reconcile();
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]?.error).toBe("Not found on the platform after an interrupted publish.");
+    expect(c.log.entries.at(-1)).toMatchObject({ path: P, channelId: "tg/event-x", result: "failed", error: "Not found on the platform after an interrupted publish." });
   });
 
   it("leaves it for the user when lookup() fails", async () => {

@@ -1,4 +1,4 @@
-import type { PostRow } from "../index/queries";
+import { unreadableRow, type PostRow } from "../index/queries";
 import { MINUTE } from "../model/dates";
 
 export interface ReminderItem {
@@ -27,7 +27,7 @@ export function dueReminders(
   const from = Math.max(previous ?? Number.NEGATIVE_INFINITY, now - REMINDER_WINDOW_MS);
   const out: ReminderItem[] = [];
   for (const row of rows) {
-    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= now) continue;
+    if (!row.channelId || row.status !== "scheduled" || row.at === undefined || row.at <= now || unreadableRow(row)) continue;
     for (const minutes of offsets(row) ?? []) {
       if (minutes <= 0) continue;
       const fireAt = row.at - minutes * MINUTE;

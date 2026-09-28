@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { PublishDeps } from "../src/publish/actions";
+import type { Notifier } from "../src/reminders/notifier";
 import { App, Notice, Setting, type TextComponent, type DropdownComponent, type ToggleComponent } from "./fakes/obsidian";
 import OsmmPlugin from "../src/main";
 import { nextChange, settle } from "./helpers";
@@ -12,6 +14,21 @@ async function loaded() {
   await settle();
   return { app, plugin };
 }
+
+describe("OsmmPlugin unload (final review Minor 7)", () => {
+  it("clears pending retry delays and disposes the notifier", async () => {
+    const { plugin } = await loaded();
+    const publish = plugin.uiContext().publish;
+    const dispose = vi.spyOn(publish.notifier as Notifier, "dispose");
+    const set = vi.spyOn(window, "setTimeout");
+    const clear = vi.spyOn(window, "clearTimeout");
+    void (publish as unknown as { deps: PublishDeps }).deps.delay(15 * 60_000);
+    const handle = set.mock.results.at(-1)!.value;
+    plugin.unload();
+    expect(clear).toHaveBeenCalledWith(handle);
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+});
 
 describe("OsmmPlugin", () => {
   it("wires services and indexes notes created through the factory", async () => {

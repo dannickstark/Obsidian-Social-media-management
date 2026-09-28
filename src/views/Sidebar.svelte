@@ -59,7 +59,9 @@
           {:else}
             <button type="button" aria-label={`${r.variant.displayTitle} on ${channelName(r.channelId)} went out`} onclick={() => publish.openAssisted(r.variant.path, [r.channelId!], 3)}>It went out</button>
             <button type="button" aria-label={`${r.variant.displayTitle} on ${channelName(r.channelId)} didn't go out`} onclick={() => void publish.resolveNotPublished(r.variant.path, r.channelId!)}>It didn't</button>
-            <button type="button" aria-label={`Check ${r.variant.displayTitle} on ${channelName(r.channelId)} again`} onclick={() => void publish.resolveCheck(r.variant.path, r.channelId!)}>Check again</button>
+            {#if publish.canLookup(r.variant.path)}
+              <button type="button" aria-label={`Check ${r.variant.displayTitle} on ${channelName(r.channelId)} again`} onclick={() => void publish.resolveCheck(r.variant.path, r.channelId!)}>Check again</button>
+            {/if}
           {/if}
         </div>
       {/each}

@@ -52,9 +52,15 @@ export default class OsmmPlugin extends Plugin {
   readonly log = new MemoryLog();
   private unloaded = false;
   private ui: OsmmContext | undefined;
+  /** Pending orchestrator retry delays, cleared on unload so no retry fires after the plugin is gone. */
+  private readonly delays = new Set<number>();
 
   override async onload(): Promise<void> {
-    this.register(() => (this.unloaded = true));
+    this.register(() => {
+      this.unloaded = true;
+      for (const handle of this.delays) window.clearTimeout(handle);
+      this.delays.clear();
+    });
     try {
       this.settings = migrateSettings(await this.loadData());
     } catch (error) {
@@ -90,6 +96,7 @@ export default class OsmmPlugin extends Plugin {
       openComposer: (path) => void ui.composer.openComposer(path),
     });
     ui.publish.notifier = notifier;
+    this.register(() => notifier.dispose());
     this.reminders = new ReminderService({
       rows: () => ui.actions.rows(),
       channels: this.channels,
@@ -201,7 +208,16 @@ export default class OsmmPlugin extends Plugin {
         clipboard: new ClipboardService(this.app),
         log: this.log,
         secrets: this.secrets,
-        delay: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+        // Cleared on unload: the retry never runs and the delivery stays `failed` with its "retrying in" note.
+        delay: (ms) =>
+          new Promise((resolve) => {
+            if (this.unloaded) return;
+            const handle = window.setTimeout(() => {
+              this.delays.delete(handle);
+              resolve();
+            }, ms);
+            this.delays.add(handle);
+          }),
         settings: () => this.settings,
         now: () => Date.now(),
       });

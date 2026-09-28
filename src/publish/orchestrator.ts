@@ -4,13 +4,14 @@ import type { ContentLoader } from "../composer/content";
 import type { SocialIndex } from "../index/socialIndex";
 import { MINUTE } from "../model/dates";
 import { PLATFORM_META, type Platform } from "../model/platforms";
-import { transition } from "../model/stateMachine";
+import { deliveryTime, transition } from "../model/stateMachine";
 import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { classifyError, PublishError, statusOf, UnknownOutcomeError, type ErrorKind } from "../platforms/errors";
 import { platformDef, type AdapterRegistry } from "../platforms/registry";
 import { postItems } from "../platforms/text";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, RemoteState } from "../platforms/types";
+import { GRACE_MS } from "../scheduler/due";
 import { effectiveDelivery } from "./eligibility";
 import type { AttemptLog } from "./log";
 import { Semaphore } from "./semaphore";
@@ -46,6 +47,13 @@ export interface OrchestratorDeps {
   onFailure(info: FailureInfo): void;
   /** Deliveries of one platform that may run at once (default 1). */
   concurrency?: number;
+  /**
+   * How late a delivery may still go out (spec §5.2: the grace period, or the auto-post late window).
+   * A Retry-After that would land past it fails the delivery instead of waiting. Default: GRACE_MS.
+   */
+  lateWindowMs?(): number;
+  /** For the delivery's due time (stagger included). Default 0. */
+  defaultStaggerMinutes?(): number;
 }
 
 /** A first claim may start from these; a retry only from the `failed` the orchestrator wrote itself. */
@@ -67,6 +75,8 @@ interface Prepared {
   media: MediaInfo[];
   secret: string | null;
   redact(text: string): string;
+  /** Final review Minor 6: no retry may be scheduled past this time. */
+  deadline: number;
 }
 
 /**
@@ -94,7 +104,13 @@ export class PublishOrchestrator {
     const content = await this.deps.content.load(v);
     const def = platformDef(v.platform);
     const secretId = channel.secretId;
+    const start = this.deps.now();
+    const window = this.deps.lateWindowMs?.() ?? GRACE_MS;
+    const due = deliveryTime(v, channelId, this.deps.defaultStaggerMinutes?.() ?? 0);
+    // A scheduled run counts its lateness from the due time; a Post now (early, or of an overdue post) from now.
+    const deadline = (due !== undefined && due <= start && start - due <= window ? due : start) + window;
     const job: Prepared = {
+      deadline,
       path,
       file: v.file,
       channelId,
@@ -166,16 +182,22 @@ export class PublishOrchestrator {
       const err = outcomeUnknown ? new UnknownOutcomeError(e instanceof Error ? e.message : String(e)) : classifyError(e);
       const message = p.redact(err.message);
       if (err.kind === "unknown") return this.checkNeeded(p, job, message);
-      const retry = err.kind === "transient" && attempt <= BACKOFF_MS.length;
+      // Spec §5.2 (no silent late posting): a Retry-After landing past the late window fails instead of waiting.
+      const tooLate = err.retryAfterMs !== undefined && this.deps.now() + err.retryAfterMs > p.deadline;
+      const retry = err.kind === "transient" && attempt <= BACKOFF_MS.length && !tooLate;
       const wait = retry ? Math.max(BACKOFF_MS[attempt - 1]!, err.retryAfterMs ?? 0) : 0;
-      const stored = retry ? `${message} (retrying in ${Math.round(wait / MINUTE)} min)` : message;
+      const stored = retry
+        ? `${message} (retrying in ${Math.round(wait / MINUTE)} min)`
+        : tooLate && err.kind === "transient"
+          ? `${message} (the platform asked to wait ${Math.max(1, Math.round(err.retryAfterMs! / MINUTE))} min, past the posting window; not retried)`
+          : message;
       const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "failed", { error: stored }));
       void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: retry && settled === true ? "retry" : "failed", error: message });
       // The state changed while the request was out (check_needed from a reconcile, a user decision): never retry over it.
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       if (retry) return { done: false, wait };
-      this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: err.kind, error: message });
-      return { done: true, result: { status: "failed", kind: err.kind, error: message } };
+      this.deps.onFailure({ path: p.path, channelId: p.channelId, kind: err.kind, error: stored });
+      return { done: true, result: { status: "failed", kind: err.kind, error: stored } };
     }
   }
 

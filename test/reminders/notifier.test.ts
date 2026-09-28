@@ -154,3 +154,25 @@ describe("Notifier timers", () => {
     }
   });
 });
+
+describe("Notifier on unload (final review Minor 7)", () => {
+  it("clears snooze timers, hides its notices, closes system notifications and ignores later clicks", () => {
+    browser.focused = false;
+    const cleared: unknown[] = [];
+    const { notifier, opened } = build({ setTimer: () => 42, clearTimer: (h) => void cleared.push(h) });
+    notifier.reminder(item);
+    const notice = Notice.last!;
+    const button = [...notice.noticeEl.querySelectorAll("button")].find((b) => b.textContent === "Open & post")!;
+    const system = browser.notifications.at(-1)!;
+    [...notice.noticeEl.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Snooze"))!.click();
+    notifier.reminder({ ...item, key: "other" });
+    const second = Notice.last!;
+    notifier.dispose();
+    expect(cleared).toEqual([42]);
+    expect(second.hidden).toBe(true);
+    expect(browser.notifications.every((n) => n.closed)).toBe(true);
+    button.click();
+    system.click();
+    expect(opened).toEqual([]);
+  });
+});

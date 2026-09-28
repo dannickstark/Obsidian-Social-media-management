@@ -13,7 +13,9 @@ export interface NotifierDeps {
   openAssisted(path: string, channelIds: string[]): void;
   openComposer(path: string): void;
   snoozeMs?: number;
-  setTimer?(fn: () => void, ms: number): void;
+  /** Returns a handle that `clearTimer` accepts (window timers by default). */
+  setTimer?(fn: () => void, ms: number): unknown;
+  clearTimer?(handle: unknown): void;
 }
 
 interface NoticeAction {
@@ -25,7 +27,24 @@ const SNOOZE_MS = 10 * 60_000;
 
 /** Desktop reminders (spec §4.4): an in-app notice with actions, plus a system notification when Obsidian is in the background. */
 export class Notifier implements DeliveryNotifier {
+  private unloaded = false;
+  private readonly timers = new Set<unknown>();
+  private readonly notices = new Set<Notice>();
+  private readonly systems = new Set<Notification>();
+
   constructor(private readonly deps: NotifierDeps) {}
+
+  /** Plugin unload: cancel snoozes, hide persistent notices, close system notifications; later clicks do nothing. */
+  dispose(): void {
+    this.unloaded = true;
+    const clear = this.deps.clearTimer ?? ((h: unknown) => window.clearTimeout(h as number));
+    for (const h of this.timers) clear(h);
+    this.timers.clear();
+    for (const n of this.notices) n.hide();
+    this.notices.clear();
+    for (const n of this.systems) n.close();
+    this.systems.clear();
+  }
 
   reminder(item: ReminderItem): void {
     if (!this.deps.enabled()) return;
@@ -55,12 +74,17 @@ export class Notifier implements DeliveryNotifier {
   }
 
   private snooze(item: ReminderItem, ms: number): void {
-    const set = this.deps.setTimer ?? ((fn: () => void, t: number) => void setTimeout(fn, t));
-    set(() => this.showReminder(item), ms);
+    if (this.unloaded) return;
+    const set = this.deps.setTimer ?? ((fn: () => void, t: number) => window.setTimeout(fn, t));
+    const handle = set(() => {
+      this.timers.delete(handle);
+      this.showReminder(item);
+    }, ms);
+    this.timers.add(handle);
   }
 
   private show(title: string, body: string, actions: NoticeAction[]): void {
-    if (!this.deps.enabled()) return;
+    if (this.unloaded || !this.deps.enabled()) return;
     const fragment = document.createDocumentFragment();
     const text = document.createElement("div");
     text.textContent = `${title} · ${body}`;
@@ -72,20 +96,29 @@ export class Notifier implements DeliveryNotifier {
     });
     fragment.append(text, ...buttons);
     const notice = new Notice(fragment, 0);
+    this.notices.add(notice);
+    const hide = () => {
+      notice.hide();
+      this.notices.delete(notice);
+    };
     buttons.forEach((button, i) =>
       button.addEventListener("click", () => {
+        if (this.unloaded) return;
         actions[i]!.run();
-        notice.hide();
+        hide();
       }),
     );
     if (typeof Notification === "undefined" || document.hasFocus()) return;
     if (Notification.permission === "granted") {
       const system = new Notification(title, { body });
+      this.systems.add(system);
       system.onclick = () => {
+        if (this.unloaded) return;
         window.focus();
         actions[0]?.run();
-        notice.hide();
+        hide();
         system.close();
+        this.systems.delete(system);
       };
     } else if (Notification.permission === "default") {
       void Notification.requestPermission();

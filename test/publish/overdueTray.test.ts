@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { getFrontMatterInfo } from "obsidian";
 import { MarkdownView, Modal, Notice, WorkspaceLeaf } from "../fakes/obsidian";
 import ActionsBar from "../../src/composer/ActionsBar.svelte";
+import { overdueRows } from "../../src/index/queries";
 import { VIEW_SIDEBAR } from "../../src/ui/actions";
 import { osmmContext } from "../../src/ui/context";
 import CampaignTable from "../../src/views/CampaignTable.svelte";
@@ -132,11 +133,33 @@ describe("Needs attention", () => {
 
   it("offers Check again for a check-needed delivery (check_needed recovery ruling)", async () => {
     const c = await makeCtx({ seed: true, notes: [checkNote] });
+    c.adapters.register({ platform: "telegram", lookup: async () => null });
     const spy = vi.spyOn(c.ctx.publish, "resolveCheck").mockResolvedValue();
     render(Sidebar, { context: osmmContext(c.ctx) });
     const section = screen.getByRole("region", { name: "Needs attention · 2" });
     await fireEvent.click(within(section).getByRole("button", { name: /^Check .* again$/ }));
     expect(spy).toHaveBeenCalledWith(CHECK, "tg/event-x");
+  });
+
+  it("hides Check again when no adapter can look the post up (final review Minor 8)", async () => {
+    const c = await makeCtx({ seed: true, notes: [checkNote] });
+    c.adapters.register({ platform: "telegram", publish: async () => ({ remoteId: "1", url: "https://t.me/x/1" }) });
+    render(Sidebar, { context: osmmContext(c.ctx) });
+    const section = screen.getByRole("region", { name: "Needs attention · 2" });
+    expect(within(section).queryByRole("button", { name: /^Check .* again$/ })).toBeNull();
+    expect(within(section).getByRole("button", { name: / didn't go out$/ })).toBeTruthy();
+  });
+
+  it("logs a check-needed delivery resolved as not published (final review Minor 9)", async () => {
+    const c = await makeCtx({ seed: true, notes: [checkNote] });
+    expect(await c.ctx.publish.resolveNotPublished(CHECK, "tg/event-x")).toBe(true);
+    expect(c.log.entries.at(-1)).toMatchObject({ path: CHECK, channelId: "tg/event-x", result: "failed", error: "Not published (checked by you)." });
+  });
+
+  it("leaves unreadable delivery entries out of the Overdue tray (final review Minor 10)", async () => {
+    const c = await makeCtx({ notes: [{ ...overdueNote, frontmatter: { ...overdueNote.frontmatter, deliveries: { "ma/you": { status: "Overdue!" } } } }] });
+    expect(c.index.getVariant(MASTODON)!.invalidDeliveries).toEqual(["ma/you"]);
+    expect(overdueRows(c.ctx.actions.rows(), Date.UTC(2026, 9, 8, 8))).toEqual([]);
   });
 
   it("resolves a check-needed delivery either way", async () => {

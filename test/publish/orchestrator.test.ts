@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
 import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
@@ -32,7 +32,7 @@ async function fm(c: TestCtx, path = P): Promise<Record<string, unknown>> {
 
 async function setup(
   publish: NonNullable<PlatformAdapter["publish"]>,
-  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"] } = {},
+  opts: { notes?: ReturnType<typeof note>[]; onDelay?: (c: TestCtx) => Promise<void>; lookup?: PlatformAdapter["lookup"]; lateWindowMs?: number } = {},
 ) {
   const c = await makeCtx({ seed: true, notes: opts.notes ?? [note()] });
   await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("tg/event-x")!, secretId: "osmm-channel-tg-event-x" });
@@ -55,6 +55,7 @@ async function setup(
       await opts.onDelay?.(c);
     },
     onFailure: (f) => failures.push(f),
+    ...(opts.lateWindowMs !== undefined ? { lateWindowMs: () => opts.lateWindowMs! } : {}),
   });
   return { c, orchestrator, delays, failures };
 }
@@ -103,12 +104,30 @@ describe("PublishOrchestrator", () => {
 
   it("waits for Retry-After when it is longer than the back-off", async () => {
     let calls = 0;
-    const { orchestrator, delays } = await setup(async () => {
-      if (++calls === 1) throw http(429, { "Retry-After": "600" });
-      return { remoteId: "7", url: "https://t.me/eventx/7" };
-    });
+    const { orchestrator, delays } = await setup(
+      async () => {
+        if (++calls === 1) throw http(429, { "Retry-After": "600" });
+        return { remoteId: "7", url: "https://t.me/eventx/7" };
+      },
+      { lateWindowMs: 30 * MIN },
+    );
     await orchestrator.run(P, "tg/event-x");
     expect(delays).toEqual([10 * MIN]);
+  });
+
+  it("fails instead of waiting when Retry-After lands past the late window (final review Minor 6)", async () => {
+    let calls = 0;
+    const { c, orchestrator, delays, failures } = await setup(async () => {
+      calls++;
+      throw http(429, { "Retry-After": "600" });
+    });
+    const result = await orchestrator.run(P, "tg/event-x");
+    expect(result).toMatchObject({ status: "failed", kind: "transient" });
+    expect(result.status === "failed" && result.error).toContain("past the posting window");
+    expect(calls).toBe(1);
+    expect(delays).toEqual([]);
+    expect(failures).toHaveLength(1);
+    expect(((await fm(c)).deliveries as Record<string, { status: string; error?: string }>)["tg/event-x"]).toMatchObject({ status: "failed" });
   });
 
   // Ruling P4: a network error/timeout during adapter.publish is "outcome unknown" (the request may
@@ -312,5 +331,18 @@ describe("PublishActions.runApi", () => {
     c.adapters.register({ platform: "telegram", publish: async () => ({ remoteId: "9", url: "https://t.me/eventx/9" }) });
     expect(await c.ctx.publish.runApi(P, "tg/event-x")).toMatchObject({ status: "published" });
     expect(Notice.messages.at(-1)).toBe("Published to Event X channel.");
+  });
+});
+
+describe("PublishActions API runs that reject (final review Minor 5)", () => {
+  it("reports a rejected run from Post now and from the scheduler with a Notice", async () => {
+    const c = await makeCtx({ seed: true, notes: [note()] });
+    c.adapters.register({ platform: "telegram", publish: async () => ({ remoteId: "9", url: "https://t.me/eventx/9" }) });
+    vi.spyOn(c.ctx.publish.orchestrator, "run").mockRejectedValue(new Error("disk full"));
+    await c.ctx.publish.postNow(P, ["tg/event-x"]);
+    await vi.waitFor(() => expect(Notice.messages.at(-1)).toBe("Event X channel: disk full"));
+    Notice.messages.length = 0;
+    await c.ctx.publish.dispatch({ key: "k", path: P, channelId: "tg/event-x", at: TEST_NOW, late: 0 });
+    await vi.waitFor(() => expect(Notice.messages.at(-1)).toBe("Event X channel: disk full"));
   });
 });

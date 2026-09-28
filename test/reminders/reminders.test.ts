@@ -30,6 +30,12 @@ describe("dueReminders", () => {
     expect(dueReminders(rows, now, previous, (r) => r.variant.reminders ?? null).map((i) => i.minutes)).toEqual(minutes);
   });
 
+  it("never reminds about an unreadable delivery entry (final review Minor 10)", async () => {
+    const c = await makeCtx({ notes: [note({ deliveries: { "bs/you": { status: "Scheduled!" } } })] });
+    expect(c.index.getVariant(P)!.invalidDeliveries).toEqual(["bs/you"]);
+    expect(dueReminders(c.ctx.actions.rows(), AT - 60 * MIN, AT - 61 * MIN, () => [60])).toEqual([]);
+  });
+
   it("keys each reminder by row, due time and offset", async () => {
     const c = await makeCtx({ notes: [note()] });
     expect(dueReminders(c.ctx.actions.rows(), AT - 60 * MIN, AT - 61 * MIN, () => [60])[0]).toEqual({
