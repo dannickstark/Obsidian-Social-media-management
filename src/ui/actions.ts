@@ -272,7 +272,7 @@ export class PlannerActions {
     if (at instanceof MouseEvent) {
       // A keyboard-triggered click (Enter/Space) fires a MouseEvent with detail 0; anchor to the
       // button's rect instead of showing the menu at (0,0).
-      if (at.detail === 0) menu.showAtPosition(rectAnchor(at.currentTarget as HTMLElement));
+      if (at.detail === 0 && at.currentTarget instanceof HTMLElement) menu.showAtPosition(rectAnchor(at.currentTarget));
       else menu.showAtMouseEvent(at);
     } else {
       menu.showAtPosition(at);
