@@ -315,6 +315,7 @@ export class FileManager {
 export class WorkspaceLeaf {
   view: ItemView | null = null;
   viewType: string | null = null;
+  file: TFile | null = null;
   constructor(public app: App) {}
   async setViewState(state: { type: string; active?: boolean; state?: unknown }): Promise<void> {
     if (!this.view || this.viewType !== state.type) {
@@ -325,6 +326,10 @@ export class WorkspaceLeaf {
       if (this.view) await this.view.onOpen();
     }
     if (this.view && state.state !== undefined) await this.view.setState(state.state, { history: false });
+    if (!this.app.workspace.leaves.includes(this)) this.app.workspace.leaves.push(this);
+  }
+  async openFile(file: TFile): Promise<void> {
+    this.file = file;
     if (!this.app.workspace.leaves.includes(this)) this.app.workspace.leaves.push(this);
   }
   async detach(): Promise<void> {

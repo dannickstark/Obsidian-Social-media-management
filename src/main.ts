@@ -4,6 +4,7 @@ import "./styles/index.css";
 import { ChannelRegistry } from "./channels/registry";
 import { registerCommands } from "./commands";
 import { ComposerActions } from "./composer/actions";
+import { ComposerView } from "./composer/ComposerView";
 import { indexStore } from "./index/stores";
 import { SocialIndex } from "./index/socialIndex";
 import { NoteFactory } from "./model/factory";
@@ -15,7 +16,7 @@ import { Secrets } from "./secrets/secrets";
 import { loadDeviceSettings, type DeviceSettings } from "./settings/device";
 import { migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
-import { PlannerActions, VIEW_PLANNER, VIEW_PREVIEW_GRID, VIEW_SIDEBAR } from "./ui/actions";
+import { PlannerActions, VIEW_COMPOSER, VIEW_PLANNER, VIEW_PREVIEW_GRID, VIEW_SIDEBAR } from "./ui/actions";
 import { clock, type OsmmContext } from "./ui/context";
 import { SvelteRenderChild } from "./ui/SvelteView";
 import { PlannerView } from "./views/PlannerView";
@@ -72,6 +73,7 @@ export default class OsmmPlugin extends Plugin {
     this.registerHoverLinkSource(VIEW_PLANNER, { display: "Social planner", defaultMod: true });
     this.registerView(VIEW_SIDEBAR, (leaf) => new SidebarView(leaf, this.uiContext()));
     this.registerView(VIEW_PREVIEW_GRID, (leaf) => new PreviewGridView(leaf, this.uiContext()));
+    this.registerView(VIEW_COMPOSER, (leaf) => new ComposerView(leaf, this.uiContext()));
 
     registerCommands(this);
 

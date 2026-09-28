@@ -42,7 +42,10 @@
           <td>{r.when !== undefined ? `${formatShortDate(r.when)} ${formatTime(r.when)}` : "—"}</td>
           <td class="osmm-progress">{r.chars}</td>
           <td><span class="osmm-pill-status">{STATUS[r.status] ?? r.status}</span></td>
-          <td><button type="button" onclick={() => actions.openNote(r.variant.path)}>Open</button></td>
+          <td>
+            <button type="button" onclick={() => actions.openNote(r.variant.path)}>Open</button>
+            <button type="button" aria-label={`Compose ${PLATFORM_META[r.variant.platform].label} variant`} onclick={() => void composer.openComposer(r.variant.path)}>Compose</button>
+          </td>
         </tr>
       {/each}
       {#each table.missing as p (p)}

@@ -23,3 +23,18 @@
 .osmm-issue-list .is-error { color: var(--text-error); }
 .osmm-issue-list .is-warning { color: var(--text-warning); }
 .osmm-empty { padding: 16px; color: var(--text-muted); }
+
+.osmm-composer { display: flex; flex-direction: column; height: 100%; container-type: inline-size; }
+.osmm-composer-empty { padding: 24px; color: var(--text-muted); }
+.osmm-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--osmm-border); overflow-x: auto; }
+.osmm-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 6px; background: transparent; box-shadow: none; color: var(--text-muted); white-space: nowrap; }
+.osmm-tabs [role="tab"][aria-selected="true"] { background: var(--osmm-hover); color: var(--text-normal); }
+.osmm-composer-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; padding: 12px; overflow: auto; }
+@container (min-width: 720px) {
+  .osmm-composer-main { grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); }
+}
+.osmm-composer-preview { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.osmm-phone { align-self: center; width: 100%; max-width: 400px; padding: 12px; border: 1px solid var(--osmm-border); border-radius: 28px; background: var(--background-secondary); box-sizing: border-box; }
+.osmm-phone[data-width="desktop"] { max-width: 600px; border-radius: 12px; }
+.osmm-composer-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.osmm-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--osmm-border); border-radius: 10px; }

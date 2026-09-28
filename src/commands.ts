@@ -29,4 +29,9 @@ export function registerCommands(plugin: OsmmPlugin): void {
     name: "Preview all variants of this campaign",
     checkCallback: (checking) => plugin.uiContext().composer.previewActiveCampaign(checking),
   });
+  plugin.addCommand({
+    id: "open-composer",
+    name: "Open composer for this post",
+    checkCallback: (checking) => plugin.uiContext().composer.composeActiveNote(checking),
+  });
 }

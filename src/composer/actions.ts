@@ -1,4 +1,4 @@
-import { Notice, type App } from "obsidian";
+import { Notice, type App, type WorkspaceLeaf } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
@@ -11,8 +11,9 @@ import { blocking, counters, validateAll, type Counter } from "../platforms/chec
 import { platformDef, type AdapterRegistry } from "../platforms/registry";
 import { previewModel, type PreviewModel } from "../previews/model";
 import type { OsmmSettings } from "../settings/settings";
-import { VIEW_PREVIEW_GRID, type PlannerActions } from "../ui/actions";
+import { VIEW_COMPOSER, VIEW_PREVIEW_GRID, type PlannerActions } from "../ui/actions";
 import { ContentLoader, type LoadedContent } from "./content";
+import { composerSession, type ComposerSession } from "./session";
 
 export interface ComposerDeps {
   app: App;
@@ -110,6 +111,38 @@ export class ComposerActions {
     const campaign = file ? this.deps.index.getCampaign(file.path) : undefined;
     if (!campaign) return false;
     if (!checking) void this.openPreviewGrid(campaign.path);
+    return true;
+  }
+
+  session(): ComposerSession {
+    return composerSession(this.deps.app, this.deps.index);
+  }
+
+  /** Opens the note in the editor and the composer in a split next to it (reusing an open composer). */
+  async openComposer(path: string): Promise<void> {
+    const { workspace, vault } = this.deps.app;
+    const file = vault.getFileByPath(path);
+    if (!file) {
+      new Notice("That note no longer exists.");
+      return;
+    }
+    const existing = workspace.getLeavesOfType(VIEW_COMPOSER)[0];
+    const known = (existing?.view as unknown as { editorLeaf?: WorkspaceLeaf | null } | undefined)?.editorLeaf;
+    let editor = known ?? workspace.getLeaf(false);
+    if (editor === existing) editor = workspace.getLeaf("tab");
+    await editor.openFile(file);
+    const leaf = existing ?? workspace.getLeaf("split", "vertical");
+    await leaf.setViewState({ type: VIEW_COMPOSER, active: true, state: { path } });
+    const view = leaf.view as unknown as { editorLeaf?: WorkspaceLeaf | null } | null;
+    if (view && "editorLeaf" in view) view.editorLeaf = editor;
+    await workspace.revealLeaf(leaf);
+  }
+
+  /** Command check callback: available when the active note is an indexed social post. */
+  composeActiveNote(checking: boolean): boolean {
+    const file = this.deps.app.workspace.getActiveFile();
+    if (!file || !this.deps.index.getVariant(file.path)) return false;
+    if (!checking) void this.openComposer(file.path);
     return true;
   }
 }

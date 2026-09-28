@@ -77,6 +77,7 @@
         {#if card.model}<Preview model={card.model} />{:else}<p class="osmm-progress">Loading…</p>{/if}
         <footer class="osmm-row">
           <button type="button" onclick={() => actions.openNote(card.v.path)}>Open note</button>
+          <button type="button" onclick={() => void composer.openComposer(card.v.path)}>Compose</button>
           {#each composer.cardActions as action (action.label)}<button type="button" onclick={() => action.run(card.v)}>{action.label}</button>{/each}
         </footer>
       </section>
