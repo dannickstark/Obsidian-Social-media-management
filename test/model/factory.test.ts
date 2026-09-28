@@ -101,6 +101,64 @@ describe("NoteFactory", () => {
     expect(await fmOf(app, file)).toMatchObject({ channels: ["li/me"], deliveries: { "li/me": { status: "published" } }, status: "published" });
   });
 
+  it("pins the times of scheduled channels whose position changes (cross-task b)", async () => {
+    const { app, factory } = setup();
+    const file = await writeNote(
+      app,
+      "Social/Posts/Pages.md",
+      {
+        type: "social-post", platform: "linkedin", channels: ["li/a", "li/b", "li/c", "li/d"], stagger_minutes: 30, status: "scheduled",
+        scheduled_at: "2026-10-09T10:00:00+02:00",
+        deliveries: { "li/a": { status: "scheduled" }, "li/b": { status: "scheduled" }, "li/c": { status: "scheduled" }, "li/d": { status: "published", at: "2026-10-09T11:30:00+02:00" } },
+      },
+      "Body\n",
+    );
+    const fork = await factory.forkVariant(file, "li/b", "B");
+    expect((await fmOf(app, fork)).deliveries).toEqual({ "li/b": { status: "scheduled", at: "2026-10-09T10:30:00+02:00" } });
+    expect((await fmOf(app, file)).deliveries).toEqual({
+      "li/a": { status: "scheduled" },
+      "li/c": { status: "scheduled", at: "2026-10-09T11:00:00+02:00" },
+      "li/d": { status: "published", at: "2026-10-09T11:30:00+02:00" },
+    });
+  });
+
+  it("pins times with the plugin's default stagger, also for channels without records (cross-task b)", async () => {
+    const app = createApp();
+    const writer = new SafeWriter(app);
+    const factory = new NoteFactory(app, writer, { rootFolder: () => "Social", defaultStaggerMinutes: () => 15 });
+    const file = await writeNote(app, "Social/Posts/Pages.md", {
+      type: "social-post", platform: "linkedin", channels: ["li/a", "li/b", "li/c"], status: "scheduled", scheduled_at: "2026-10-09T10:00:00+02:00",
+    });
+    const fork = await factory.forkVariant(file, "li/b", "B");
+    expect((await fmOf(app, fork)).deliveries).toEqual({ "li/b": { status: "scheduled", at: "2026-10-09T10:15:00+02:00" } });
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/c": { status: "scheduled", at: "2026-10-09T10:30:00+02:00" } });
+  });
+
+  it("never writes over an unreadable entry when pinning times", async () => {
+    const { app, factory } = setup();
+    const file = await writeNote(app, "Social/Posts/Pages.md", {
+      type: "social-post", platform: "linkedin", channels: ["li/a", "li/b", "li/c"], stagger_minutes: 30, status: "scheduled",
+      scheduled_at: "2026-10-09T10:00:00+02:00",
+      deliveries: { "li/a": { status: "scheduled" }, "li/b": { status: "scheduled" }, "li/c": { status: "publishd" } },
+    });
+    await factory.forkVariant(file, "li/a", "A");
+    expect((await fmOf(app, file)).deliveries).toEqual({ "li/b": { status: "scheduled", at: "2026-10-09T10:30:00+02:00" }, "li/c": { status: "publishd" } });
+  });
+
+  it("restores pinned times when the fork fails", async () => {
+    const { app, factory } = setup();
+    const file = await writeNote(app, "Social/Posts/Pages.md", {
+      type: "social-post", platform: "linkedin", channels: ["li/a", "li/b", "li/c"], stagger_minutes: 30, status: "scheduled",
+      scheduled_at: "2026-10-09T10:00:00+02:00",
+      deliveries: { "li/a": { status: "scheduled" }, "li/b": { status: "scheduled" }, "li/c": { status: "scheduled" } },
+    });
+    const before = await fmOf(app, file);
+    const createSpy = vi.spyOn(app.vault, "create").mockRejectedValueOnce(new Error("disk full"));
+    await expect(factory.forkVariant(file, "li/b", "B")).rejects.toThrow("disk full");
+    createSpy.mockRestore();
+    expect(await fmOf(app, file)).toEqual(before);
+  });
+
   it("does not lose a queued write when forking (final review F5.2)", async () => {
     const { app, factory, writer } = setup();
     const file = await writeNote(app, "Social/Posts/Launch.md", {

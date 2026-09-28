@@ -157,6 +157,31 @@ describe("fork_variant and validate", () => {
     expect(c.index.getVariant(LI)!.channels).toEqual(["li/me", "li/acme-studio"]);
   });
 
+  it("keeps the times of scheduled channels in the fork and in the original (cross-task b)", async () => {
+    const path = "Social/Posts/Pages.md";
+    const c = await mcpCtx({
+      notes: [
+        {
+          path,
+          frontmatter: {
+            type: "social-post", platform: "linkedin", title: "Pages", channels: ["li/acme-studio", "li/maker-lab", "li/osmm"], stagger_minutes: 30, status: "scheduled",
+            scheduled_at: "2026-10-09T10:00:00+02:00",
+            deliveries: { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled" }, "li/osmm": { status: "scheduled" } },
+          },
+          body: "Hello makers\n",
+        },
+      ],
+    });
+    const r = await c.call("fork_variant", { path, channel: "li/maker-lab" });
+    expect(r.ok).toBe(true);
+    expect(c.index.getVariant(r.path)!.deliveries["li/maker-lab"]).toEqual({ status: "scheduled", at: Date.parse("2026-10-09T10:30:00+02:00") });
+    const orig = (await c.call("get_post", { path })).channels.map((ch: R) => [ch.id, ch.at]);
+    expect(orig).toEqual([
+      ["li/acme-studio", "2026-10-09T10:00:00+02:00"],
+      ["li/osmm", "2026-10-09T11:00:00+02:00"],
+    ]);
+  });
+
   it("validates a note or a draft without writing", async () => {
     const c = await mcpCtx();
     expect(await c.call("validate", { path: "Social/Event X/Event X – X.md" })).toMatchObject({ ok: true, blocking: false });
@@ -358,6 +383,63 @@ describe("fix round 1", () => {
     expect(v.deliveries["li/acme-studio"]).toEqual({ status: "scheduled" });
     const due = dueItems(c.index.variants(), at + 60 * MINUTE, 15).filter((d) => d.path === path);
     expect(due.map((d) => d.channelId)).toEqual(["li/acme-studio"]);
+  });
+
+  it("keeps each scheduled channel's time when the stagger changes (cross-task a)", async () => {
+    const now = Date.parse("2026-10-08T10:09:00+02:00");
+    const path = "Social/Posts/Staggered.md";
+    const c = await mcpCtx({
+      now,
+      notes: [
+        {
+          path,
+          frontmatter: {
+            type: "social-post", platform: "linkedin", title: "Staggered", channels: ["li/acme-studio", "li/maker-lab"], stagger_minutes: 60, status: "scheduled",
+            scheduled_at: "2026-10-08T10:10:00+02:00",
+            deliveries: { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled" } },
+          },
+          body: "Hello makers\n",
+        },
+      ],
+    });
+    const r = await c.call("update_variant", { path, stagger_minutes: 0 });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    const v = c.index.getVariant(path)!;
+    expect(v.staggerMinutes).toBe(0);
+    expect(v.deliveries["li/maker-lab"]).toEqual({ status: "scheduled", at: Date.parse("2026-10-08T11:10:00+02:00") });
+    const times = (await c.call("get_post", { path })).channels.map((ch: R) => [ch.id, ch.at]);
+    expect(times).toEqual([
+      ["li/acme-studio", "2026-10-08T10:10:00+02:00"],
+      ["li/maker-lab", "2026-10-08T11:10:00+02:00"],
+    ]);
+    const due = dueItems(c.index.variants(), now + 30 * MINUTE, 15).filter((d) => d.path === path);
+    expect(due.map((d) => d.channelId)).toEqual(["li/acme-studio"]);
+  });
+
+  it("keeps the remaining channels' times when a channel is removed", async () => {
+    const path = "Social/Posts/Staggered.md";
+    const c = await mcpCtx({
+      notes: [
+        {
+          path,
+          frontmatter: {
+            type: "social-post", platform: "linkedin", title: "Staggered", channels: ["li/acme-studio", "li/maker-lab"], stagger_minutes: 60, status: "scheduled",
+            scheduled_at: "2026-10-09T10:10:00+02:00",
+            deliveries: { "li/acme-studio": { status: "scheduled" }, "li/maker-lab": { status: "scheduled" } },
+          },
+          body: "Hello makers\n",
+        },
+      ],
+    });
+    expect((await c.call("update_variant", { path, channels: ["li/maker-lab"] })).ok).toBe(true);
+    expect(c.index.getVariant(path)!.deliveries).toEqual({ "li/maker-lab": { status: "scheduled", at: Date.parse("2026-10-09T11:10:00+02:00") } });
+  });
+
+  it("changes no stored time when the stagger changes on an unscheduled post", async () => {
+    const c = await mcpCtx();
+    const path = "Social/Event X/Event X – LinkedIn recap.md";
+    expect((await c.call("update_variant", { path, stagger_minutes: 5 })).ok).toBe(true);
+    expect(c.index.getVariant(path)!.deliveries).toEqual({});
   });
 
   it("refuses a body write when the user edited the note after it was read (I3)", async () => {

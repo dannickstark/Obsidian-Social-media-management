@@ -2,7 +2,7 @@ import { getFrontMatterInfo, normalizePath, stringifyYaml, type App, type TFile 
 import { formatDateTime } from "./dates";
 import { isRecord, parseVariant, serializeDelivery } from "./frontmatter";
 import { PLATFORM_META, type Platform } from "./platforms";
-import { rollupStatus } from "./stateMachine";
+import { pinScheduledTimes, rollupStatus } from "./stateMachine";
 import type { SafeWriter } from "./writer";
 
 const ILLEGAL_RE = /[\\/:*?"<>|#^[\]]/g;
@@ -30,6 +30,8 @@ function parentPath(path: string): string {
 
 export interface FactoryOptions {
   rootFolder(): string;
+  /** The plugin's stagger, for posts without their own (fork keeps every scheduled time). Default 0. */
+  defaultStaggerMinutes?(): number;
 }
 
 export class NoteFactory {
@@ -87,6 +89,8 @@ export class NoteFactory {
   async forkVariant(file: TFile, channelId: string, channelName: string): Promise<TFile> {
     // Snapshot and remove the channel in ONE queued write, so writes queued before the fork are
     // included in the snapshot and none can land between reading and rewriting the original.
+    const stagger = this.opts.defaultStaggerMinutes?.() ?? 0;
+    let pinned: string[] = [];
     const { snapshot, variant } = await this.writer.run(file, (orig) => {
       const current = parseVariant(orig, file.path).value;
       if (!current) throw new Error(`${file.path} is not a valid social post`);
@@ -102,19 +106,24 @@ export class NoteFactory {
       if (current.channels.length < 2) throw new Error("Cannot fork the only channel of a post");
       const copy = structuredClone(orig);
       const channels = current.channels.filter((c) => c !== channelId);
-      const deliveries = { ...current.deliveries };
+      // Scheduled channels that move up keep their time (M4 Task 6 cross-task ruling).
+      const pins = pinScheduledTimes(current, { channels }, stagger);
+      pinned = Object.keys(pins);
+      const deliveries = { ...current.deliveries, ...pins };
       delete deliveries[channelId];
       orig.channels = channels;
-      // Only drop the forked channel's entry; other raw entries stay verbatim.
+      // Only drop the forked channel's entry and write the pinned ones; other raw entries stay verbatim.
       const raw = isRecord(orig.deliveries) ? { ...orig.deliveries } : {};
       delete raw[channelId];
+      for (const [id, d] of Object.entries(pins)) raw[id] = serializeDelivery(d);
       if (Object.keys(raw).length > 0) orig.deliveries = raw;
       else delete orig.deliveries;
       orig.status = rollupStatus({ ...current, channels, deliveries });
       return { snapshot: copy, variant: current };
     });
 
-    const delivery = variant.deliveries[channelId];
+    // The forked channel becomes the first (and only) one: it keeps its time too.
+    const delivery = pinScheduledTimes(variant, { channels: [channelId] }, stagger)[channelId] ?? variant.deliveries[channelId];
     const forkFm: Record<string, unknown> = { ...snapshot, channels: [channelId] };
     if (delivery) forkFm.deliveries = { [channelId]: serializeDelivery(delivery) };
     else delete forkFm.deliveries;
@@ -144,6 +153,16 @@ export class NoteFactory {
           const raw = isRecord(orig.deliveries) ? { ...orig.deliveries } : {};
           raw[channelId] = rawDeliveries[channelId];
           orig.deliveries = raw;
+        }
+        if (pinned.length && isRecord(orig.deliveries)) {
+          // Undo the pinned times: back to the entries (or their absence) before the fork.
+          const raw = { ...orig.deliveries };
+          for (const id of pinned) {
+            if (rawDeliveries && id in rawDeliveries) raw[id] = rawDeliveries[id];
+            else delete raw[id];
+          }
+          if (Object.keys(raw).length > 0) orig.deliveries = raw;
+          else delete orig.deliveries;
         }
         const restored = parseVariant(orig, file.path).value;
         if (restored) orig.status = rollupStatus(restored);

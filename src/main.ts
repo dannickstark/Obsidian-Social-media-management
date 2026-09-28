@@ -119,6 +119,7 @@ export default class OsmmPlugin extends Plugin {
     this.writer = new SafeWriter(this.app);
     this.factory = new NoteFactory(this.app, this.writer, {
       rootFolder: () => this.settings.rootFolder,
+      defaultStaggerMinutes: () => this.settings.defaultStaggerMinutes,
     });
     this.channels = new ChannelRegistry({
       read: () => this.settings,

@@ -6,6 +6,7 @@ import { channelRowStatus, type RowStatus } from "../../index/queries";
 import { parseVariant, type VariantPatch } from "../../model/frontmatter";
 import { PLATFORM_META, PLATFORMS, type Platform } from "../../model/platforms";
 import { POST_MODES, zMinutesList } from "../../model/schemas";
+import { pinScheduledTimes } from "../../model/stateMachine";
 import type { Channel, Delivery, Issue, Variant, WordPressFields } from "../../model/types";
 import { blocking } from "../../platforms/checks";
 import { bodyHash, claudeNotice, findPost, noPost, sameBody, normalizePathArg, untilIndexed, zChannelsArg, zHttpUrl, zKey, zPath, zWhen } from "../common";
@@ -300,13 +301,21 @@ export function registerWriteTools(registry: ToolRegistry, deps: McpToolDeps): v
           // WordPress fields merge into the fresh ones in the same write, so they are part of the undo record.
           const wordpress = a.wordpress ? wordpressChanges(fresh.wordpress, a.wordpress) : undefined;
           const all = wordpress ? { ...fields, wordpress } : fields;
-          if (!resolved) return { fields: all };
+          const stagger = deps.settings().defaultStaggerMinutes;
+          // A stagger (or channel order) change never moves a scheduled channel's time: only schedule does (P5).
+          const pinFor = (channels?: string[]) =>
+            pinScheduledTimes(fresh, { ...(channels ? { channels } : {}), ...(fields.staggerMinutes !== undefined ? { staggerMinutes: fields.staggerMinutes } : {}) }, stagger);
+          if (!resolved) {
+            const pins = pinFor();
+            return { fields: all, ...(Object.keys(pins).length ? { deliveries: pins } : {}) };
+          }
           const plan = planSetChannels(fresh, resolved, nameOf);
           if ("refuse" in plan) return plan;
           // I1: an added channel starts as a draft, never inheriting "scheduled"; schedule plans it (with its lead time).
           added = (plan.fields?.channels ?? []).filter((id) => !fresh.channels.includes(id) && !fresh.invalidDeliveries?.includes(id));
           const deliveries: Record<string, Delivery | null> = { ...plan.deliveries };
           for (const id of added) deliveries[id] = { status: "draft" };
+          for (const [id, d] of Object.entries(pinFor(plan.fields?.channels))) if (!(id in deliveries)) deliveries[id] = d;
           return { fields: { ...all, ...plan.fields }, ...(Object.keys(deliveries).length ? { deliveries } : {}) };
         });
         if (!result.ok) return fail(result.reason, issues);

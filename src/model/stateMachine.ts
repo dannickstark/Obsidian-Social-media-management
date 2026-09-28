@@ -86,3 +86,33 @@ export function deliveryTime(
   const index = Math.max(0, v.channels.indexOf(channelId));
   return v.scheduledAt + index * (v.staggerMinutes ?? defaultStagger) * MINUTE;
 }
+
+/**
+ * Times never move without an explicit schedule call (M4 Task 6 cross-task ruling). For each channel
+ * listed both before and in `next` that is scheduled, has no own time and whose effective time would
+ * change (its position or the stagger changes), its delivery with the current time pinned. Unreadable
+ * entries are never written.
+ */
+export function pinScheduledTimes(
+  before: Pick<Variant, "status" | "scheduledAt" | "channels" | "staggerMinutes" | "deliveries" | "invalidDeliveries">,
+  next: Partial<Pick<Variant, "channels" | "staggerMinutes">>,
+  defaultStagger: number,
+): Record<string, Delivery> {
+  const after = { ...before, ...next };
+  const hasRecords = before.channels.some((id) => before.deliveries[id] !== undefined);
+  const out: Record<string, Delivery> = {};
+  for (const id of after.channels) {
+    if (!before.channels.includes(id) || before.invalidDeliveries?.includes(id)) continue;
+    const d = before.deliveries[id];
+    if (d?.at !== undefined) continue;
+    const scheduled = d
+      ? d.status === "scheduled"
+      : hasRecords
+        ? inheritedStatus(before) === "scheduled"
+        : before.status === "scheduled" || before.status === "partial";
+    if (!scheduled) continue;
+    const was = deliveryTime(before, id, defaultStagger);
+    if (was !== undefined && was !== deliveryTime(after, id, defaultStagger)) out[id] = { ...(d ?? { status: "scheduled" }), at: was };
+  }
+  return out;
+}

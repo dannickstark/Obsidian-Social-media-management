@@ -55,7 +55,7 @@ export async function makeCtx(
     write: async (next) => settings.update((s) => ({ ...s, ...next })),
   });
   const writer = new SafeWriter(app as never);
-  const factory = new NoteFactory(app as never, writer, { rootFolder: () => get(settings).rootFolder });
+  const factory = new NoteFactory(app as never, writer, { rootFolder: () => get(settings).rootFolder, defaultStaggerMinutes: () => get(settings).defaultStaggerMinutes });
   const index = new SocialIndex(app as never, 0);
   await index.build();
   index.start();
