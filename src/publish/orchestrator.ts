@@ -171,7 +171,18 @@ export class PublishOrchestrator {
     try {
       const res = await p.publish(job);
       const at = this.deps.now();
-      const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "published", { url: res.url, remoteId: res.remoteId, at }));
+      // Ruling (concern 1): the platform confirmed the post, so a check_needed set meanwhile is resolved to
+      // published too; leaving it would invite a manual re-post. Failures and unknown outcomes still refuse.
+      const settled = await this.settle(
+        p.file,
+        p.channelId,
+        (d) => {
+          const next = transition(d, "published", { url: res.url, remoteId: res.remoteId, at });
+          delete next.error;
+          return next;
+        },
+        FROM_PUBLISHING_OR_CHECK_NEEDED,
+      );
       void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: res.url });
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
       return { done: true, result: { status: "published", url: res.url } };
@@ -253,7 +264,7 @@ export class PublishOrchestrator {
 
   /**
    * Writes the next state only while the delivery is still where the orchestrator left it: `publishing`
-   * (only the lookup-resolved write may start from `check_needed`). True when written; otherwise the status
+   * (only a confirmed success — the adapter's response or the lookup — may start from `check_needed`). True when written; otherwise the status
    * found instead, and nothing is written.
    */
   private async settle(
@@ -275,6 +286,8 @@ export class PublishOrchestrator {
 
 const FROM_PUBLISHING: ReadonlySet<DeliveryStatus> = new Set(["publishing"]);
 const FROM_CHECK_NEEDED: ReadonlySet<DeliveryStatus> = new Set(["check_needed"]);
+/** A confirmed success (the adapter returned) may also resolve a check_needed set while the request was out. */
+const FROM_PUBLISHING_OR_CHECK_NEEDED: ReadonlySet<DeliveryStatus> = new Set(["publishing", "check_needed"]);
 
 /** Final review Important 4: a settle refused because the state changed underneath; never retried. */
 function changedUnderneath(settled: { found: DeliveryStatus | undefined }): RunResult {

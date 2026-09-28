@@ -276,6 +276,18 @@ describe("PublishOrchestrator", () => {
     expect(((await fm(c)).deliveries as Record<string, { status: string }>)["tg/event-x"]?.status).toBe("check_needed");
   });
 
+  it("settles a confirmed success as published even when the delivery moved to check_needed meanwhile (ruling on concern 1)", async () => {
+    const { c, orchestrator, delays, failures } = await setup(async () => {
+      await c.writer.transitionDelivery(c.app.vault.getFileByPath(P)! as never, "tg/event-x", "check_needed", { error: "Obsidian closed" });
+      return { remoteId: "42", url: "https://t.me/eventx/42" };
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "published", url: "https://t.me/eventx/42" });
+    expect(delays).toEqual([]);
+    expect(failures).toEqual([]);
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "published");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({ status: "published", at: TEST_NOW, url: "https://t.me/eventx/42", remoteId: "42", attempts: 1 });
+  });
+
   it("does not overwrite a check_needed set meanwhile with an unknown-outcome error either", async () => {
     let calls = 0;
     const { c, orchestrator, delays } = await setup(async () => {
