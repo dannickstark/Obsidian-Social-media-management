@@ -4,6 +4,7 @@
   import { PLATFORM_META } from "../model/platforms";
   import { sortRows, type SortKey } from "../planner/list";
   import { STATUS_LABEL } from "../planner/status";
+  import { icon } from "../ui/icon";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
@@ -67,11 +68,16 @@
           <button type="button" onclick={() => sortBy(key)}>{label}</button>
         </th>
       {/each}
+      <th><span class="sr-only">Actions</span></th>
     </tr>
   </thead>
   <tbody>
     {#each sorted as r (r.key)}
-      <tr>
+      <tr
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          actions.rowMenu(r, e);
+        }}>
         <td><input type="checkbox" aria-label={`Select ${r.variant.displayTitle}`} checked={selected.has(r.key)} onchange={() => toggle(r.key)} /></td>
         <td>{r.at !== undefined ? `${formatShortDate(r.at)} ${formatTime(r.at)}` : "—"}</td>
         <td><span class="osmm-row"><PlatformBadge platform={r.variant.platform} />{PLATFORM_META[r.variant.platform].label}</span></td>
@@ -79,6 +85,9 @@
         <td><button type="button" class="osmm-link" onclick={() => actions.openNote(r.variant.path)}>{r.variant.displayTitle}</button></td>
         <td>{r.variant.campaignPath ? (titles.get(r.variant.campaignPath) ?? "") : "Standalone"}</td>
         <td><span class="osmm-pill-status">{STATUS_LABEL[r.status]}</span></td>
+        <td>
+          <button type="button" class="clickable-icon" aria-label={`Actions for ${r.variant.displayTitle}`} onclick={(e) => actions.rowMenu(r, e)}><span use:icon={"more-horizontal"}></span></button>
+        </td>
       </tr>
     {/each}
   </tbody>

@@ -1,6 +1,6 @@
 import { Menu, Notice, type App, type TFile } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
-import { expandRows, type PostRow } from "../index/queries";
+import { expandRows, type PostRow, type RowStatus } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { addLocalDays, DAY, HOUR } from "../model/dates";
 import type { NoteFactory } from "../model/factory";
@@ -8,6 +8,8 @@ import { PLATFORM_META, PLATFORMS, type Platform } from "../model/platforms";
 import type { Variant } from "../model/types";
 import type { SafeWriter, VariantPlan } from "../model/writer";
 import {
+  BOARD_COLUMNS,
+  columnOf,
   defaultScheduleTime,
   planBoardMove,
   scheduleDeliveries,
@@ -36,6 +38,11 @@ export const ROW_MIME = "text/x-osmm-row";
 export const UNDO_CONFLICT = "Some changes were kept because the note changed since.";
 
 export type WriteResult = { ok: true; record: WriteRecord } | { ok: false; reason: string };
+
+const COLUMN_TITLE: Readonly<Record<BoardColumn, string>> = { idea: "Idea", draft: "Draft", ready: "Ready", scheduled: "Scheduled", published: "Published" };
+/** Rows that can still be posted, rescheduled or skipped from a menu. */
+const POSTABLE = new Set<RowStatus>(["draft", "ready", "scheduled", "overdue", "failed", "awaiting_you"]);
+const NOT_MOVABLE = new Set<RowStatus>(["published", "publishing", "skipped"]);
 
 /** The snapshot variant with the fresh frontmatter values laid over it (keeps file, campaignPath, …). */
 function freshIndexed(v: IndexedVariant, fresh: Variant): IndexedVariant {
@@ -106,6 +113,11 @@ export class PlannerActions {
   /** Overridable in tests. */
   confirm(message: string, cta?: string): Promise<boolean> {
     return confirmDialog(this.deps.app, message, cta);
+  }
+
+  /** Overridable in tests. */
+  pickTime(title: string, initial: number): Promise<number | null> {
+    return pickDateTime(this.deps.app, title, initial);
   }
 
   /** A notice with one action button (Undo, Open, …); clicking it runs the action and hides the notice. */
@@ -209,11 +221,57 @@ export class PlannerActions {
     menu.addItem((i) => i.setTitle("Tomorrow, same time").onClick(() => void this.reschedule(row, { at: Math.max(addLocalDays(base, 1), now + HOUR) })));
     menu.addItem((i) =>
       i.setTitle("Pick a date…").onClick(async () => {
-        const at = await pickDateTime(this.deps.app, "Reschedule", Math.max(base, now + DAY));
+        const at = await this.pickTime("Reschedule", Math.max(base, now + DAY));
         if (at !== null) await this.reschedule(row, { at });
       }),
     );
     menu.showAtMouseEvent(event);
+  }
+
+  rowFor(v: IndexedVariant): PostRow | undefined {
+    return this.rows().find((r) => r.variant.path === v.path);
+  }
+
+  /** The menu equivalent of every drag-and-drop action (#113), with the same guards, notices and undo. */
+  rowMenu(row: PostRow, at: MouseEvent | { x: number; y: number }): Menu {
+    const v = row.variant;
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle("Open note").setIcon("file-text").onClick(() => this.openNote(v.path)));
+    menu.addItem((i) => i.setTitle("Compose").setIcon("pencil-line").onClick(() => void this.context?.composer.openComposer(v.path)));
+    if (row.channelId && POSTABLE.has(row.status)) {
+      const channelId = row.channelId;
+      menu.addItem((i) => i.setTitle("Post now").setIcon("send").onClick(() => void this.context?.publish.postNow(v.path, [channelId])));
+    }
+    menu.addSeparator();
+    if (!NOT_MOVABLE.has(row.status)) {
+      menu.addItem((i) =>
+        i
+          .setTitle("Reschedule…")
+          .setIcon("calendar-clock")
+          .onClick(async () => {
+            const now = this.deps.now();
+            const at = await this.pickTime("Reschedule", Math.max(row.at ?? now, now + HOUR));
+            if (at !== null) await this.reschedule(row, { at });
+          }),
+      );
+    }
+    const current = columnOf(v.status);
+    for (const col of BOARD_COLUMNS) {
+      if (col === current || !planBoardMove(v, col).ok) continue;
+      menu.addItem((i) => i.setTitle(`Move to ${COLUMN_TITLE[col]}`).onClick(() => void this.moveOnBoard(v, col)));
+    }
+    if (row.channelId && POSTABLE.has(row.status)) menu.addItem((i) => i.setTitle("Skip").setIcon("skip-forward").onClick(() => void this.skip(row)));
+    if (at instanceof MouseEvent) menu.showAtMouseEvent(at);
+    else menu.showAtPosition(at);
+    return menu;
+  }
+
+  /** The Menu key or Shift+F10 opens the row menu under the focused element. */
+  keyMenu(event: KeyboardEvent, row: PostRow): void {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.rowMenu(row, { x: rect.left, y: rect.bottom });
   }
 
   dragStart(event: DragEvent, row: PostRow): void {
@@ -282,7 +340,7 @@ export class PlannerActions {
     if (move.kind === "setStatus") return this.setStatus(v, move.status);
     if (move.kind === "unschedule") return this.unschedule(v, move.status);
     const channel = this.deps.channels.get(v.channels[0] ?? "");
-    const at = await pickDateTime(this.deps.app, "Schedule post", defaultScheduleTime(this.deps.now(), v, channel?.defaultTime));
+    const at = await this.pickTime("Schedule post", defaultScheduleTime(this.deps.now(), v, channel?.defaultTime));
     if (at !== null) await this.schedule(v, at);
   }
 

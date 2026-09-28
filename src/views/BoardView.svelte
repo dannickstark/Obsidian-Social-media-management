@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { IndexedVariant } from "../index/socialIndex";
   import { BOARD_COLUMNS, columnOf, type BoardColumn } from "../planner/board";
+  import { longpress } from "../ui/longpress";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
   import { formatShortDate, formatTime } from "../ui/format";
@@ -26,6 +27,11 @@
     const v = variants.find((x) => x.path === path);
     if (v) void actions.moveOnBoard(v, col);
   }
+
+  function menuFor(v: IndexedVariant, at: MouseEvent | { x: number; y: number }): void {
+    const row = actions.rowFor(v);
+    if (row) actions.rowMenu(row, at);
+  }
 </script>
 
 <div class="osmm-board">
@@ -49,7 +55,16 @@
           class:is-late={late}
           draggable="true"
           ondragstart={(e) => e.dataTransfer?.setData(MIME, v.path)}
-          onclick={() => actions.openNote(v.path)}>
+          onclick={() => actions.openNote(v.path)}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            menuFor(v, e);
+          }}
+          onkeydown={(e) => {
+            const row = actions.rowFor(v);
+            if (row) actions.keyMenu(e, row);
+          }}
+          use:longpress={(p) => menuFor(v, p)}>
           <span class="osmm-row"><PlatformBadge platform={v.platform} size="md" /><strong class="osmm-row-title">{v.displayTitle}</strong></span>
           {#if v.excerpt && v.excerpt !== v.displayTitle}<span>{v.excerpt}</span>{/if}
           <span class="osmm-card-meta">
