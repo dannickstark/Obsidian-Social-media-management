@@ -1,12 +1,12 @@
 import { getFrontMatterInfo, parseYaml } from "obsidian";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requestUrlMock } from "../../fakes/obsidian";
 import type { Channel, Variant } from "../../../src/model/types";
 import { TelegramAdapter } from "../../../src/platforms/telegram/api";
 import type { DeliveryJob } from "../../../src/platforms/types";
 import { img } from "../fixtures";
 import { contractDeps, CONTRACT_NOW, expectDigestReads, trackedJob } from "../contract/harness";
-import { call, formParts, hang, json, queue, sentJson, type Fixture } from "../http";
+import { call, formParts, hang, json, queue, sentJson, text, type Fixture } from "../http";
 import { telegramCase } from "./contract";
 import { TG, TG_TOKEN } from "./fixtures";
 import { makeCtx } from "../../ui/ctx";
@@ -74,9 +74,32 @@ describe("TelegramAdapter.publish", () => {
     const res = await adapter().publish(job({ text: "x".repeat(1500), media: [img("cover.png")] }));
     expect(res).toMatchObject({ remoteId: "43", url: "https://t.me/eventx/43" });
     expect(res.note).toBe(
-      "The photo was posted, but the text after it may not have been: Telegram: the server answered with an error (HTTP 502) while posting, so it is not known whether it went out.",
+      "The photo was posted. The text after it may have been posted; check on Telegram: Telegram: the server answered with an error (HTTP 502) while posting, so it is not known whether it went out.",
     );
     expect(requestUrlMock.calls).toHaveLength(2);
+  });
+
+  it("says the text after the photo may be out when its 200 can't be read (fix round 1)", async () => {
+    queue(json(200, TG.sendPhoto), json(200, { ok: true, result: { message_id: 99 } }));
+    const res = await adapter().publish(job({ text: "x".repeat(1500), media: [img("cover.png")] }));
+    expect(res).toEqual({
+      remoteId: "43",
+      url: "https://t.me/eventx/43",
+      note: "The photo was posted. The text after it may have been posted; check on Telegram: Telegram: the answer could not be read, so it is not known whether the post went out.",
+    });
+  });
+
+  it("says the photos were posted when the text after an album fails (fix round 1)", async () => {
+    queue(json(200, TG.sendMediaGroup), json(400, TG.tooLong));
+    const res = await adapter().publish(job({ text: "x".repeat(1500), media: [img("a.png"), img("b.png"), img("c.png")] }));
+    expect(res).toEqual({ remoteId: "44", url: "https://t.me/eventx/44", note: "The photos were posted, but the text after them was not: Telegram: Bad Request: message is too long (HTTP 400)" });
+    expect(JSON.parse(formParts(0).media!.value!)[0]).toEqual({ type: "photo", media: "attach://photo0" });
+  });
+
+  it("keeps markers in the post's url as they are (fix round 1)", async () => {
+    queue(json(200, TG.sendMessage));
+    await adapter().publish(job({ text: "**Doors** open" }, { url: "https://event.example/a__b__c?q=*x*" }));
+    expect(sentJson(0).text).toBe("<b>Doors</b> open\n\nhttps://event.example/a__b__c?q=*x*");
   });
 
   it("sends an album with the caption on the first photo", async () => {
@@ -144,10 +167,18 @@ describe("the bot token never reaches a message (M5 G4)", () => {
     await adapter()
       .findChats(TG_TOKEN)
       .catch((e: Error) => messages.push(e.message));
-    expect(requestUrlMock.calls).toHaveLength(4);
-    expect(messages).toHaveLength(4);
-    expect(messages[3]).toBe("Telegram: Unauthorized for https://api.telegram.org/bot[token] (HTTP 401)");
-    for (const m of messages) for (const s of secretParts) expect(m).not.toContain(s);
+    queue(json(401, { ok: false, error_code: 401, description: `bad token ${secretParts[1]}` }));
+    await adapter()
+      .publish(job())
+      .catch((e: Error) => messages.push(e.message));
+    queue(json(400, { ok: false, error_code: 400, description: `bad ${encodeURIComponent(TG_TOKEN)}` }));
+    await adapter()
+      .publish(job())
+      .catch((e: Error) => messages.push(e.message));
+    expect(requestUrlMock.calls).toHaveLength(6);
+    expect(messages).toHaveLength(6);
+    expect(messages.slice(3)).toEqual(["Telegram: Unauthorized for https://api.telegram.org/bot[token] (HTTP 401)", "Telegram: bad token [token] (HTTP 401)", "Telegram: bad [token] (HTTP 400)"]);
+    for (const m of messages) for (const s of [...secretParts, encodeURIComponent(TG_TOKEN)]) expect(m).not.toContain(s);
   });
 });
 
@@ -162,18 +193,33 @@ describe("TelegramAdapter.verify and findChats", () => {
     expect(await adapter().verify(job().channel, TG_TOKEN)).toEqual({ ok: false, error: "Telegram: Unauthorized (HTTP 401)" });
   });
 
-  it("lists the channels the bot has seen, newest first, without duplicates", async () => {
+  it("lists the channels the bot has seen, newest first, without duplicates or private chats", async () => {
     queue(json(200, TG.getUpdates));
     expect(await adapter().findChats(TG_TOKEN)).toEqual([
       { id: "-1001234567890", title: "Event X", username: "eventx" },
       { id: "-1009876543210", title: "Private news" },
     ]);
-    expect(sentJson(0)).toEqual({ allowed_updates: ["channel_post", "my_chat_member"], limit: 100 });
+    // No allowed_updates: that would change the bot's stored setting for other programs; the filter is local.
+    expect(sentJson(0)).toEqual({ limit: 100 });
   });
 
-  it("explains a webhook conflict", async () => {
+  it("explains a conflict: a webhook, or another program reading the bot's updates", async () => {
     queue(json(409, TG.webhookConflict));
-    await expect(adapter().findChats(TG_TOKEN)).rejects.toThrow("This bot has a webhook, so Telegram won't list its chats here. Enter the chat id by hand (@name or -100…).");
+    await expect(adapter().findChats(TG_TOKEN)).rejects.toThrow(
+      "Telegram won't list this bot's chats here: it has a webhook, or another program is reading its updates. Enter the chat id by hand (@name or -100…).",
+    );
+  });
+
+  it("names Telegram when the connection fails, without a cause, and refuses an answer it can't read (fix round 1)", async () => {
+    queue((req) => new Error(`net ${req.url}`));
+    const e = (await adapter()
+      .findChats(TG_TOKEN)
+      .catch((x: unknown) => x)) as Error;
+    expect(e.message).toBe("Telegram: the connection failed or no answer came in time.");
+    expect(e.cause).toBeUndefined();
+    queue(json(200, { ok: true }), text(200, "<html>busy</html>"));
+    await expect(adapter().findChats(TG_TOKEN)).rejects.toThrow("Telegram: the answer could not be read.");
+    await expect(adapter().findChats(TG_TOKEN)).rejects.toThrow("Telegram: the answer could not be read.");
   });
 });
 
@@ -187,11 +233,12 @@ async function telegramCtx() {
   await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("tg/event-x")!, handle: "@eventx", secretId: "osmm-channel-tg-event-x" });
   c.app.secretStorage.setSecret("osmm-channel-tg-event-x", TG_TOKEN);
   c.adapters.register(new TelegramAdapter(contractDeps()));
-  const status = async () => {
-    const fm = parseYaml(getFrontMatterInfo(await c.app.vault.read(c.app.vault.getFileByPath(P)!)).frontmatter) as { deliveries: Record<string, { status: string }> };
-    return fm.deliveries["tg/event-x"]!.status;
+  const delivery = async () => {
+    const fm = parseYaml(getFrontMatterInfo(await c.app.vault.read(c.app.vault.getFileByPath(P)!)).frontmatter) as { deliveries: Record<string, { status: string; error?: string }> };
+    return fm.deliveries["tg/event-x"]!;
   };
-  return { P, c, status };
+  const status = async () => (await delivery()).status;
+  return { P, c, status, delivery };
 }
 
 describe("an interrupted Telegram post (review focus 1)", () => {
@@ -212,5 +259,15 @@ describe("an interrupted Telegram post (review focus 1)", () => {
     await c.ctx.publish.orchestrator.run(P, "tg/event-x");
     expect(requestUrlMock.calls).toHaveLength(1);
     expect(await status()).toBe("check_needed");
+  });
+
+  it("a photo that went out with its text refused is published, with the note kept (fix round 1)", async () => {
+    const { P, c, status, delivery } = await telegramCtx();
+    vi.spyOn(c.ctx.composer.content, "load").mockResolvedValue({ body: "x".repeat(1500), media: [img("cover.png")] });
+    queue(json(200, TG.sendPhoto), json(400, TG.tooLong));
+    expect(await c.ctx.publish.orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "published", url: "https://t.me/eventx/43" });
+    expect(requestUrlMock.calls).toHaveLength(2);
+    expect(await status()).toBe("published");
+    expect((await delivery()).error).toBe("The photo was posted, but the text after it was not: Telegram: Bad Request: message is too long (HTTP 400)");
   });
 });

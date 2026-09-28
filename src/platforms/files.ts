@@ -18,20 +18,20 @@ export function fileName(m: Pick<MediaInfo, "path" | "target">): string {
 }
 
 /**
- * A thread stopped after its first part(s): the post is out, the rest is not (or may not be). A PublishError keeps its
- * kind; an HTTP error is classified by its status; anything else (no status) is an unknown outcome (M2b T6).
+ * How a later part of a post that is already out failed: a PublishError keeps its kind, an HTTP error is classified by
+ * its status, and anything else (no status) is an unknown outcome (M2b T6).
  */
-export function partialNote(index: number, total: number, e: unknown): string {
-  let kind: ErrorKind;
-  let message: string;
+export function partialOutcome(e: unknown): { kind: ErrorKind; message: string } {
   if (e instanceof PublishError || statusOf(e) !== undefined) {
     const err = classifyError(e);
-    kind = err.kind;
-    message = err.message;
-  } else {
-    kind = "unknown";
-    message = e instanceof Error ? e.message : String(e);
+    return { kind: err.kind, message: err.message };
   }
+  return { kind: "unknown", message: e instanceof Error ? e.message : String(e) };
+}
+
+/** A thread stopped after its first part(s): the post is out, the rest is not (or may not be). */
+export function partialNote(index: number, total: number, e: unknown): string {
+  const { kind, message } = partialOutcome(e);
   if (kind === "unknown") return `Part ${index + 1} of ${total} may have been posted; check on the platform. Nothing after it was posted: ${message}`;
   return `Part ${index + 1} of ${total} was not posted, nor any after it: ${message}`;
 }
