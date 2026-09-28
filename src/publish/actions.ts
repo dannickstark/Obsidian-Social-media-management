@@ -131,10 +131,13 @@ export class PublishActions {
    * Ruling P3: before copying or opening, flush an open editor for `path` to disk and re-validate the
    * exact text about to be sent. Refuses (Notice with the blocking issues) instead of copying/opening.
    */
-  private async freshTarget(path: string, channelId: string, current: AssistedTarget): Promise<AssistedTarget | null> {
+  private async freshTarget(path: string, channelId: string): Promise<AssistedTarget | null> {
     const v = this.deps.index.getVariant(path);
     const channel = this.deps.channels.get(channelId);
-    if (!v || !channel) return current;
+    if (!v || !channel) {
+      new Notice("That note or channel is no longer available.");
+      return null;
+    }
     const editor = this.openEditorFor(path);
     if (editor) await editor.save();
     const content = await this.deps.composer.content.load(v);
@@ -146,16 +149,20 @@ export class PublishActions {
     return this.target(v, channel, content);
   }
 
-  /** Step 2: copy the first clipboard item, open the pre-filled page and mark the delivery as waiting for the user. */
-  async openTarget(path: string, channelId: string, target: AssistedTarget): Promise<CopyResult | null> {
-    const fresh = await this.freshTarget(path, channelId, target);
+  /**
+   * Step 2: copy the first clipboard item, open the pre-filled page and mark the delivery as waiting for the
+   * user. Returns what was actually copied (the fresh item, after the P3 flush/re-validate), not the caller's
+   * possibly-stale guess — null when nothing was copied (refused, or no clipboard item to copy).
+   */
+  async openTarget(path: string, channelId: string): Promise<{ result: CopyResult; label: string } | null> {
+    const fresh = await this.freshTarget(path, channelId);
     if (!fresh) return null;
     const first = fresh.clipboard[0];
-    const copied = first ? await this.copyItem(first) : null;
+    const result = first ? await this.copyItem(first) : null;
     const url = isMobile() && fresh.mobileUrl ? fresh.mobileUrl : fresh.url;
     if (url) window.open(url);
     await this.startAssisted(path, channelId);
-    return copied;
+    return first && result ? { result, label: first.label } : null;
   }
 
   /** The 3-step assisted flow (artboard 6) over the channels still to post, in stagger order. */

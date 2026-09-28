@@ -139,3 +139,19 @@ describe("Copy & open (P3: composer editor flush)", () => {
     expect(browser.opened).toEqual([]);
   });
 });
+
+describe("openTarget", () => {
+  it("refuses to copy or open when the variant was removed from the index before the Open click", async () => {
+    const c = await makeCtx({ seed: true });
+    await c.app.vault.delete(c.app.vault.getFileByPath(BS)!);
+    await indexed(c.index, () => c.index.getVariant(BS) === undefined);
+
+    const before = Notice.messages.length;
+    const result = await c.ctx.publish.openTarget(BS, "bs/you");
+    expect(result).toBeNull();
+    expect(Notice.messages.length).toBeGreaterThan(before);
+    expect(browser.clipboard).toEqual([]);
+    expect(browser.opened).toEqual([]);
+    expect(c.log.entries.some((e) => e.channelId === "bs/you" && e.result === "awaiting_you")).toBe(false);
+  });
+});

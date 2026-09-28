@@ -48,10 +48,9 @@
   }
 
   async function open(): Promise<void> {
-    if (!target || !channelId) return;
-    const result = await publish.openTarget(path, channelId, target);
-    const first = target.clipboard[0];
-    if (first && result && result !== "failed") copied = [first.label];
+    if (!channelId) return;
+    const copiedItem = await publish.openTarget(path, channelId);
+    if (copiedItem && copiedItem.result !== "failed") copied = [copiedItem.label];
   }
 
   async function copy(item: ClipItem): Promise<void> {
