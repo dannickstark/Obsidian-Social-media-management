@@ -38,3 +38,7 @@
 .osmm-phone[data-width="desktop"] { max-width: 600px; border-radius: 12px; }
 .osmm-composer-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .osmm-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--osmm-border); border-radius: 10px; }
+
+.osmm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.osmm-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.osmm-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }

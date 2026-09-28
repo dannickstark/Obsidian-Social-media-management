@@ -6,6 +6,7 @@
   import Preview from "../previews/Preview.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
+  import PostAs from "./PostAs.svelte";
   import type { ComposerSession } from "./session";
 
   let { session, openVariant }: { session: ComposerSession; openVariant: (path: string) => void } = $props();
@@ -86,6 +87,7 @@
       </section>
       <aside class="osmm-composer-side" aria-label="Composer panels">
         <p class="osmm-progress">{PLATFORM_META[variant.platform].label} · {VARIANT_STATUS_LABEL[variant.status]}</p>
+        <PostAs {variant} />
       </aside>
     </div>
   </div>

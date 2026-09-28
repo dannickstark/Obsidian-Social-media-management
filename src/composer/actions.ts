@@ -2,9 +2,10 @@ import { Notice, type App, type WorkspaceLeaf } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
-import type { Channel, Issue, Variant } from "../model/types";
+import type { Channel, ChannelGroup, Issue, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { MediaInspector } from "../media/mediaInfo";
+import { planSelectGroup, planToggleChannel } from "./channels";
 import { scheduleDeliveries } from "../planner/board";
 import { deliveryChanges, type WriteRecord } from "../planner/changes";
 import { blocking, counters, validateAll, type Counter } from "../platforms/checks";
@@ -144,5 +145,26 @@ export class ComposerActions {
     if (!file || !this.deps.index.getVariant(file.path)) return false;
     if (!checking) void this.openComposer(file.path);
     return true;
+  }
+
+  async toggleChannel(v: IndexedVariant, channel: Channel, on: boolean): Promise<boolean> {
+    const result = await this.deps.planner.write(v.file, (fresh) => planToggleChannel(fresh, channel, on));
+    this.deps.planner.afterWrite(result, on ? `Added ${channel.name}.` : `Removed ${channel.name}.`);
+    return result.ok;
+  }
+
+  async selectGroup(v: IndexedVariant, group: ChannelGroup): Promise<void> {
+    const members = group.channelIds.map((id) => this.deps.channels.get(id)).filter((c): c is Channel => c !== undefined);
+    const result = await this.deps.planner.write(v.file, (fresh) => planSelectGroup(fresh, members));
+    this.deps.planner.afterWrite(result, `Added the channels of ${group.name}.`);
+  }
+
+  async setStagger(v: IndexedVariant, minutes: number): Promise<void> {
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+      new Notice("Use a whole number of minutes between 0 and 1440.");
+      return;
+    }
+    const result = await this.deps.planner.write(v.file, () => ({ fields: { staggerMinutes: minutes } }));
+    this.deps.planner.afterWrite(result, `Channels are now ${minutes} min apart.`);
   }
 }
