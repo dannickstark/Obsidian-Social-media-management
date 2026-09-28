@@ -30,10 +30,11 @@ describe("row menu", () => {
     expect(titles()).toEqual(["Open note", "Compose", "Post now", "Reschedule…", "Move to Idea", "Move to Draft", "Move to Ready", "Skip"]);
   });
 
-  it("offers only safe actions for a published channel", async () => {
+  it("offers only safe actions for a published channel, with no trailing separator", async () => {
     const { ctx } = await makeCtx({ seed: true });
     ctx.actions.rowMenu(ctx.actions.rowByKey("Social/Event X/Event X – LinkedIn.md#li/me")!, { x: 0, y: 0 });
     expect(titles()).toEqual(["Open note", "Compose"]);
+    expect(Menu.last!.separators).toBe(0);
   });
 
   it("moves to a column with the same guards and undo as a drag", async () => {
@@ -109,5 +110,14 @@ describe("opening the menu without a mouse", () => {
     render(ListView, { props: { rows: [ctx.actions.rowByKey(`${BS}#bs/you`)!] }, context: osmmContext(ctx) });
     await fireEvent.click(screen.getByRole("button", { name: "Actions for Event X is back on the 12th — one evening, 80 makers." }));
     expect(titles()).toContain("Post now");
+  });
+
+  it("anchors a keyboard-activated Actions button to the button's rect, not (0,0)", async () => {
+    const { ctx } = await makeCtx({ seed: true });
+    render(ListView, { props: { rows: [ctx.actions.rowByKey(`${BS}#bs/you`)!] }, context: osmmContext(ctx) });
+    const button = screen.getByRole("button", { name: "Actions for Event X is back on the 12th — one evening, 80 makers." });
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ left: 40, bottom: 80, top: 0, right: 0, width: 0, height: 0, x: 40, y: 80, toJSON: () => undefined } as DOMRect);
+    await fireEvent.click(button, { detail: 0 });
+    expect(Menu.last!.pos).toEqual({ x: 40, y: 80 });
   });
 });

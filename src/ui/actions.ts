@@ -49,6 +49,12 @@ function freshIndexed(v: IndexedVariant, fresh: Variant): IndexedVariant {
   return { ...v, ...fresh };
 }
 
+/** Anchors a menu under an element's rect (keyboard activation, or a click with no mouse movement, opens under the button, not at 0,0). */
+function rectAnchor(el: HTMLElement): { x: number; y: number } {
+  const rect = el.getBoundingClientRect();
+  return { x: rect.left, y: rect.bottom };
+}
+
 export interface ActionDeps {
   app: App;
   writer: SafeWriter;
@@ -242,8 +248,12 @@ export class PlannerActions {
       const channelId = row.channelId;
       menu.addItem((i) => i.setTitle("Post now").setIcon("send").onClick(() => void this.context?.publish.postNow(v.path, [channelId])));
     }
-    menu.addSeparator();
-    if (!NOT_MOVABLE.has(row.status)) {
+    const current = columnOf(v.status);
+    const movable = BOARD_COLUMNS.filter((col) => col !== current && planBoardMove(v, col).ok);
+    const canReschedule = !NOT_MOVABLE.has(row.status);
+    const canSkip = !!row.channelId && POSTABLE.has(row.status);
+    if (canReschedule || movable.length || canSkip) menu.addSeparator();
+    if (canReschedule) {
       menu.addItem((i) =>
         i
           .setTitle("Reschedule…")
@@ -255,14 +265,18 @@ export class PlannerActions {
           }),
       );
     }
-    const current = columnOf(v.status);
-    for (const col of BOARD_COLUMNS) {
-      if (col === current || !planBoardMove(v, col).ok) continue;
+    for (const col of movable) {
       menu.addItem((i) => i.setTitle(`Move to ${COLUMN_TITLE[col]}`).onClick(() => void this.moveOnBoard(v, col)));
     }
-    if (row.channelId && POSTABLE.has(row.status)) menu.addItem((i) => i.setTitle("Skip").setIcon("skip-forward").onClick(() => void this.skip(row)));
-    if (at instanceof MouseEvent) menu.showAtMouseEvent(at);
-    else menu.showAtPosition(at);
+    if (canSkip) menu.addItem((i) => i.setTitle("Skip").setIcon("skip-forward").onClick(() => void this.skip(row)));
+    if (at instanceof MouseEvent) {
+      // A keyboard-triggered click (Enter/Space) fires a MouseEvent with detail 0; anchor to the
+      // button's rect instead of showing the menu at (0,0).
+      if (at.detail === 0) menu.showAtPosition(rectAnchor(at.currentTarget as HTMLElement));
+      else menu.showAtMouseEvent(at);
+    } else {
+      menu.showAtPosition(at);
+    }
     return menu;
   }
 
@@ -270,8 +284,7 @@ export class PlannerActions {
   keyMenu(event: KeyboardEvent, row: PostRow): void {
     if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
     event.preventDefault();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    this.rowMenu(row, { x: rect.left, y: rect.bottom });
+    this.rowMenu(row, rectAnchor(event.currentTarget as HTMLElement));
   }
 
   dragStart(event: DragEvent, row: PostRow): void {

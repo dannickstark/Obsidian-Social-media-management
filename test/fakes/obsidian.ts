@@ -562,6 +562,9 @@ export class MenuItem {
 export class Menu {
   static last: Menu | null = null;
   items: MenuItem[] = [];
+  /** The position the menu was shown at, when shown via showAtPosition (or a detail-0 click). */
+  pos: { x: number; y: number } | null = null;
+  separators = 0;
   addItem(cb: (item: MenuItem) => unknown): this {
     const item = new MenuItem();
     this.items.push(item);
@@ -569,13 +572,15 @@ export class Menu {
     return this;
   }
   addSeparator(): this {
+    this.separators++;
     return this;
   }
   showAtMouseEvent(_evt: MouseEvent): this {
     Menu.last = this;
     return this;
   }
-  showAtPosition(_pos: { x: number; y: number }): this {
+  showAtPosition(pos: { x: number; y: number }): this {
+    this.pos = pos;
     Menu.last = this;
     return this;
   }
