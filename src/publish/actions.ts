@@ -300,6 +300,9 @@ export class PublishActions {
     const state = await this.orchestrator.lookup(path, channelId);
     const v = this.deps.index.getVariant(path);
     if (!state || !v) return;
+    // Interim guard until the hand-over settle path (M5 Task 13): a post still on the platform's schedule, or
+    // one the platform removed, is not "not found"; the delivery stays check_needed (can't tell).
+    if (!state.published && (state.scheduledAt !== undefined || state.gone)) return;
     const at = this.deps.now();
     const error = "Not found on the platform after an interrupted publish.";
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {

@@ -206,3 +206,19 @@ describe("hand-over baseline (#66)", () => {
     });
   });
 });
+
+describe("hand-over baseline, lenient reading (#66)", () => {
+  const fm = (delivery: Record<string, unknown>) => ({ type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "scheduled", deliveries: { "ma/you": delivery } });
+
+  it("reads a numeric digest as a string", () => {
+    const parsed = parseVariant(fm({ status: "handed_over", remote_id: "1", digest: 12345 }), "Social/P.md");
+    expect(parsed.value!.deliveries["ma/you"]!.digest).toBe("12345");
+  });
+
+  it("reports a malformed remote_at and keeps the entry readable", () => {
+    const parsed = parseVariant(fm({ status: "handed_over", remote_id: "1", remote_at: "next tuesday" }), "Social/P.md");
+    expect(parsed.issues).toContainEqual(expect.objectContaining({ field: "deliveries.ma/you.remote_at" }));
+    expect(parsed.value!.deliveries["ma/you"]).toEqual({ status: "handed_over", remoteId: "1" });
+    expect(parsed.value!.invalidDeliveries ?? []).not.toContain("ma/you");
+  });
+});

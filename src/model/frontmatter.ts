@@ -136,7 +136,9 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     if (typeof value.reason === "string" && value.reason.trim()) d.reason = value.reason.trim();
     const remoteAt = takeDate(value.remote_at, `${field}.remote_at`, issues);
     if (remoteAt !== undefined) d.remoteAt = remoteAt;
-    if (typeof value.digest === "string" && value.digest.trim()) d.digest = value.digest.trim();
+    // YAML reads an all-digit digest as a number; it is still the same digest.
+    const digest = typeof value.digest === "string" || typeof value.digest === "number" ? String(value.digest).trim() : "";
+    if (digest) d.digest = digest;
     if (!channels.includes(id)) {
       issues.push({ level: "warning", field, message: `Delivery for ${id}, which is not in channels` });
     }

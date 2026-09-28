@@ -51,6 +51,8 @@ describe("delivery transitions (spec §5)", () => {
     expect(() => transition({ status: "check_needed" }, "handed_over", { remoteId: "1" })).toThrow(IllegalTransitionError);
     expect(transition({ status: "check_needed", remoteAt: 5 }, "handed_over", { remoteId: "1" })).toEqual({ status: "handed_over", remoteAt: 5, remoteId: "1" });
     expect(transition({ status: "check_needed" }, "handed_over", { remoteAt: 5 }).status).toBe("handed_over");
+    // The guard checks the merged result: a patch that clears remoteAt leaves no baseline.
+    expect(() => transition({ status: "check_needed", remoteAt: 5 }, "handed_over", { remoteAt: undefined })).toThrow(IllegalTransitionError);
   });
 
   it("never leaves published", () => {

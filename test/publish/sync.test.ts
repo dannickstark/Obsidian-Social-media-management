@@ -29,6 +29,7 @@ describe("contentDigest (#66)", () => {
     ["url", { url: "https://example.com/2" }],
     ["media", { media: ["b.png"] }],
     ["mediaMeta (image alt)", { mediaMeta: { ...base.mediaMeta, "a.png": { alt: "Another" } } }],
+    ["mediaMeta (image focus)", { mediaMeta: { ...base.mediaMeta, "a.png": { alt: "A", focus: [0.1, 0.9] } } }],
     ["mediaMeta (featured alt)", { mediaMeta: { ...base.mediaMeta, "cover.png": { alt: "New cover" } } }],
     ["wordpress", { wordpress: { ...base.wordpress!, slug: "hello-2" } }],
   ])("changes when %s changes", (_field, patch) => {

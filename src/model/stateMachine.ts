@@ -40,7 +40,7 @@ export function transition(
   if (!canTransition(d.status, to)) throw new IllegalTransitionError(d.status, to);
   // M5 P11: only a delivery with a hand-over baseline (remoteAt) goes back to handed_over; an interrupted
   // immediate publish that a lookup finds on someone's schedule stays check_needed.
-  if (d.status === "check_needed" && to === "handed_over" && (patch.remoteAt ?? d.remoteAt) === undefined) {
+  if (d.status === "check_needed" && to === "handed_over" && ("remoteAt" in patch ? patch.remoteAt : d.remoteAt) === undefined) {
     throw new IllegalTransitionError(d.status, to);
   }
   return { ...d, ...patch, status: to };

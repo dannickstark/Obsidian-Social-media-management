@@ -73,6 +73,9 @@ describe("migrateSettings", () => {
     const wp = { id: "wp/blog", platform: "wordpress", name: "Blog", kind: "site", avatarColor: "#888888", method: "native" };
     expect(zChannel.safeParse({ ...wp, server: "http://blog.example.com" }).success).toBe(false);
     expect(zChannel.safeParse({ ...wp, server: "https://blog.example.com/wp" }).success).toBe(true);
+    // No userinfo: a credential in the address, or a host that only looks like the real one.
+    expect(zChannel.safeParse({ ...wp, server: "https://u:p@host" }).success).toBe(false);
+    expect(zChannel.safeParse({ ...wp, server: "https://mastodon.social@evil.example" }).success).toBe(false);
   });
 });
 

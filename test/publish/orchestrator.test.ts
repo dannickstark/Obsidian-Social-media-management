@@ -4,10 +4,11 @@ import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
 import { AdapterRegistry } from "../../src/platforms/registry";
 import { TransientError } from "../../src/platforms/errors";
-import type { PlatformAdapter } from "../../src/platforms/types";
+import type { DeliveryJob, PlatformAdapter, RemoteState } from "../../src/platforms/types";
 import { PublishOrchestrator, type FailureInfo } from "../../src/publish/orchestrator";
 import { Secrets } from "../../src/secrets/secrets";
-import { indexed } from "../helpers";
+import { indexed, settle } from "../helpers";
+import { channel, img } from "../platforms/fixtures";
 import { makeCtx, TEST_NOW, type TestCtx } from "../ui/ctx";
 
 const P = "Social/Posts/Tg.md";
@@ -430,5 +431,49 @@ describe("PublishActions API runs that reject (final review Minor 5)", () => {
     Notice.messages.length = 0;
     await c.ctx.publish.dispatch({ key: "k", path: P, channelId: "tg/event-x", at: TEST_NOW, late: 0 });
     await vi.waitFor(() => expect(Notice.messages.at(-1)).toBe("Event X channel: disk full"));
+  });
+});
+
+describe("PublishOrchestrator.lookup job (M5)", () => {
+  it("drops media for platforms that show none, keeps it for the others", async () => {
+    const hn = "Social/Posts/Hn.md";
+    const c = await makeCtx({
+      seed: true,
+      notes: [note(), { path: hn, frontmatter: { type: "social-post", platform: "hackernews", channels: ["hn/you"], status: "scheduled", deliveries: { "hn/you": { status: "check_needed" } } }, body: "Hi" }],
+    });
+    await c.ctx.channels.upsertChannel(channel("hn/you"));
+    vi.spyOn(c.ctx.composer.content, "load").mockResolvedValue({ body: "Hi", media: [img()] });
+    const jobs: DeliveryJob[] = [];
+    const lookup = async (job: DeliveryJob) => (jobs.push(job), null);
+    c.adapters.register({ platform: "hackernews", lookup });
+    c.adapters.register({ platform: "telegram", lookup });
+    await c.ctx.publish.orchestrator.lookup(hn, "hn/you");
+    await c.ctx.publish.orchestrator.lookup(P, "tg/event-x");
+    expect(jobs.map((j) => j.media)).toEqual([[], [img()]]);
+  });
+});
+
+describe("PublishActions.resolveCheck interim guard (M5, until Task 13)", () => {
+  const check = (answer: RemoteState) => async () => {
+    const c = await makeCtx({ seed: true, notes: [note(P, { status: "check_needed", error: "Obsidian closed." })] });
+    c.adapters.register({ platform: "telegram", lookup: async () => answer });
+    await c.ctx.publish.resolveCheck(P, "tg/event-x");
+    await settle();
+    return c;
+  };
+
+  it.each<[string, RemoteState]>([
+    ["still on the platform's schedule", { published: false, scheduledAt: TEST_NOW + 3_600_000 }],
+    ["gone from the platform", { published: false, gone: true }],
+  ])("leaves check_needed alone when the lookup says %s", async (_label, answer) => {
+    const c = await check(answer)();
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "check_needed", error: "Obsidian closed." });
+    expect(c.log.entries).toEqual([]);
+  });
+
+  it("still fails it on a plain not found", async () => {
+    const c = await check({ published: false })();
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
+    expect(c.log.entries.at(-1)).toMatchObject({ result: "failed" });
   });
 });
