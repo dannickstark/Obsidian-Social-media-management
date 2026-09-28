@@ -4,7 +4,7 @@
   import { useOsmm } from "../ui/context";
 
   let { variant }: { variant: IndexedVariant } = $props();
-  const { channels, composer } = useOsmm();
+  const { channels, composer, publish } = useOsmm();
 
   function forkMenu(event: MouseEvent): void {
     const menu = new Menu();
@@ -17,6 +17,7 @@
 
 <section class="osmm-panel" aria-label="Actions">
   <div class="osmm-chips">
+    <button type="button" class="mod-cta" onclick={() => publish.openAssisted(variant.path)}>Copy & open</button>
     {#if variant.channels.length > 1}<button type="button" onclick={forkMenu}>Fork for this page…</button>{/if}
     {#if variant.campaignPath}
       <button type="button" onclick={() => void composer.openPreviewGrid(variant.campaignPath!)}>Preview campaign</button>

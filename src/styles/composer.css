@@ -64,3 +64,9 @@
 .osmm-crop-box { position: absolute; border: 2px solid var(--interactive-accent); box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.45); pointer-events: none; }
 .osmm-media-missing { display: flex; align-items: center; justify-content: center; width: 96px; height: 72px; border-radius: 6px; background: var(--background-secondary); color: var(--text-faint); font-size: var(--font-ui-smaller); }
 .osmm-media-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.osmm-assisted { display: flex; flex-direction: column; gap: 12px; }
+.osmm-steps { display: flex; gap: 16px; margin: 0; padding-left: 18px; color: var(--text-muted); }
+.osmm-steps [aria-current="step"] { color: var(--text-normal); font-weight: 600; }
+.osmm-clip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.osmm-assisted label { display: flex; flex-direction: column; gap: 4px; }

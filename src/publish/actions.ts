@@ -1,13 +1,20 @@
-import { Notice, type App } from "obsidian";
+import { MarkdownView, Notice, type App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
+import type { LoadedContent } from "../composer/content";
 import type { SocialIndex } from "../index/socialIndex";
+import type { Channel, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
+import type { AssistedTarget, ClipItem } from "../platforms/types";
 import type { AdapterRegistry } from "../platforms/registry";
 import type { OsmmSettings } from "../settings/settings";
 import type { PlannerActions } from "../ui/actions";
+import { SvelteModal } from "../ui/dialogs";
 import type { OsmmContext } from "../ui/context";
-import type { ClipboardService } from "./clipboard";
+import { assistedJob, assistedTarget } from "./assisted";
+import { assistedQueue } from "./assistedFlow";
+import AssistedFlow from "./AssistedFlow.svelte";
+import { isMobile, type ClipboardService, type CopyResult } from "./clipboard";
 import { effectiveDelivery } from "./eligibility";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
@@ -98,6 +105,69 @@ export class PublishActions {
     }
     void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "skipped" });
     this.deps.planner.undoNotice(`Skipped ${name}.`, () => this.deps.planner.undo([result.record]));
+    return true;
+  }
+
+  target(v: Variant, channel: Channel, content: LoadedContent): AssistedTarget {
+    return assistedTarget(assistedJob(v, channel, content));
+  }
+
+  /** Text to the clipboard; images to the clipboard on desktop and to the share sheet on phones. */
+  async copyItem(item: ClipItem): Promise<CopyResult> {
+    if ("imagePath" in item && isMobile()) return (await this.deps.clipboard.share("", [item.imagePath])) ? "copied" : "failed";
+    return this.deps.clipboard.copy(item);
+  }
+
+  /** An open editor for `path`, if any: its buffer can be newer than the file on disk. */
+  private openEditorFor(path: string): MarkdownView | null {
+    for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && view.file?.path === path) return view;
+    }
+    return null;
+  }
+
+  /**
+   * Ruling P3: before copying or opening, flush an open editor for `path` to disk and re-validate the
+   * exact text about to be sent. Refuses (Notice with the blocking issues) instead of copying/opening.
+   */
+  private async freshTarget(path: string, channelId: string, current: AssistedTarget): Promise<AssistedTarget | null> {
+    const v = this.deps.index.getVariant(path);
+    const channel = this.deps.channels.get(channelId);
+    if (!v || !channel) return current;
+    const editor = this.openEditorFor(path);
+    if (editor) await editor.save();
+    const content = await this.deps.composer.content.load(v);
+    const issues = this.deps.composer.check(v, content).filter((i) => i.level === "error");
+    if (issues.length) {
+      new Notice(issues.map((i) => i.message).join(" "));
+      return null;
+    }
+    return this.target(v, channel, content);
+  }
+
+  /** Step 2: copy the first clipboard item, open the pre-filled page and mark the delivery as waiting for the user. */
+  async openTarget(path: string, channelId: string, target: AssistedTarget): Promise<CopyResult | null> {
+    const fresh = await this.freshTarget(path, channelId, target);
+    if (!fresh) return null;
+    const first = fresh.clipboard[0];
+    const copied = first ? await this.copyItem(first) : null;
+    const url = isMobile() && fresh.mobileUrl ? fresh.mobileUrl : fresh.url;
+    if (url) window.open(url);
+    await this.startAssisted(path, channelId);
+    return copied;
+  }
+
+  /** The 3-step assisted flow (artboard 6) over the channels still to post, in stagger order. */
+  openAssisted(path: string, channelIds?: readonly string[], startStep: 1 | 3 = 1): boolean {
+    const v = this.deps.index.getVariant(path);
+    if (!v || !this.context) return false;
+    const queue = startStep === 3 ? [...(channelIds ?? [])] : assistedQueue(v, this.deps.settings().defaultStaggerMinutes, channelIds);
+    if (!queue.length) {
+      new Notice("Nothing left to post for this note.");
+      return false;
+    }
+    new SvelteModal(this.deps.app, "Post", AssistedFlow, { path, channelIds: queue, startStep }, this.context).open();
     return true;
   }
 }

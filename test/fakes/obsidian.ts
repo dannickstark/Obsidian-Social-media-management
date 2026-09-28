@@ -489,6 +489,10 @@ export class MarkdownView extends ItemView {
   override getViewType(): string {
     return "markdown";
   }
+  /** Flushes the editor's buffer to disk, like Obsidian's real MarkdownView.save(). */
+  async save(): Promise<void> {
+    if (this.file) await this.app.vault.modify(this.file, this.editor.getValue());
+  }
 }
 
 export class MarkdownRenderChild extends Component {
