@@ -11,7 +11,7 @@ export interface PublisherRecord {
   since: number;
 }
 
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 export interface OsmmSettings {
   schemaVersion: typeof SETTINGS_VERSION;
@@ -54,6 +54,9 @@ const MIGRATIONS: Record<number, (raw: RawSettings) => RawSettings> = {
   1: (raw) => ({ ...raw, schemaVersion: 2, scheduleTemplates: structuredClone(DEFAULT_TEMPLATES) }),
   2: (raw) => ({ ...raw, schemaVersion: 3, publisher: null }),
   3: (raw) => ({ ...raw, schemaVersion: 4, publishWithoutAsking: [] }),
+  // M5: optional channel fields (server, login, postAsName, postAsAvatar). Nothing to convert; the bump makes an
+  // older plugin refuse this data instead of saving it back without those fields.
+  4: (raw) => ({ ...raw, schemaVersion: 5 }),
 };
 
 function sanitizePublisher(raw: unknown): PublisherRecord | null {

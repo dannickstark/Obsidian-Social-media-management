@@ -400,6 +400,15 @@ describe("PublishOrchestrator", () => {
     expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "refused" });
     expect(calls).toBe(0);
   });
+
+  it("keeps a partial-thread note on the published delivery and in the log (M5)", async () => {
+    const note = "Part 2 of 3 was not posted, nor any after it: Telegram: Bad Request (HTTP 400)";
+    const { c, orchestrator } = await setup(async () => ({ remoteId: "42", url: "https://t.me/eventx/42", note }));
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "published", url: "https://t.me/eventx/42", note });
+    await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "published", error: note });
+    expect(c.log.entries.at(-1)).toMatchObject({ result: "published", url: "https://t.me/eventx/42", error: note });
+  });
 });
 
 describe("PublishActions.runApi", () => {

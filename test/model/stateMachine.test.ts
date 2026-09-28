@@ -28,9 +28,12 @@ describe("delivery transitions (spec §5)", () => {
     ["overdue", "scheduled"],
     ["failed", "publishing"],
     ["check_needed", "published"],
+    ["check_needed", "handed_over"],
   ])("allows %s → %s", (from, to) => {
     expect(canTransition(from, to)).toBe(true);
-    expect(transition({ status: from }, to).status).toBe(to);
+    // M5 P11: check_needed → handed_over needs a hand-over baseline (remoteAt).
+    const d: Delivery = from === "check_needed" && to === "handed_over" ? { status: from, remoteAt: 1 } : { status: from };
+    expect(transition(d, to).status).toBe(to);
   });
 
   it.each<[DeliveryStatus, DeliveryStatus]>([
@@ -42,6 +45,12 @@ describe("delivery transitions (spec §5)", () => {
   ])("refuses %s → %s", (from, to) => {
     expect(canTransition(from, to)).toBe(false);
     expect(() => transition({ status: from }, to)).toThrow(IllegalTransitionError);
+  });
+
+  it("returns check_needed to handed_over only with a hand-over baseline (M5 P11)", () => {
+    expect(() => transition({ status: "check_needed" }, "handed_over", { remoteId: "1" })).toThrow(IllegalTransitionError);
+    expect(transition({ status: "check_needed", remoteAt: 5 }, "handed_over", { remoteId: "1" })).toEqual({ status: "handed_over", remoteAt: 5, remoteId: "1" });
+    expect(transition({ status: "check_needed" }, "handed_over", { remoteAt: 5 }).status).toBe("handed_over");
   });
 
   it("never leaves published", () => {

@@ -11,7 +11,9 @@ export const TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatu
   awaiting_you: ["published", "skipped", "scheduled", "overdue"],
   overdue: ["publishing", "awaiting_you", "scheduled", "skipped", "published"],
   failed: ["scheduled", "publishing", "skipped", "ready"],
-  check_needed: ["published", "failed", "scheduled", "skipped"],
+  // M5: a lookup that finds an interrupted hand-over on the platform's schedule returns it to handed_over
+  // (only with a hand-over baseline, see `transition`).
+  check_needed: ["published", "failed", "scheduled", "skipped", "handed_over"],
   published: [],
   skipped: ["ready", "scheduled"],
 };
@@ -36,6 +38,11 @@ export function transition(
   patch: Partial<Omit<Delivery, "status">> = {},
 ): Delivery {
   if (!canTransition(d.status, to)) throw new IllegalTransitionError(d.status, to);
+  // M5 P11: only a delivery with a hand-over baseline (remoteAt) goes back to handed_over; an interrupted
+  // immediate publish that a lookup finds on someone's schedule stays check_needed.
+  if (d.status === "check_needed" && to === "handed_over" && (patch.remoteAt ?? d.remoteAt) === undefined) {
+    throw new IllegalTransitionError(d.status, to);
+  }
   return { ...d, ...patch, status: to };
 }
 

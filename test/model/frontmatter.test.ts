@@ -4,9 +4,11 @@ import {
   parseCampaign,
   parseVariant,
   serializeDeliveries,
+  serializeDelivery,
   socialKind,
   variantFields,
 } from "../../src/model/frontmatter";
+import { formatDateTime } from "../../src/model/dates";
 
 const base = {
   type: "social-post",
@@ -178,6 +180,29 @@ describe("serialization", () => {
   it("serializes deliveries with snake_case keys and ISO dates", () => {
     expect(serializeDeliveries({ "li/me": { status: "published", at: Date.UTC(2026, 9, 8, 15, 30), remoteId: "9" } })).toEqual({
       "li/me": { status: "published", at: "2026-10-08T17:30:00+02:00", remote_id: "9" },
+    });
+  });
+});
+
+describe("hand-over baseline (#66)", () => {
+  it("reads and writes remote_at and digest on a delivery", () => {
+    const at = "2026-10-08T18:00:00+02:00";
+    const remoteAt = "2026-10-08T17:30:00+02:00";
+    const fm = {
+      type: "social-post",
+      platform: "mastodon",
+      channels: ["ma/you"],
+      status: "scheduled",
+      deliveries: { "ma/you": { status: "handed_over", at, remote_at: remoteAt, remote_id: "3221", digest: "k3j2h1" } },
+    };
+    const d = parseVariant(fm, "Social/P.md").value!.deliveries["ma/you"]!;
+    expect(d).toEqual({ status: "handed_over", at: Date.parse(at), remoteAt: Date.parse(remoteAt), remoteId: "3221", digest: "k3j2h1" });
+    expect(serializeDelivery(d)).toEqual({
+      status: "handed_over",
+      at: formatDateTime(Date.parse(at)),
+      remote_at: formatDateTime(Date.parse(remoteAt)),
+      remote_id: "3221",
+      digest: "k3j2h1",
     });
   });
 });

@@ -77,3 +77,15 @@ export function classifyError(e: unknown): PublishError {
   if (status === 400 || status === 413 || status === 422) return new InvalidContentError(message);
   return new NeedsUserError(message);
 }
+
+/**
+ * M5 (#66): the platform's copy of a handed-over post is gone (a Mastodon content update removed the scheduled
+ * post and could not schedule the new one; a WordPress post was deleted on the site). The caller returns the
+ * delivery to `scheduled`, so the post still goes out from Obsidian.
+ */
+export class RemoteRemovedError extends PublishError {
+  constructor(message: string) {
+    super("needs_user", message);
+    this.name = "RemoteRemovedError";
+  }
+}

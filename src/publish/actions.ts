@@ -22,6 +22,7 @@ import { assistedQueue } from "./assistedFlow";
 import AssistedFlow from "./AssistedFlow.svelte";
 import { isMobile, type ClipboardService, type CopyResult } from "./clipboard";
 import { effectiveDelivery, unreadable } from "./eligibility";
+import { deliveryJob } from "./job";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
 import { PublishOrchestrator, type FailureInfo, type PublishedInfo, type RunResult } from "./orchestrator";
@@ -153,7 +154,7 @@ export class PublishActions {
   async runApi(path: string, channelId: string, accept?: (v: Variant, content: LoadedContent) => boolean): Promise<RunResult> {
     const result = await this.orchestrator.run(path, channelId, accept);
     const name = this.channelName(channelId);
-    if (result.status === "published") new Notice(`Published to ${name}.`);
+    if (result.status === "published") new Notice(result.note ? `Published to ${name}. ${result.note}` : `Published to ${name}.`);
     // A refusal the failure notifier already reported (a retry refused after a change) is not shown twice.
     else if (result.status === "refused" && !result.notified) new Notice(`${name}: ${result.reason}`);
     return result;
@@ -576,8 +577,6 @@ export class PublishActions {
     if (blocked) return { refuse: blocked };
     const adapter = this.deps.adapters.get(v.platform);
     if (!adapter?.update) return { refuse: `${PLATFORM_META[v.platform].label} posts can't be updated from Obsidian yet.` };
-    const def = platformDef(v.platform);
-    const items = postItems(content.body, def);
     const updated: string[] = [];
     const failed: Array<{ id: string; error: string }> = [];
     for (const id of plan.channels) {
@@ -589,15 +588,7 @@ export class PublishActions {
       }
       const secretId = channel.secretId;
       try {
-        await adapter.update({
-          variant: v,
-          channel,
-          delivery: d,
-          text: items.join("\n\n"),
-          items,
-          media: def.capabilities.media.maxCount > 0 ? content.media : [],
-          secret: secretId ? this.deps.secrets.get(secretId) : null,
-        });
+        await adapter.update(deliveryJob(v, channel, d, content, secretId ? this.deps.secrets.get(secretId) : null));
         updated.push(id);
         void this.deps.log.append({ at: this.deps.now(), path: plan.path, channelId: id, result: "updated", ...(d.url ? { url: d.url } : {}) });
       } catch (e) {

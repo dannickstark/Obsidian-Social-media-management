@@ -36,6 +36,10 @@ export interface Delivery {
   attempts?: number;
   /** Why the delivery was skipped (optional, from the assisted flow). */
   reason?: string;
+  /** Native hand-over (#66): the time the platform holds for this post (it moves only when an update is pushed). */
+  remoteAt?: number;
+  /** Native hand-over (#66): `contentDigest` of what was handed over; the note differs from the platform when it changes. */
+  digest?: string;
 }
 
 export interface Campaign {

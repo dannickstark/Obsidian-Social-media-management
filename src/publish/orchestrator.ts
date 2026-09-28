@@ -9,12 +9,12 @@ import { deliveryTime, transition } from "../model/stateMachine";
 import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
 import { classifyError, PublishError, statusOf, UnknownOutcomeError, type ErrorKind } from "../platforms/errors";
-import { platformDef, type AdapterRegistry } from "../platforms/registry";
-import { postItems } from "../platforms/text";
-import type { DeliveryJob, MediaInfo, PlatformAdapter, RemoteState } from "../platforms/types";
+import type { AdapterRegistry } from "../platforms/registry";
+import type { DeliveryJob, PlatformAdapter, RemoteState } from "../platforms/types";
 import { GRACE_MS } from "../scheduler/due";
 import { withTimeout } from "../util/time";
 import { effectiveDelivery } from "./eligibility";
+import { deliveryJob } from "./job";
 import type { AttemptLog } from "./log";
 import { Semaphore } from "./semaphore";
 
@@ -36,7 +36,7 @@ export interface PublishedInfo {
 }
 
 export type RunResult =
-  | { status: "published"; url: string }
+  | { status: "published"; url: string; note?: string }
   | { status: "failed"; kind: ErrorKind; error: string }
   /** Ruling P4: the send's outcome is unknown; the delivery is parked on `check_needed`, not retried. */
   | { status: "check_needed" }
@@ -91,13 +91,11 @@ interface Prepared {
   platform: Platform;
   adapter: PlatformAdapter;
   publish: NonNullable<PlatformAdapter["publish"]>;
-  items: string[];
-  media: MediaInfo[];
   secret: string | null;
   redact(text: string): string;
   /** Final review Minor 6: no retry may be scheduled past this time. */
   deadline: number;
-  /** What `items` and `media` were built from; `accept` checks it with the claimed frontmatter. */
+  /** What the job is built from (`deliveryJob`); `accept` checks it with the claimed frontmatter. */
   content: LoadedContent;
   accept?: (v: Variant, content: LoadedContent) => boolean;
 }
@@ -133,7 +131,6 @@ export class PublishOrchestrator {
     const adapter = this.deps.adapters.get(v.platform);
     if (!adapter?.publish) return { status: "refused", reason: `There is no ${PLATFORM_META[v.platform].label} API adapter yet; use Copy & open.` };
     const content = await this.deps.content.load(v);
-    const def = platformDef(v.platform);
     const secretId = channel.secretId;
     const start = this.deps.now();
     const window = this.deps.lateWindowMs?.() ?? GRACE_MS;
@@ -151,8 +148,6 @@ export class PublishOrchestrator {
       platform: v.platform,
       adapter,
       publish: adapter.publish.bind(adapter),
-      items: postItems(content.body, def),
-      media: def.capabilities.media.maxCount > 0 ? content.media : [],
       secret: secretId ? this.deps.secrets.get(secretId) : null,
       redact: (text) => (secretId ? this.deps.secrets.redact(text, [secretId]) : text),
     };
@@ -180,9 +175,8 @@ export class PublishOrchestrator {
     const delivery = v?.deliveries[channelId];
     if (!v || !channel || !adapter?.lookup || !delivery) return null;
     const content = await this.deps.content.load(v);
-    const items = postItems(content.body, platformDef(v.platform));
     const secret = channel.secretId ? this.deps.secrets.get(channel.secretId) : null;
-    return this.timedLookup(() => adapter.lookup!({ variant: v, channel, delivery, text: items.join("\n\n"), items, media: content.media, secret }));
+    return this.timedLookup(() => adapter.lookup!(deliveryJob(v, channel, delivery, content, secret)));
   }
 
   /** A confirmation push must never change a publish's outcome (a throw here would read as an unknown outcome). */
@@ -233,18 +227,12 @@ export class PublishOrchestrator {
   }
 
   private async send(p: Prepared, attempt: number, claim: { variant: Variant; delivery: Delivery }): Promise<Attempt> {
-    const job: DeliveryJob = {
-      variant: claim.variant,
-      channel: p.channel,
-      delivery: claim.delivery,
-      text: p.items.join("\n\n"),
-      items: p.items,
-      media: p.media,
-      secret: p.secret,
-    };
+    const job = deliveryJob(claim.variant, p.channel, claim.delivery, p.content, p.secret);
     try {
       const res = await p.publish(job);
       const at = this.deps.now();
+      // A thread cut short: the post is out, so it is published; the note says what is missing (redacted like any error).
+      const note = res.note ? p.redact(res.note) : undefined;
       // Ruling (concern 1): the platform confirmed the post, so a check_needed set meanwhile is resolved to
       // published too; leaving it would invite a manual re-post. Failures and unknown outcomes still refuse.
       const settled = await this.settle(
@@ -253,14 +241,15 @@ export class PublishOrchestrator {
         (d) => {
           const next = transition(d, "published", { url: res.url, remoteId: res.remoteId, at });
           delete next.error;
+          if (note) next.error = note;
           return next;
         },
         FROM_PUBLISHING_OR_CHECK_NEEDED,
       );
-      void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: res.url });
+      void this.deps.log.append({ at, path: p.path, channelId: p.channelId, result: "published", url: res.url, ...(note ? { error: note } : {}) });
       this.announcePublished({ path: p.path, channelId: p.channelId, url: res.url });
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
-      return { done: true, result: { status: "published", url: res.url } };
+      return { done: true, result: { status: "published", url: res.url, ...(note ? { note } : {}) } };
     } catch (e) {
       // Ruling P4: an error the adapter did not classify itself, and which carries no HTTP status, is
       // ambiguous about whether the request was sent — treat it as an unknown outcome, never a retry.

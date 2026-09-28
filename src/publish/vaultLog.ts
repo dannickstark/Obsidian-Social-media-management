@@ -25,6 +25,9 @@ const RESULT_LABEL: Readonly<Record<AttemptEntry["result"], string>> = {
   check_needed: "check needed",
   updated: "updated on the platform",
   update_failed: "update failed",
+  handed_over: "handed over to the platform",
+  handover_failed: "hand-over failed, stays scheduled",
+  cancelled: "taken off the platform's schedule",
 };
 
 /** First entry line of a log file: "- 2026-10-08T…". */

@@ -45,6 +45,12 @@ export const zTimeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:
 export const zUrl = z.url();
 export const zHexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #6ea3e6");
 export const zSecretId = z.string().regex(SLUG_RE, "Use lowercase letters, digits and dashes");
+/** An https address without a trailing slash: a Mastodon instance, a Bluesky PDS, a WordPress site (M5). */
+export const zHttpsUrl = z
+  .string()
+  .trim()
+  .regex(/^https:\/\/[^\s/?#]+(?:\/[^\s?#]*)?$/, "Use an https:// address")
+  .transform((s) => s.replace(/\/+$/, ""));
 
 export const zChannel = z
   .object({
@@ -60,6 +66,13 @@ export const zChannel = z
     defaultReminders: zMinutesList.optional(),
     /** Per-channel character limit (a Mastodon instance's own limit). */
     maxChars: z.coerce.number().int().min(1).max(100_000).optional(),
+    /** Mastodon instance, Bluesky PDS or WordPress site (M5). */
+    server: zHttpsUrl.optional(),
+    /** WordPress user name for the application password (M5). */
+    login: z.string().trim().min(1).max(120).optional(),
+    /** Discord webhook: post under this name and avatar (M5). */
+    postAsName: z.string().trim().min(1).max(80).optional(),
+    postAsAvatar: zHttpsUrl.optional(),
   })
   .superRefine((c, ctx) => {
     const meta = PLATFORM_META[c.platform];

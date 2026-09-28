@@ -54,6 +54,12 @@ describe("formatLogLine", () => {
     expect(formatLogLine(entry({ result: "check_needed", url: undefined }), "x", (t) => t)).toContain(" · check needed");
   });
 
+  it("labels the hand-over results (M5)", () => {
+    expect(formatLogLine(entry({ result: "handed_over", url: undefined }), "x", (t) => t)).toContain(" · handed over to the platform");
+    expect(formatLogLine(entry({ result: "handover_failed", url: undefined, error: "422" }), "x", (t) => t)).toContain(" · hand-over failed, stays scheduled · 422");
+    expect(formatLogLine(entry({ result: "cancelled", url: undefined }), "x", (t) => t)).toContain(" · taken off the platform's schedule");
+  });
+
   it("keys months in local time", () => {
     expect(monthKey(Date.UTC(2026, 9, 31, 23, 30))).toBe("2026-11"); // 00:30 on 1 Nov in Berlin
   });

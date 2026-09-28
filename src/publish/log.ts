@@ -2,7 +2,19 @@ export interface AttemptEntry {
   at: number;
   path: string;
   channelId: string;
-  result: "published" | "failed" | "retry" | "skipped" | "awaiting_you" | "overdue" | "check_needed" | "updated" | "update_failed";
+  result:
+    | "published"
+    | "failed"
+    | "retry"
+    | "skipped"
+    | "awaiting_you"
+    | "overdue"
+    | "check_needed"
+    | "updated"
+    | "update_failed"
+    | "handed_over"
+    | "handover_failed"
+    | "cancelled";
   url?: string;
   error?: string;
 }

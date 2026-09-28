@@ -134,6 +134,9 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     const attempts = take(zCount, value.attempts, `${field}.attempts`, issues, "warning");
     if (attempts !== undefined) d.attempts = attempts;
     if (typeof value.reason === "string" && value.reason.trim()) d.reason = value.reason.trim();
+    const remoteAt = takeDate(value.remote_at, `${field}.remote_at`, issues);
+    if (remoteAt !== undefined) d.remoteAt = remoteAt;
+    if (typeof value.digest === "string" && value.digest.trim()) d.digest = value.digest.trim();
     if (!channels.includes(id)) {
       issues.push({ level: "warning", field, message: `Delivery for ${id}, which is not in channels` });
     }
@@ -265,6 +268,8 @@ export function serializeDelivery(d: Delivery): Record<string, unknown> {
   if (d.error) out.error = d.error;
   if (d.attempts !== undefined) out.attempts = d.attempts;
   if (d.reason) out.reason = d.reason;
+  if (d.remoteAt !== undefined) out.remote_at = formatDateTime(d.remoteAt);
+  if (d.digest) out.digest = d.digest;
   return out;
 }
 

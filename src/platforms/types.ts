@@ -87,25 +87,70 @@ export interface DeliveryJob {
   text: string;
   /** Thread items (a single item on platforms without threads). */
   items: string[];
+  /**
+   * The note's raw Markdown body (M5 P3). `text` has every image embed stripped, so an adapter that renders
+   * Markdown itself (WordPress) reads this instead. Covered by `sendDigest` / `contentDigest` (the body).
+   */
+  body: string;
   media: MediaInfo[];
+  /** WordPress: the resolved `featured_image` (part of `sendDigest`). */
+  featured?: MediaInfo;
   /** The channel's credential on this device, if any. */
   secret: string | null;
 }
 
+/** What the platform says about a post. `published: false` with nothing else means "not found". */
 export interface RemoteState {
   published: boolean;
   url?: string;
   remoteId?: string;
+  /** Still waiting in the platform's own schedule (native hand-over), at this time. */
+  scheduledAt?: number;
+  /** The platform is sure it no longer has the post (deleted or taken off its schedule there). */
+  gone?: boolean;
 }
 
-/** Network operations of one platform (spec §4.1). Real adapters arrive in M5/M6; M2 only has test fakes. */
+export interface PublishResult {
+  remoteId: string;
+  url: string;
+  /** The post is out, but not all of it (a thread cut short); shown to the user and kept on the delivery. */
+  note?: string;
+}
+
+export interface ScheduleResult {
+  remoteId: string;
+  url?: string;
+}
+
+/** What differs from the platform's copy of a handed-over post (#66). */
+export interface SyncChange {
+  content: boolean;
+  time: boolean;
+}
+
+export type VerifyResult = { ok: true; account: string } | { ok: false; error: string };
+
+/**
+ * Network operations of one platform (spec §4.1). Every request goes through `ApiClient` (src/platforms/http.ts),
+ * and every adapter passes the contract suite (test/platforms/contract). An adapter reads post content only from
+ * the job and from DIGESTED_VARIANT_FIELDS (src/publish/sync.ts).
+ */
 export interface PlatformAdapter {
   readonly platform: Platform;
-  publish?(job: DeliveryJob): Promise<{ remoteId: string; url: string }>;
-  schedule?(job: DeliveryJob): Promise<{ remoteId: string }>;
-  update?(job: DeliveryJob): Promise<void>;
+  /** How far ahead a native hand-over must be (Mastodon: 5 minutes). */
+  readonly minLeadMs?: number;
+  publish?(job: DeliveryJob): Promise<PublishResult>;
+  /** Hands the post over to the platform's scheduler for `job.delivery.at`. */
+  schedule?(job: DeliveryJob): Promise<ScheduleResult>;
+  /** Why this job can't be handed over (a Mastodon thread), or null. */
+  scheduleRefusal?(job: DeliveryJob): string | null;
+  /** Pushes the note's current version (#66). `change` is absent for a live post edited through push_update. */
+  update?(job: DeliveryJob, change?: SyncChange): Promise<{ remoteId?: string } | void>;
+  /** Takes a handed-over post off the platform's schedule. */
   cancel?(job: DeliveryJob): Promise<void>;
   lookup?(job: DeliveryJob): Promise<RemoteState | null>;
+  /** Channel settings "Test connection". Never throws. */
+  verify?(channel: Channel, secret: string | null): Promise<VerifyResult>;
 }
 
 /** One thing for the user to paste: text, or an image file from the vault. */
