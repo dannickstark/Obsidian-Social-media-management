@@ -509,3 +509,7 @@ export async function requestUrl(req: RequestUrlParam | string): Promise<Request
   }
   return res;
 }
+
+export function setIcon(el: HTMLElement, name: string): void {
+  el.dataset.icon = name;
+}

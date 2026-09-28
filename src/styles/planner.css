@@ -1,0 +1,66 @@
+.osmm-planner { display: flex; flex-direction: column; height: 100%; }
+.osmm-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--osmm-border); }
+.osmm-title { margin: 0; font-size: var(--font-ui-large); font-weight: 600; }
+.osmm-spacer { flex: 1; }
+.osmm-nav { display: flex; gap: 4px; }
+.osmm-subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 16px; }
+.osmm-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 16px; }
+.osmm-segmented { display: flex; padding: 2px; border: 1px solid var(--osmm-border); border-radius: 7px; }
+.osmm-segmented button { box-shadow: none; background: transparent; color: var(--osmm-muted); }
+.osmm-segmented button.is-active { background: var(--osmm-hover); color: var(--text-normal); }
+.osmm-filterbar { display: flex; gap: 6px; align-items: center; }
+.osmm-legend { display: flex; gap: 14px; color: var(--osmm-muted); font-size: var(--font-ui-smaller); }
+.osmm-legend .osmm-chip { width: auto; height: 16px; padding: 0 5px; }
+
+.osmm-month { display: grid; grid-template-rows: auto; }
+.osmm-month-head, .osmm-month-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.osmm-month-head div { padding: 4px 6px; color: var(--osmm-faint); text-transform: uppercase; font-size: var(--font-ui-smaller); }
+.osmm-day { min-height: 110px; padding: 6px; display: flex; flex-direction: column; gap: 3px; border-right: 1px solid var(--osmm-border); border-bottom: 1px solid var(--osmm-border); min-width: 0; }
+.osmm-month-row:first-of-type .osmm-day { border-top: 1px solid var(--osmm-border); }
+.osmm-month-row .osmm-day:first-child { border-left: 1px solid var(--osmm-border); }
+.osmm-day.is-muted { background: var(--background-secondary); }
+.osmm-day.is-today .osmm-day-num { background: var(--osmm-accent); color: var(--text-on-accent); border-radius: 10px; padding: 0 6px; }
+.osmm-day.is-drop { outline: 2px dashed var(--osmm-accent); outline-offset: -2px; }
+.osmm-day-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.osmm-day-num { font-weight: 600; font-size: var(--font-ui-smaller); }
+.osmm-anchor { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: rgba(var(--interactive-accent-rgb), 0.2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.osmm-more { box-shadow: none; background: transparent; color: var(--osmm-muted); font-size: var(--font-ui-smaller); padding: 0 6px; height: 20px; align-self: flex-start; }
+
+.osmm-week { display: grid; grid-template-columns: 52px repeat(7, minmax(0, 1fr)); }
+.osmm-week-head { position: sticky; top: 0; z-index: 2; background: var(--background-primary); padding: 6px; border-bottom: 1px solid var(--osmm-border); font-size: var(--font-ui-smaller); }
+.osmm-week-head.is-today { color: var(--osmm-accent); font-weight: 600; }
+.osmm-hours { position: relative; }
+.osmm-hour { position: absolute; right: 6px; font-size: 10.5px; color: var(--osmm-faint); transform: translateY(-50%); }
+.osmm-week-col { position: relative; border-left: 1px solid var(--osmm-border); background-image: linear-gradient(var(--osmm-border) 1px, transparent 1px); background-size: 100% 48px; }
+.osmm-week-item { position: absolute; padding: 0 2px; box-sizing: border-box; }
+.osmm-now-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--color-red); z-index: 1; }
+
+.osmm-board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; height: 100%; }
+.osmm-column { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px; background: var(--background-secondary); min-height: 0; overflow: auto; }
+.osmm-column.is-drop { outline: 2px dashed var(--osmm-accent); }
+.osmm-column-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.osmm-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid var(--osmm-border); background: var(--background-primary); text-align: left; cursor: grab; box-shadow: none; height: auto; white-space: normal; }
+.osmm-card.is-late { border-color: var(--color-orange); }
+.osmm-card-meta { display: flex; gap: 8px; color: var(--osmm-muted); font-size: var(--font-ui-smaller); }
+
+.osmm-table { width: 100%; border-collapse: collapse; }
+.osmm-table th, .osmm-table td { padding: 6px 8px; border-bottom: 1px solid var(--osmm-border); text-align: left; }
+.osmm-table th button { box-shadow: none; background: transparent; padding: 0; font-weight: 600; }
+.osmm-bulkbar { display: flex; gap: 8px; align-items: center; padding: 8px 0; }
+
+.osmm-sidebar { display: flex; flex-direction: column; gap: 16px; padding: 12px; }
+.osmm-section-title { font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: 0.06em; color: var(--osmm-muted); font-weight: 600; margin: 0 0 6px; }
+.osmm-overdue { border: 1px solid rgba(var(--color-orange-rgb), 0.6); background: rgba(var(--color-orange-rgb), 0.1); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.osmm-row { display: flex; align-items: center; gap: 8px; }
+.osmm-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.osmm-progress { font-family: var(--font-monospace); color: var(--osmm-muted); }
+
+.osmm-variants { border: 1px solid var(--osmm-border); border-radius: 12px; overflow: hidden; }
+.osmm-variants-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--osmm-border); }
+.osmm-lenbar { height: 3px; background: var(--osmm-border); border-radius: 2px; }
+.osmm-pill-status { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--osmm-hover); font-size: var(--font-ui-smaller); }
+.osmm-timeline { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--osmm-border); }
+.osmm-link { box-shadow: none; background: transparent; padding: 0; height: auto; color: var(--text-accent); text-align: left; cursor: pointer; }
+.osmm-form { display: flex; flex-direction: column; gap: 10px; }
+.osmm-form label { display: flex; flex-direction: column; gap: 4px; }
+.osmm-issues { color: var(--text-error); margin: 0; padding-left: 18px; }
