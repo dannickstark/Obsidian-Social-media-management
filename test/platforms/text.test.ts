@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { platformDef } from "../../src/platforms/registry";
-import { countFor, hashtags, postItems, postText, renderText, urlsIn } from "../../src/platforms/text";
+import { countFor, hashtags, postItems, postText, renderText, urlsIn, withLink } from "../../src/platforms/text";
 
 describe("renderText", () => {
   it.each([
@@ -70,5 +70,14 @@ describe("counting helpers", () => {
   it("finds hashtags and urls", () => {
     expect(hashtags("Ship it #buildinpublic #Obsidian_md and #2026 but not a#b")).toEqual(["buildinpublic", "Obsidian_md", "2026"]);
     expect(urlsIn("See https://example.com/x, and http://a.b/c?d=1.")).toEqual(["https://example.com/x", "http://a.b/c?d=1"]);
+  });
+});
+
+describe("withLink", () => {
+  it("adds the link on its own line unless the text already has it", () => {
+    expect(withLink("Doors open", "https://event.example/x")).toBe("Doors open\n\nhttps://event.example/x");
+    expect(withLink("See https://event.example/x", "https://event.example/x")).toBe("See https://event.example/x");
+    expect(withLink("", "https://event.example/x")).toBe("https://event.example/x");
+    expect(withLink("Doors open", undefined)).toBe("Doors open");
   });
 });

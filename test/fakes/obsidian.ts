@@ -860,9 +860,9 @@ export interface RequestUrlResponse {
   arrayBuffer: ArrayBuffer;
 }
 
-/** Test-only: queue one handler per expected request; every request is recorded in `calls`. */
+/** Test-only: queue one handler per expected request; every request is recorded in `calls`. A handler may return a promise (a slow or silent server). */
 export const requestUrlMock = {
-  queue: [] as Array<(req: RequestUrlParam) => RequestUrlResponse | Error>,
+  queue: [] as Array<(req: RequestUrlParam) => RequestUrlResponse | Error | Promise<RequestUrlResponse | Error>>,
   calls: [] as RequestUrlParam[],
   reset(): void {
     this.queue = [];
@@ -875,7 +875,7 @@ export async function requestUrl(req: RequestUrlParam | string): Promise<Request
   requestUrlMock.calls.push(param);
   const handler = requestUrlMock.queue.shift();
   if (!handler) throw new Error(`No requestUrl fixture for ${param.url}`);
-  const res = handler(param);
+  const res = await handler(param);
   if (res instanceof Error) throw res;
   if (res.status >= 400 && param.throw !== false) {
     throw Object.assign(new Error(`Request failed, status ${res.status}`), { status: res.status, headers: res.headers });
