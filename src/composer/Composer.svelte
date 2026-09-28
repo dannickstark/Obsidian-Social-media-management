@@ -6,6 +6,7 @@
   import Preview from "../previews/Preview.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
+  import ActionsBar from "./ActionsBar.svelte";
   import Checks from "./Checks.svelte";
   import PostAs from "./PostAs.svelte";
   import SchedulePanel from "./SchedulePanel.svelte";
@@ -94,6 +95,7 @@
         <PostAs {variant} />
         <Checks {variant} {issues} counters={counterList} />
         <SchedulePanel {variant} {issues} />
+        <ActionsBar {variant} />
       </aside>
     </div>
   </div>

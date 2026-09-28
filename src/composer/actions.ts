@@ -155,6 +155,19 @@ export class ComposerActions {
     return true;
   }
 
+  /** Moves one channel into its own note (spec §2.2). Creates a file, so there is no undo. */
+  async fork(v: IndexedVariant, channelId: string): Promise<string | null> {
+    const name = this.deps.channels.get(channelId)?.name ?? channelId;
+    try {
+      const file = await this.deps.factory.forkVariant(v.file, channelId, name);
+      this.deps.planner.actionNotice(`Forked ${name} into its own note.`, "Open in composer", () => this.openComposer(file.path));
+      return file.path;
+    } catch (e) {
+      new Notice(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
   async toggleChannel(v: IndexedVariant, channel: Channel, on: boolean): Promise<boolean> {
     const result = await this.deps.planner.write(v.file, (fresh) => planToggleChannel(fresh, channel, on));
     this.deps.planner.afterWrite(result, on ? `Added ${channel.name}.` : `Removed ${channel.name}.`);
