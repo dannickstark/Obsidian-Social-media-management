@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getFrontMatterInfo, parseYaml } from "obsidian";
 import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
+import { TID_RE } from "../../src/platforms/bluesky/tid";
 import { AdapterRegistry } from "../../src/platforms/registry";
 import { TransientError } from "../../src/platforms/errors";
 import type { DeliveryJob, PlatformAdapter, RemoteState } from "../../src/platforms/types";
@@ -78,7 +79,7 @@ describe("PublishOrchestrator", () => {
     ref.c = c;
     expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "published", url: "https://t.me/eventx/42" });
     expect(seen).toEqual({
-      deliveries: { "tg/event-x": { status: "publishing", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW) } },
+      deliveries: { "tg/event-x": { status: "publishing", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW), send_key: expect.stringMatching(TID_RE) } },
       secret: "SECRET-TOKEN-123",
       text: "Doors open at 18:00",
     });
@@ -94,28 +95,29 @@ describe("PublishOrchestrator", () => {
 
   it("keeps the send key of the first claim across retries and a re-send from failed; at moves, send_at does not (M5 P17)", async () => {
     const EARLIER = TEST_NOW - 20 * MIN;
-    const seen: Array<{ at?: number; sendAt?: number }> = [];
+    const seen: Array<{ at?: number; sendAt?: number; sendKey?: string }> = [];
     const onDisk: unknown[] = [];
     let calls = 0;
     const { c, orchestrator } = await setup(
       async (job) => {
-        seen.push({ at: job.delivery.at, sendAt: job.delivery.sendAt });
+        seen.push({ at: job.delivery.at, sendAt: job.delivery.sendAt, sendKey: job.delivery.sendKey });
         if (++calls < 2) throw http(502);
         return { remoteId: "7", url: "https://t.me/eventx/7" };
       },
       {
-        notes: [note(P, { status: "failed", at: formatDateTime(EARLIER), send_at: formatDateTime(EARLIER), attempts: 1, error: "HTTP 502" })],
+        notes: [note(P, { status: "failed", at: formatDateTime(EARLIER), send_at: formatDateTime(EARLIER), send_key: "3mxdyj6ws22jm", attempts: 1, error: "HTTP 502" })],
         onDelay: async (ctx) => void onDisk.push(((await fm(ctx)).deliveries as Record<string, Record<string, unknown>>)["tg/event-x"]!.send_at),
       },
     );
     expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "published" });
     expect(seen).toEqual([
-      { at: TEST_NOW, sendAt: EARLIER },
-      { at: TEST_NOW, sendAt: EARLIER },
+      { at: TEST_NOW, sendAt: EARLIER, sendKey: "3mxdyj6ws22jm" },
+      { at: TEST_NOW, sendAt: EARLIER, sendKey: "3mxdyj6ws22jm" },
     ]);
     expect(onDisk).toEqual([formatDateTime(EARLIER)]);
     // Published: the send key is dropped.
     expect(((await fm(c)).deliveries as Record<string, Record<string, unknown>>)["tg/event-x"]).not.toHaveProperty("send_at");
+    expect(((await fm(c)).deliveries as Record<string, Record<string, unknown>>)["tg/event-x"]).not.toHaveProperty("send_key");
   });
 
   it("writes the send key as it reads back from disk (whole seconds), so every attempt derives the same keys (M5 P17)", async () => {
@@ -126,6 +128,23 @@ describe("PublishOrchestrator", () => {
     });
     await orchestrator.run(P, "tg/event-x");
     expect(seen).toEqual([TEST_NOW]);
+  });
+
+  it("gives two notes claimed in the same second different send keys (M5 P17b)", async () => {
+    const Q = "Social/Posts/Tg2.md";
+    const keys: Array<string | undefined> = [];
+    const { orchestrator } = await setup(
+      async (job) => {
+        keys.push(job.delivery.sendKey);
+        return { remoteId: "7", url: "https://t.me/eventx/7" };
+      },
+      { notes: [note(), note(Q)] },
+    );
+    await orchestrator.run(P, "tg/event-x");
+    await orchestrator.run(Q, "tg/event-x");
+    expect(keys).toHaveLength(2);
+    for (const k of keys) expect(k).toMatch(TID_RE);
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
   it("refuses to claim a note held for review (#84 fix round 1, m2)", async () => {
@@ -288,7 +307,7 @@ describe("PublishOrchestrator", () => {
     expect(failures).toEqual([{ path: P, channelId: "tg/event-x", kind: "needs_user", error }]);
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
     // M5 P17: a failed send keeps its send key for a re-send.
-    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({ status: "failed", at: TEST_NOW, attempts: 1, error, sendAt: TEST_NOW });
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({ status: "failed", at: TEST_NOW, attempts: 1, error, sendAt: TEST_NOW, sendKey: expect.stringMatching(TID_RE) });
     expect(JSON.stringify(c.log.entries)).not.toContain("SECRET-TOKEN-123");
   });
 

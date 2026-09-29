@@ -8,7 +8,7 @@ import { isFetchable } from "../og";
 import { urlsIn } from "../text";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, PublishResult, RemoteState, VerifyResult } from "../types";
 import { buildFacets } from "./richtext";
-import { postRkey } from "./tid";
+import { postRkey, tidParts, TID_RE } from "./tid";
 
 export const BSKY_SERVICE = "https://bsky.social";
 /** app.bsky.embed.images / external thumb: at most 1,000,000 bytes per blob. */
@@ -78,6 +78,17 @@ function pdsOf(didDoc: unknown): string | null {
   return typeof pds === "string" && pds.startsWith("https://") ? pds.replace(/\/+$/, "") : null;
 }
 
+/**
+ * The record key of each thread part: from the delivery's send key (M5 P17b; part i = root + i µs, same clock id).
+ * A job without one (not claimed by the orchestrator) falls back to the claim time, as in Task 7.
+ */
+function partKeys(job: DeliveryJob, now: number): (i: number) => string {
+  const root = job.delivery.sendKey;
+  if (root && TID_RE.test(root)) return (i) => tidParts(root, i);
+  const at = job.delivery.sendAt ?? job.delivery.at ?? now;
+  return (i) => postRkey(at, i, job.channel.id);
+}
+
 function expired(res: HttpResponse): boolean {
   if (res.status !== 400 && res.status !== 401) return false;
   const error = (parseJson(res.text) as { error?: string } | null)?.error;
@@ -85,7 +96,7 @@ function expired(res: HttpResponse): boolean {
 }
 
 /**
- * Posts through the AT Protocol with an app password (#91). Record keys come from the delivery's send key (M5 P17),
+ * Posts through the AT Protocol with an app password (#91). Record keys come from the delivery's send key (M5 P17b),
  * which the first claim writes and every retry keeps: a retry asks for each part by its key before creating it, so
  * every createRecord is retry-safe (M5 P2), a thread resumes where it stopped, and lookup() is exact (M5 P5). A
  * check that can't answer posts nothing (M5 P6). Sessions stay in memory only (M5 G5).
@@ -108,15 +119,15 @@ export class BlueskyAdapter implements PlatformAdapter {
 
   async publish(job: DeliveryJob): Promise<PublishResult> {
     const session = await this.session(job);
-    // M5 P17: every record key comes from the send key the first claim wrote, the same on every attempt.
-    const sendAt = job.delivery.sendAt ?? job.delivery.at ?? this.deps.now();
+    // M5 P17b: every record key comes from the send key (a random TID) the first claim wrote, the same on every attempt.
+    const rkey = partKeys(job, this.deps.now());
     // A retry (or a re-send from failed) asks for each part by its key first: the earlier attempt may have stored it.
     const resume = (job.delivery.attempts ?? 1) > 1;
-    const root = await this.post(job, session, 0, sendAt, resume);
+    const root = await this.post(job, session, 0, rkey(0), resume);
     let parent = root;
     for (let i = 1; i < job.items.length; i++) {
       try {
-        parent = await this.post(job, session, i, sendAt, resume, { root, parent });
+        parent = await this.post(job, session, i, rkey(i), resume, { root, parent });
       } catch (e) {
         // Refused for now (5xx, 429, a failed upload): the retry finds the parts already out and continues the thread.
         if (e instanceof PublishError && e.kind === "transient") {
@@ -128,13 +139,13 @@ export class BlueskyAdapter implements PlatformAdapter {
     return this.result(session, root.uri);
   }
 
-  /** Exact (M5 P5): the first part's record, by the key the send key gives it, whichever attempt stored it (M5 P17). */
+  /** Exact (M5 P5): the first part's record, under the stored send key, whichever attempt stored it (M5 P17b). */
   async lookup(job: DeliveryJob): Promise<RemoteState | null> {
-    const sendAt = job.delivery.sendAt;
-    if (sendAt === undefined) return null;
+    const sendKey = job.delivery.sendKey;
+    if (!sendKey || !TID_RE.test(sendKey)) return null;
     try {
       const s = await this.session(job);
-      const ref = await this.stored(job, s, postRkey(sendAt, 0, job.channel.id));
+      const ref = await this.stored(job, s, sendKey);
       return ref ? { published: true, ...this.result(s, ref.uri) } : { published: false };
     } catch {
       return null;
@@ -225,8 +236,7 @@ export class BlueskyAdapter implements PlatformAdapter {
    * RecordNotFound means it is created); so every createRecord is retry-safe (M5 P2), and a thread resumes where
    * it stopped.
    */
-  private async post(job: DeliveryJob, s: Session, i: number, sendAt: number, resume: boolean, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
-    const rkey = postRkey(sendAt, i, job.channel.id);
+  private async post(job: DeliveryJob, s: Session, i: number, rkey: string, resume: boolean, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
     if (resume) {
       const earlier = await this.stored(job, s, rkey);
       if (earlier) return earlier;

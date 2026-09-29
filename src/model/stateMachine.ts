@@ -49,7 +49,10 @@ export function transition(
   const next: Delivery = { ...d, ...patch, status: to };
   // M5 P17: the send key belongs to one send. It is kept while that send is outstanding (publishing, failed and
   // retried, check_needed) and dropped once it is published or the delivery is re-planned.
-  if (CLEARS_SEND_KEY.has(to) && !("sendAt" in patch)) delete next.sendAt;
+  if (CLEARS_SEND_KEY.has(to)) {
+    if (!("sendAt" in patch)) delete next.sendAt;
+    if (!("sendKey" in patch)) delete next.sendKey;
+  }
   return next;
 }
 

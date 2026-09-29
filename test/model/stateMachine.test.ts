@@ -56,15 +56,19 @@ describe("delivery transitions (spec §5)", () => {
   });
 
   it("keeps the send key (sendAt) while a send is outstanding and clears it once the delivery is done or re-planned (M5 P17)", () => {
-    const d = (status: DeliveryStatus): Delivery => ({ status, at: 1000, sendAt: 2000 });
+    const d = (status: DeliveryStatus): Delivery => ({ status, at: 1000, sendAt: 2000, sendKey: "3mxdyj6ws22jm" });
     // Kept: the retry, the user's re-send from failed, the check.
     expect(transition(d("publishing"), "failed").sendAt).toBe(2000);
     expect(transition(d("failed"), "publishing").sendAt).toBe(2000);
     expect(transition(d("publishing"), "check_needed").sendAt).toBe(2000);
     expect(transition(d("check_needed"), "failed").sendAt).toBe(2000);
+    // M5 P17b: the send key's TID follows the same rules.
+    expect(transition(d("publishing"), "failed").sendKey).toBe("3mxdyj6ws22jm");
+    expect(transition(d("failed"), "publishing").sendKey).toBe("3mxdyj6ws22jm");
     // Cleared: published, back to draft or ready, rescheduled or unscheduled.
     for (const [from, to] of [["publishing", "published"], ["check_needed", "published"], ["failed", "scheduled"], ["check_needed", "scheduled"], ["failed", "ready"], ["overdue", "scheduled"], ["scheduled", "draft"]] as Array<[DeliveryStatus, DeliveryStatus]>) {
       expect(transition(d(from), to), `${from} → ${to}`).not.toHaveProperty("sendAt");
+      expect(transition(d(from), to), `${from} → ${to}`).not.toHaveProperty("sendKey");
     }
   });
 

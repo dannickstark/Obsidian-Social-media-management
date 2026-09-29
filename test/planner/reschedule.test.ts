@@ -33,11 +33,11 @@ describe("planReschedule", () => {
   });
 
   it("drops the send key of a failed channel it moves, and keeps the one of a channel waiting for a check (M5 P17)", () => {
-    const v = variant({ deliveries: { "li/me": { status: "failed", attempts: 2, sendAt: T(8, 17, 30) }, "li/acme": { status: "check_needed", sendAt: T(8, 17, 45) } } });
+    const v = variant({ deliveries: { "li/me": { status: "failed", attempts: 2, sendAt: T(8, 17, 30), sendKey: "3mxdyj6ws22jm" }, "li/acme": { status: "check_needed", sendAt: T(8, 17, 45), sendKey: "3mxdyj6ws22jn" } } });
     const whole = planReschedule(rowOf(v, "li/me", T(8, 17, 30), "failed"), { at: T(9, 10, 0) });
     if (!whole.ok) throw new Error();
     expect(whole.patch.deliveries?.["li/me"]).toEqual({ status: "failed", attempts: 2 });
-    expect(whole.patch.deliveries?.["li/acme"]?.sendAt).toBe(T(8, 17, 45));
+    expect(whole.patch.deliveries?.["li/acme"]).toMatchObject({ sendAt: T(8, 17, 45), sendKey: "3mxdyj6ws22jn" });
     const own = variant({ deliveries: { "li/acme": { status: "failed", at: T(8, 20), sendAt: T(8, 20) } } });
     const one = planReschedule(rowOf(own, "li/acme", T(8, 20), "failed"), { at: T(9, 8) });
     if (!one.ok) throw new Error();

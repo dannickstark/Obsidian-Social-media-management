@@ -6,8 +6,8 @@ import { BS, BS_ACCESS, BS_PASSWORD, BS_REFRESH, RATE_HEADERS, RKEY0, uriOf } fr
 const job = () => ({
   variant: { path: "Social/Posts/Bs.md", platform: "bluesky" as const, channels: ["bs/you"], mode: "auto" as const, status: "scheduled" as const, media: [], deliveries: {} },
   channel: channel("bs/you", { handle: "@you.bsky.social", method: "api" as const, secretId: "osmm-channel-bs-you" }),
-  // M5 P17: the record keys come from the send key, which the first claim writes.
-  delivery: { status: "publishing" as const, at: CONTRACT_NOW, attempts: 1, sendAt: CONTRACT_NOW },
+  // M5 P17/P17b: the record keys come from the send key (a TID), which the first claim writes.
+  delivery: { status: "publishing" as const, at: CONTRACT_NOW, attempts: 1, sendAt: CONTRACT_NOW, sendKey: RKEY0 },
   text: "Doors open at 18:00",
   items: ["Doors open at 18:00"],
   body: "Doors open at 18:00",
@@ -29,7 +29,7 @@ export const blueskyCase: ContractCase = {
   serverError: { post: [json(502, BS.upstream)], kind: "transient" },
   sensitive: [BS_PASSWORD, BS_ACCESS, BS_REFRESH],
   lookup: {
-    job: () => ({ ...job(), delivery: { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW } }),
+    job: () => ({ ...job(), delivery: { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: RKEY0 } }),
     found: [json(200, BS.session), json(200, BS.record(RKEY0))],
     expect: { published: true, remoteId: uriOf(RKEY0), url: `https://bsky.app/profile/you.bsky.social/post/${RKEY0}` },
     notFound: [json(200, BS.session), json(400, BS.notFound)],

@@ -8,6 +8,7 @@ import { PLATFORM_META, type Platform } from "../model/platforms";
 import { deliveryTime, transition } from "../model/stateMachine";
 import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
+import { newSendKey } from "../platforms/bluesky/tid";
 import { classifyError, PublishError, statusOf, UnknownOutcomeError, type ErrorKind } from "../platforms/errors";
 import type { AdapterRegistry } from "../platforms/registry";
 import type { DeliveryJob, PlatformAdapter, RemoteState } from "../platforms/types";
@@ -330,7 +331,9 @@ export class PublishOrchestrator {
       const now = this.deps.now();
       // M5 P17: the send key is written once per send, as it reads back from disk (whole seconds), and kept by retries.
       const sendAt = from.sendAt ?? parseDateTime(formatDateTime(now)) ?? now;
-      const next = transition(from, "publishing", { at: now, attempts: (d.attempts ?? 0) + 1, sendAt });
+      // M5 P17b: and a random TID beside it, so two sends in the same second never share platform keys.
+      const sendKey = from.sendKey ?? newSendKey(now);
+      const next = transition(from, "publishing", { at: now, attempts: (d.attempts ?? 0) + 1, sendAt, sendKey });
       delete next.error;
       box.variant = fresh;
       box.delivery = next;

@@ -64,9 +64,10 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
     if (d?.status === "overdue") deliveries[id] = transition(d, "scheduled");
     // M5 P17: a moved delivery is a new send, so its send key goes; a check still waiting keeps the key its lookup needs.
     const moved = deliveries[id];
-    if (moved?.sendAt !== undefined && !KEEP_SEND_KEY.has(moved.status)) {
+    if ((moved?.sendAt !== undefined || moved?.sendKey !== undefined) && !KEEP_SEND_KEY.has(moved.status)) {
       const next = { ...moved };
       delete next.sendAt;
+      delete next.sendKey;
       deliveries[id] = next;
     }
   }

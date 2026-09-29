@@ -1,4 +1,4 @@
-import { postRkey } from "../../../src/platforms/bluesky/tid";
+import { tid } from "../../../src/platforms/bluesky/tid";
 import { CONTRACT_NOW } from "../contract/harness";
 
 export const BS_PASSWORD = "abcd-efgh-ijkl-mnop";
@@ -6,7 +6,8 @@ export const BS_DID = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
 export const BS_PDS = "https://morel.us-east.host.bsky.network";
 export const BS_ACCESS = "eyJhbGciOiJFUzI1NksifQ.YWNjZXNz.c2lnbmF0dXJlLWFjY2Vzcw";
 export const BS_REFRESH = "eyJhbGciOiJFUzI1NksifQ.cmVmcmVzaA.c2lnbmF0dXJlLXJlZnJlc2g";
-export const RKEY0 = postRkey(CONTRACT_NOW, 0, "bs/you");
+/** The contract job's send key (M5 P17b): the claim's TID with a random offset and clock id; part 0's record key. */
+export const RKEY0 = tid(CONTRACT_NOW * 1000 + 417, 733);
 export const uriOf = (rkey: string): string => `at://${BS_DID}/app.bsky.feed.post/${rkey}`;
 
 const didDoc = {

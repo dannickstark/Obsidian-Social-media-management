@@ -228,7 +228,7 @@ describe("SafeWriter", () => {
 
   it("owns send_at: a transition that clears the send key removes it from the entry (M5 P17)", async () => {
     const app = createApp();
-    const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "failed", send_at: "2026-10-08T10:00:00+02:00", note: "keep me" } } });
+    const file = await writeNote(app, "p.md", { ...post, deliveries: { "li/me": { status: "failed", send_at: "2026-10-08T10:00:00+02:00", send_key: "3mxdyj6ws22jm", note: "keep me" } } });
     await new SafeWriter(app).transitionDelivery(file, "li/me", "scheduled");
     expect((await fmOf(app, file)).deliveries).toEqual({ "li/me": { status: "scheduled", note: "keep me" } });
   });

@@ -27,3 +27,26 @@ export function tidMicros(key: string): number {
 export function postRkey(claimAt: number, index: number, channelId: string): string {
   return tid(claimAt * 1000 + index, cyrb53(channelId) % 1024);
 }
+
+/** The clock id (low 10 bits) of a TID. */
+function tidClock(key: string): number {
+  let v = 0n;
+  for (const ch of key) v = v * 32n + BigInt(S32.indexOf(ch));
+  return Number(v & 1023n);
+}
+
+/** The key of thread part `index` of a send whose root key is `root`: the root's time plus `index` µs, same clock id (M5 P17b). */
+export function tidParts(root: string, index: number): string {
+  return tid(tidMicros(root) + index, tidClock(root));
+}
+
+/**
+ * A new send key (M5 P17b): a TID of `nowMs` with a random sub-millisecond offset and a random 10-bit clock id
+ * (crypto.getRandomValues, available on desktop and mobile), so two sends claimed in the same second never share
+ * record keys. Written once, at the first claim, and kept by every retry.
+ */
+export function newSendKey(nowMs: number): string {
+  const r = new Uint16Array(2);
+  globalThis.crypto.getRandomValues(r);
+  return tid(Math.floor(nowMs) * 1000 + (r[0]! % 1000), r[1]! & 1023);
+}

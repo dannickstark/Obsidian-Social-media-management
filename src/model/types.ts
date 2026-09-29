@@ -46,6 +46,11 @@ export interface Delivery {
    * which every claim rewrites. Cleared once the delivery is published or re-planned (see `transition`).
    */
   sendAt?: number;
+  /**
+   * The send key as a TID (M5 P17b): random, written with `sendAt` at the first claim and kept and cleared under the
+   * same rules. Bluesky derives the record key of every thread part from it (`tidParts`).
+   */
+  sendKey?: string;
 }
 
 export interface Campaign {

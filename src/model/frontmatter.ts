@@ -13,6 +13,7 @@ import {
   zVariantStatus,
 } from "./schemas";
 import type { Campaign, Delivery, Issue, MediaMeta, Parsed, Variant, WordPressFields } from "./types";
+import { TID_RE } from "../platforms/bluesky/tid";
 
 export type SocialKind = "campaign" | "post";
 
@@ -138,6 +139,11 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     if (remoteAt !== undefined) d.remoteAt = remoteAt;
     const sendAt = takeDate(value.send_at, `${field}.send_at`, issues);
     if (sendAt !== undefined) d.sendAt = sendAt;
+    if (!isBlank(value.send_key)) {
+      const sendKey = String(value.send_key).trim();
+      if (TID_RE.test(sendKey)) d.sendKey = sendKey;
+      else issues.push({ level: "warning", field: `${field}.send_key`, message: `"${sendKey}" is not a valid send key` });
+    }
     // YAML reads an all-digit digest as a number; it is still the same digest.
     const digest = typeof value.digest === "string" || typeof value.digest === "number" ? String(value.digest).trim() : "";
     if (digest) d.digest = digest;
@@ -275,6 +281,7 @@ export function serializeDelivery(d: Delivery): Record<string, unknown> {
   if (d.remoteAt !== undefined) out.remote_at = formatDateTime(d.remoteAt);
   if (d.digest) out.digest = d.digest;
   if (d.sendAt !== undefined) out.send_at = formatDateTime(d.sendAt);
+  if (d.sendKey) out.send_key = d.sendKey;
   return out;
 }
 
