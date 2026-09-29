@@ -1,3 +1,4 @@
+import { BlueskyAdapter } from "./bluesky/api";
 import { DiscordAdapter } from "./discord/api";
 import type { HttpFn } from "./http";
 import type { LinkCard } from "./og";
@@ -27,5 +28,5 @@ export interface AdapterDeps {
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
 export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
-  return [new TelegramAdapter(deps), new DiscordAdapter(deps)];
+  return [new TelegramAdapter(deps), new DiscordAdapter(deps), new BlueskyAdapter(deps)];
 }

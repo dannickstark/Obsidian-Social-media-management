@@ -101,7 +101,7 @@ function isPrivateHost(hostname: string): boolean {
 }
 
 /** A URL this fetcher is willing to request: https only, and never a private/loopback/link-local host. */
-function isFetchable(url: string): boolean {
+export function isFetchable(url: string): boolean {
   if (!HTTPS_URL.test(url)) return false;
   try {
     return !isPrivateHost(new URL(url).hostname);
