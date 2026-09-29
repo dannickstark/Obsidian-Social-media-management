@@ -93,3 +93,45 @@ describe("imageEmbeds", () => {
     expect(imageEmbeds("![[a.png]] text ![b](img/b.png) ![[a.png]] ![c](https://x.example/c.png) %%![[hidden.png]]%%")).toEqual(["a.png", "img/b.png"]);
   });
 });
+
+/** A stack-based tag-balance check: catches crossing tags (a close that doesn't match the innermost open), not only unequal counts. Void elements (self-closing, `<tag ... />`) are never pushed. */
+function wellFormed(fragment: string): boolean {
+  const stack: string[] = [];
+  for (const m of fragment.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*?(\/?)>/gi)) {
+    const [, closing, name, selfClosing] = m;
+    if (selfClosing) continue;
+    if (closing) {
+      if (stack.pop() !== name!.toLowerCase()) return false;
+    } else {
+      stack.push(name!.toLowerCase());
+    }
+  }
+  return stack.length === 0;
+}
+
+describe("markdownToHtml fix round 1 (#92)", () => {
+  it("never crosses tags on overlapping emphasis markers; an unmatched or crossing marker stays literal", () => {
+    expect(wellFormed(html("*a **b* c**"))).toBe(true);
+    expect(wellFormed(html("**a *b** c*"))).toBe(true);
+  });
+
+  it("keeps a balanced parenthesis in a link destination, and supports the <...> form for anything else", () => {
+    expect(html("[a](https://example.com/wiki/Foo_(bar))")).toBe('<p><a href="https://example.com/wiki/Foo_(bar)">a</a></p>');
+    expect(html("[a](<https://example.com/wiki/Foo_(bar>)")).toBe('<p><a href="https://example.com/wiki/Foo_(bar">a</a></p>');
+  });
+
+  it("gives ** and __ the same word-boundary guard * and _ already have", () => {
+    expect(html("prefix__word__suffix")).toBe("<p>prefix__word__suffix</p>");
+    expect(html("prefix**word**suffix")).toBe("<p>prefix**word**suffix</p>");
+  });
+
+  it("opens a fence even when the language token has characters outside [\\w+-]", () => {
+    expect(html("```c++!\nconst a = 1;\n```")).toBe('<pre class="wp-block-code"><code class="language-c++">const a = 1;</code></pre>');
+  });
+
+  it("supports an escaped pipe inside a table cell", () => {
+    expect(html("| A | B |\n| --- | --- |\n| a\\|b | c |")).toBe(
+      '<figure class="wp-block-table"><table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>a|b</td><td>c</td></tr></tbody></table></figure>',
+    );
+  });
+});

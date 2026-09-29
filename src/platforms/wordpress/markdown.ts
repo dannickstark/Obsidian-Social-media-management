@@ -14,7 +14,7 @@ const REMOTE = /^https?:\/\//i;
 /** Marks a piece of finished HTML inside text that is still to be escaped and styled. */
 const PH = "\u0000";
 
-const FENCE_RE = /^\s*(`{3,}|~{3,})\s*([\w+-]*)\s*$/;
+const FENCE_RE = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/;
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const HR_RE = /^\s*([-*_])(?:\s*\1){2,}\s*$/;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
@@ -61,10 +61,64 @@ function img(e: Embed, opts: HtmlOptions): string | null {
 }
 
 /**
+ * A Markdown link's destination: `<...>` (anything but `<`, `>` or a newline), or a bare run that may contain one
+ * level of balanced parens (`Foo_(bar)`), stopping at the unbalanced `)` that closes the link (CommonMark's rule).
+ */
+const LINK_RE = /\[([^\]]+)\]\((?:<([^<>\n]*)>|((?:[^()\s]|\([^()]*\))+))(?:\s+"[^"]*")?\)/g;
+
+/** One `*`/`_`/`~~`/`==` run: its HTML tag, and whether it needs the word-boundary guard `*`/`_` already had. */
+const MARKS: Record<string, { tag: string; guard: RegExp | null }> = {
+  "**": { tag: "strong", guard: /[*\w]/ },
+  "__": { tag: "strong", guard: /[_\w]/ },
+  "*": { tag: "em", guard: /[*\w]/ },
+  "_": { tag: "em", guard: /[_\w]/ },
+  "~~": { tag: "del", guard: null },
+  "==": { tag: "mark", guard: null },
+};
+const DELIM_RE = /\*\*|__|~~|==|\*|_/g;
+
+/**
+ * Turns `**`, `__`, `*`, `_`, `~~` and `==` runs into tags with a small opener stack, so tags nest instead of
+ * crossing: a closer only resolves the *innermost* open run of its own exact marker; anything a closer can't
+ * resolve, and anything left open at the end, stays literal (the review's "overlapping emphasis" fix).
+ */
+function emphasize(text: string): string {
+  const out: string[] = [];
+  const stack: { type: string; at: number }[] = [];
+  let last = 0;
+  for (const m of text.matchAll(DELIM_RE)) {
+    const tok = m[0];
+    const start = m.index;
+    const end = start + tok.length;
+    if (start > last) out.push(text.slice(last, start));
+    last = end;
+    const before = start > 0 ? text[start - 1] : undefined;
+    const after = end < text.length ? text[end] : undefined;
+    const mark = MARKS[tok]!;
+    const canOpen = after !== undefined && !/\s/.test(after) && (!mark.guard || before === undefined || !mark.guard.test(before));
+    const canClose = before !== undefined && !/\s/.test(before) && (!mark.guard || after === undefined || !mark.guard.test(after));
+    const top = stack[stack.length - 1];
+    if (canClose && top?.type === tok) {
+      stack.pop();
+      out[top.at] = `<${mark.tag}>`;
+      out.push(`</${mark.tag}>`);
+    } else if (canOpen) {
+      out.push(tok);
+      stack.push({ type: tok, at: out.length - 1 });
+    } else {
+      out.push(tok);
+    }
+  }
+  if (last < text.length) out.push(text.slice(last));
+  // Unmatched openers were pushed as their literal marker text (`out[at]`) and never rewritten, so they stay as written.
+  return out.join("");
+}
+
+/**
  * Inline text (already outside code blocks): embeds, wikilinks, Markdown links and bare URLs are set aside as
  * finished HTML first, so the emphasis rules below never see them and can't reach into an href or a target.
- * Everything else is escaped, so raw HTML in the note shows as text; then `**`, `*`, `_`, `~~` and `==` become tags,
- * each with a word boundary on its outer side so markers inside words are left alone.
+ * Everything else is escaped, so raw HTML in the note shows as text; then `**`, `*`, `_`, `~~` and `==` become tags
+ * (never crossing), each with a word boundary on its outer side so markers inside words are left alone.
  */
 function spans(text: string, opts: HtmlOptions): string {
   const saved: string[] = [];
@@ -78,20 +132,15 @@ function spans(text: string, opts: HtmlOptions): string {
     .replace(/\[\[([^\]|#]*)(?:#([^\]|]*))?(?:\|([^\]]+))?\]\]/g, (_m, target: string, heading: string | undefined, alias: string | undefined) =>
       keep(escapeHtml((alias ?? (target.trim() ? (target.split("/").pop() ?? target) : (heading ?? ""))).trim())),
     )
-    .replace(/\[([^\]]+)\]\(<?([^)\s>]+)>?\)/g, (_m, label: string, href: string) =>
-      keep(SAFE_HREF.test(href) ? `<a href="${escapeHtml(href)}">${spans(label, opts)}</a>` : spans(label, opts)),
-    )
+    .replace(LINK_RE, (_m, label: string, angle: string | undefined, plain: string | undefined) => {
+      const href = angle ?? plain ?? "";
+      return keep(SAFE_HREF.test(href) ? `<a href="${escapeHtml(href)}">${spans(label, opts)}</a>` : spans(label, opts));
+    })
     .replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => {
       const clean = url.replace(/[.,;:!?]+$/, "");
       return keep(`<a href="${escapeHtml(clean)}">${escapeHtml(clean)}</a>`) + url.slice(clean.length);
     });
-  return escapeHtml(marked)
-    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, "<strong>$2</strong>")
-    .replace(/~~(?=\S)([^\n]*?\S)~~/g, "<del>$1</del>")
-    .replace(/==(?=\S)([^\n]*?\S)==/g, "<mark>$1</mark>")
-    .replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1<em>$2</em>")
-    .replace(/(^|[^_\w])_(?=\S)([^_\n]*?\S)_(?![_\w])/g, "$1<em>$2</em>")
-    .replace(new RegExp(`${PH}(\\d+)${PH}`, "g"), (_m, n: string) => saved[Number(n)] ?? "");
+  return emphasize(escapeHtml(marked)).replace(new RegExp(`${PH}(\\d+)${PH}`, "g"), (_m, n: string) => saved[Number(n)] ?? "");
 }
 
 function inline(raw: string, opts: HtmlOptions): string {
@@ -150,13 +199,25 @@ function list(lines: readonly string[], start: number, opts: HtmlOptions): { htm
   return { html: `<${tag}>${items.map((it) => `<li>${it}</li>`).join("")}</${tag}>`, next: i };
 }
 
+/** A table row's cells, split on `|`; a backslash-escaped `\|` is a literal pipe, not a separator. */
 function cells(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((c) => c.trim());
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const out: string[] = [];
+  let cur = "";
+  for (let i = 0; i < trimmed.length; i++) {
+    const c = trimmed[i]!;
+    if (c === "\\" && trimmed[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (c === "|") {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur.trim());
+  return out;
 }
 
 function table(lines: readonly string[], start: number, opts: HtmlOptions): { html: string; next: number } {
@@ -193,7 +254,9 @@ function blocks(lines: readonly string[], opts: HtmlOptions): string[] {
       i++;
       while (i < lines.length && !lines[i]!.trim().startsWith(marker)) code.push(lines[i++]!);
       i++;
-      const lang = fence[2] ? ` class="language-${escapeHtml(fence[2])}"` : "";
+      // The class name only ever takes [\w+-] (CSS-safe); anything else in the token is dropped, not refused.
+      const cleanLang = (fence[2] ?? "").replace(/[^\w+-]/g, "");
+      const lang = cleanLang ? ` class="language-${escapeHtml(cleanLang)}"` : "";
       out.push(`<pre class="wp-block-code"><code${lang}>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
