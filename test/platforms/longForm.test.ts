@@ -67,6 +67,33 @@ describe("chat platforms", () => {
     expect(check("discord", "a".repeat(2001))).toEqual(["error:body:The text is 2,001/2,000 characters."]);
   });
 
+  it("counts the url the adapter appends on its own line (Task 6 follow-up)", () => {
+    const url = "https://event.example/x"; // 23 characters, plus the blank line: 25
+    expect(check("discord", "a".repeat(1980))).toEqual([]);
+    expect(check("discord", "a".repeat(1980), { url })).toEqual(["error:body:The text is 2,005/2,000 characters."]);
+    // A text that already has the link is sent as it is.
+    expect(check("discord", `${"a".repeat(1970)} ${url}`, { url })).toEqual([]);
+    expect(counters(input("discord", "Hi", { url }), platformDef("discord"))).toEqual([{ label: "Length", value: 27, limit: 2000 }]);
+    expect(check("telegram", "a".repeat(4080), { url })).toEqual(["error:body:The text is 4,105/4,096 characters."]);
+    // Link platforms that don't append it keep counting the text alone.
+    expect(check("linkedin", "a".repeat(3000), { url })).toEqual([]);
+  });
+
+  it("Telegram's caption warning counts the appended url too, and stays a warning (M5 P14)", () => {
+    const url = "https://event.example/x";
+    expect(check("telegram", "a".repeat(999), { url }, [img()])).toEqual([]);
+    expect(check("telegram", "a".repeat(1000), { url }, [img()])).toEqual([
+      "warning:body:With media, Telegram allows 1,024 characters in a caption; the photos go first and the text follows as its own message.",
+    ]);
+  });
+
+  it("Discord: warns when an alt text is over 1 024 characters, counted by code points (Task 6 follow-up)", () => {
+    expect(check("discord", "Hi", {}, [img("cover.png", 1080, 1080, { alt: "\u{1F600}".repeat(1024) })])).toEqual([]);
+    expect(check("discord", "Hi", {}, [img("cover.png", 1080, 1080, { alt: "a".repeat(1025) })])).toEqual([
+      "warning:media.cover.png:cover.png: Discord shows at most 1,024 characters of alt text; the rest is cut.",
+    ]);
+  });
+
   it("WhatsApp: a normal message passes", () => {
     expect(check("whatsapp", "*Event X* at 18:00")).toEqual([]);
   });

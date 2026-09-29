@@ -79,6 +79,33 @@ describe("DiscordAdapter.publish", () => {
     await expect(adapter.publish(job())).rejects.toMatchObject({ kind: "unknown" });
   });
 
+  it("cuts an alt text at 1 024 code points, never inside a character (Task 6 follow-up)", async () => {
+    queue(json(200, DC.webhook), json(200, DC.message));
+    await new DiscordAdapter(contractDeps()).publish(job({ media: [img("cover.png", 1080, 1080, { alt: "\u{1F600}".repeat(1100) })] }));
+    const description = (JSON.parse(formParts(1).payload_json!.value!) as { attachments: Array<{ description: string }> }).attachments[0]!.description;
+    expect(Array.from(description)).toHaveLength(1024);
+    expect(description).toBe("\u{1F600}".repeat(1024));
+  });
+
+  it("names the field and the reason of a rejected form, without the webhook URL (Task 6 follow-up)", async () => {
+    queue(json(200, DC.webhook), json(400, DC.invalidForm));
+    const adapter = new DiscordAdapter(contractDeps());
+    await expect(adapter.publish(job())).rejects.toMatchObject({
+      kind: "invalid_content",
+      message: "Discord: Invalid Form Body (content: Must be 2000 or fewer in length.) (HTTP 400)",
+    });
+    const nested = { message: "Invalid Form Body", code: 50035, errors: { attachments: { "0": { description: { _errors: [{ code: "X", message: `Bad ${DC_WEBHOOK}` }] } } } } };
+    queue(json(400, nested));
+    await expect(adapter.publish(job())).rejects.toMatchObject({ message: "Discord: Invalid Form Body (attachments.0.description: Bad [webhook URL]) (HTTP 400)" });
+  });
+
+  it("gives the deleted-webhook advice only for Unknown Webhook (10015); other 404s are a plain not found (Task 6 follow-up)", async () => {
+    queue(json(404, { message: "Unknown Channel", code: 10003 }));
+    await expect(new DiscordAdapter(contractDeps()).publish(job())).rejects.toMatchObject({ kind: "needs_user", message: "Discord: not found (HTTP 404)" });
+    queue(text(404, "<html>Not Found</html>"));
+    await expect(new DiscordAdapter(contractDeps()).publish(job())).rejects.toMatchObject({ kind: "needs_user", message: "Discord: not found (HTTP 404)" });
+  });
+
   it("asks for the webhook's server once per session", async () => {
     const adapter = new DiscordAdapter(contractDeps());
     queue(json(200, DC.webhook), json(200, DC.message), json(200, DC.message));

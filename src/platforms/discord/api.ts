@@ -5,6 +5,7 @@ import { fileName, readMedia } from "../files";
 import { ApiClient, header, isOk, parseJson, UPLOAD_TIMEOUT_MS, type ApiFailure, type HttpResponse } from "../http";
 import { multipart } from "../multipart";
 import { withLink } from "../text";
+import { ALT_MAX } from "./index";
 import type { DeliveryJob, PlatformAdapter, PublishResult, VerifyResult } from "../types";
 
 const WEBHOOK_RE = /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api(?:\/v\d+)?\/webhooks\/(\d+)\/([\w-]+)\/?$/;
@@ -23,8 +24,31 @@ interface DcMessage {
 }
 interface DcError {
   message?: string;
+  code?: number;
   retry_after?: number;
   global?: boolean;
+  errors?: unknown;
+}
+
+/** Unknown Webhook: the webhook was deleted (or its token reset). */
+const UNKNOWN_WEBHOOK = 10015;
+/** Invalid Form Body: `errors` holds the fields, each with `_errors: [{ code, message }]`. */
+const INVALID_FORM_BODY = 50035;
+
+/** The first field error of an Invalid Form Body answer, as "path: message" (e.g. "content: Must be 2000 or fewer in length."). */
+export function firstFormError(errors: unknown, path: string[] = []): string | null {
+  if (typeof errors !== "object" || errors === null) return null;
+  const own = (errors as { _errors?: unknown })._errors;
+  if (Array.isArray(own)) {
+    const message = (own[0] as { message?: unknown } | undefined)?.message;
+    if (typeof message === "string") return path.length ? `${path.join(".")}: ${message}` : message;
+  }
+  for (const [key, value] of Object.entries(errors)) {
+    if (key === "_errors") continue;
+    const found = firstFormError(value, [...path, key]);
+    if (found) return found;
+  }
+  return null;
 }
 
 export interface DiscordWebhook {
@@ -56,7 +80,13 @@ export function redactWebhook(text: string, secret?: string): string {
 /** Discord's error body: its `message` is the text (never the request URL, which carries the webhook token). */
 export function discordFailure(res: HttpResponse, secret?: string): ApiFailure {
   const body = parseJson(res.text) as DcError | null;
-  const message = typeof body?.message === "string" ? redactWebhook(body.message, secret) : `HTTP ${res.status}`;
+  let raw = typeof body?.message === "string" ? body.message : `HTTP ${res.status}`;
+  if (body?.code === INVALID_FORM_BODY) {
+    const detail = firstFormError(body.errors);
+    if (detail) raw = `${raw} (${detail})`;
+  }
+  // Redacted after the field detail is added: a field's message can echo what was sent.
+  const message = redactWebhook(raw, secret);
   if (res.status === 429) {
     // The body's retry_after is in seconds and may be fractional; without it (a Cloudflare 429) Retry-After is used.
     const global = body?.global === true || header(res.headers, "x-ratelimit-global") === "true" || header(res.headers, "x-ratelimit-scope") === "global";
@@ -64,7 +94,10 @@ export function discordFailure(res: HttpResponse, secret?: string): ApiFailure {
     if (typeof body?.retry_after === "number" && Number.isFinite(body.retry_after)) return { message: text, kind: "transient", retryAfterMs: Math.ceil(Math.max(0, body.retry_after) * 1000) };
     return { message: text, kind: "transient" };
   }
-  if (res.status === 404) return { message: `${message}. The webhook was deleted; create a new one and save its URL as this channel's credential.`, kind: "needs_user" };
+  if (res.status === 404) {
+    if (body?.code === UNKNOWN_WEBHOOK) return { message: `${message}. The webhook was deleted; create a new one and save its URL as this channel's credential.`, kind: "needs_user" };
+    return { message: "not found", kind: "needs_user" };
+  }
   return { message };
 }
 
@@ -99,7 +132,7 @@ export class DiscordAdapter implements PlatformAdapter {
       res = await api.commit({ url: `${hook.base}?wait=true`, method: "POST", contentType: "application/json", body: JSON.stringify(payload) });
     } else {
       const files = await Promise.all(images.map((m) => readMedia((p) => this.deps.readBinary(p), m)));
-      payload.attachments = images.map((m, i) => ({ id: i, filename: fileName(m), ...(m.alt ? { description: m.alt.slice(0, 1024) } : {}) }));
+      payload.attachments = images.map((m, i) => ({ id: i, filename: fileName(m), ...(m.alt ? { description: Array.from(m.alt).slice(0, ALT_MAX).join("") } : {}) }));
       const form = multipart([
         { name: "payload_json", value: JSON.stringify(payload) },
         ...images.map((m, i) => ({ name: `files[${i}]`, filename: fileName(m), contentType: m.mime ?? "application/octet-stream", data: files[i]! })),

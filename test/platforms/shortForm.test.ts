@@ -25,6 +25,13 @@ describe("X (280 weighted, URL = 23, media ≤ 4)", () => {
     expect(messages(validateFor(input("x", `short\n---\n${"b".repeat(281)}`), X))).toEqual(["error:body.2:Part 2 is 281/280 characters."]);
   });
 
+  it("counts the url the adapter appends to the first part (Task 6 follow-up)", () => {
+    const url = "https://example.com/x"; // a URL counts 23, plus the blank line: 25
+    expect(messages(validateFor(input("mastodon", "a".repeat(476), { url }), MA))).toEqual(["error:body:The text is 501/500 characters."]);
+    expect(messages(validateFor(input("mastodon", `${"a".repeat(476)}\n---\nHi`, { url }), MA))).toEqual(["error:body.1:Part 1 is 501/500 characters."]);
+    expect(validateFor(input("mastodon", `Hi\n---\n${"a".repeat(500)}`, { url }), MA)).toEqual([]);
+  });
+
   it("allows at most four images", () => {
     const media = ["1.png", "2.png", "3.png", "4.png", "5.png"].map((t) => img(t));
     expect(messages(validateFor(input("x", "Hi", {}, media), X))).toEqual(["error:media:X allows at most 4 images; this post has 5."]);
@@ -58,6 +65,13 @@ describe("Mastodon (500 by default, per-channel limit, URL = 23)", () => {
   it("uses the instance limit of the channel", () => {
     expect(messages(validateFor(input("mastodon", "a".repeat(501)), MA))).toEqual(["error:body:The text is 501/500 characters."]);
     expect(validateFor(input("mastodon", "a".repeat(700)), MA, channel("ma/you", { maxChars: 1000 }))).toEqual([]);
+  });
+
+  it("counts the url the adapter appends to the first part (Task 6 follow-up)", () => {
+    const url = "https://example.com/x"; // a URL counts 23, plus the blank line: 25
+    expect(messages(validateFor(input("mastodon", "a".repeat(476), { url }), MA))).toEqual(["error:body:The text is 501/500 characters."]);
+    expect(messages(validateFor(input("mastodon", `${"a".repeat(476)}\n---\nHi`, { url }), MA))).toEqual(["error:body.1:Part 1 is 501/500 characters."]);
+    expect(validateFor(input("mastodon", `Hi\n---\n${"a".repeat(500)}`, { url }), MA)).toEqual([]);
   });
 
   it("allows at most four images", () => {

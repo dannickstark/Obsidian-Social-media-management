@@ -1,8 +1,8 @@
 import { countChars } from "../model/body";
-import { PLATFORM_META } from "../model/platforms";
+import { PLATFORM_META, type Platform } from "../model/platforms";
 import type { Channel, Issue } from "../model/types";
 import { platformDef } from "./registry";
-import { countFor, hashtags, postItems, postText } from "./text";
+import { countFor, hashtags, postItems, postText, withLink } from "./text";
 import { MB, type ComposeInput, type PlatformDef } from "./types";
 
 export const fmt = (n: number): string => n.toLocaleString("en-US");
@@ -12,10 +12,23 @@ export function limitFor(def: PlatformDef, channel?: Channel): number {
   return channel?.maxChars ?? def.capabilities.limits.maxChars;
 }
 
-/** Empty text and per-item length (thread items on thread platforms). */
+/** Platforms whose adapters append the post's url to the text (to its first part) with `withLink`. */
+const APPENDS_LINK: ReadonlySet<Platform> = new Set<Platform>(["telegram", "discord", "mastodon"]);
+
+/**
+ * The items as the adapter sends them: on platforms that append the url, the first item carries it (withLink), so
+ * the length checks count what is actually sent. Empty when there is no text.
+ */
+export function sentItems(input: ComposeInput, def: PlatformDef): string[] {
+  const items = postItems(input.body, def);
+  if (!items.length || !APPENDS_LINK.has(def.id)) return items;
+  return [withLink(items[0]!, input.variant.url), ...items.slice(1)];
+}
+
+/** Empty text and per-item length (thread items on thread platforms), counting an appended url. */
 export function textChecks(input: ComposeInput, def: PlatformDef, channel?: Channel): Issue[] {
   const { limits, media } = def.capabilities;
-  const items = postItems(input.body, def);
+  const items = sentItems(input, def);
   if (items.length === 0) {
     // Link submissions (HN, Reddit) can go without text; linkChecks (Task 4) covers them.
     if (limits.link === "required" || limits.link === "url-or-text") return [];
@@ -86,7 +99,7 @@ export function linkChecks(input: ComposeInput, def: PlatformDef): Issue[] {
 export function captionChecks(input: ComposeInput, def: PlatformDef): Issue[] {
   const max = def.capabilities.limits.maxCharsWithMedia;
   if (!max || input.media.length === 0) return [];
-  const n = countFor(postText(input.body, def), def);
+  const n = countFor(sentItems(input, def).join("\n\n"), def);
   if (n <= max) return [];
   // M5 P14: a warning; the adapter posts the photos first and the text after them as its own message (#88).
   return [
@@ -184,7 +197,7 @@ export interface Counter {
 
 export function counters(input: ComposeInput, def: PlatformDef, channel?: Channel): Counter[] {
   const { limits } = def.capabilities;
-  const items = postItems(input.body, def);
+  const items = sentItems(input, def);
   const limit = input.media.length > 0 && limits.maxCharsWithMedia ? limits.maxCharsWithMedia : limitFor(def, channel);
   const out: Counter[] =
     items.length > 1
