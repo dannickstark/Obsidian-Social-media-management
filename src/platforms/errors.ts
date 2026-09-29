@@ -89,3 +89,15 @@ export class RemoteRemovedError extends PublishError {
     this.name = "RemoteRemovedError";
   }
 }
+
+/**
+ * M5 P4: a Mastodon content update removed the old scheduled post, and the new one's outcome is unknown (no answer,
+ * a dropped connection, a 5xx, an unreadable answer). The caller never returns the delivery to `scheduled`: it goes
+ * to `check_needed` without `remote_id`, and the lookup searches the platform's schedule.
+ */
+export class ReplacementUnknownError extends UnknownOutcomeError {
+  constructor(message = "Mastodon: the old scheduled post was removed; the new one may or may not be scheduled.") {
+    super(message);
+    this.name = "ReplacementUnknownError";
+  }
+}
