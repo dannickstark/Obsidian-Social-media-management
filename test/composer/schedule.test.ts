@@ -39,6 +39,13 @@ describe("planComposerSchedule", () => {
     });
   });
 
+  it("drops the send key of a failed channel it schedules again (M5 P17)", () => {
+    const post = v({ channels: ["li/me"], deliveries: { "li/me": { status: "failed", attempts: 1, sendAt: T } } });
+    expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toMatchObject({ deliveries: { "li/me": { status: "scheduled", attempts: 1 } } });
+    const planned = planComposerSchedule(post, { at: NEW, reminders: [] }, 15);
+    expect("deliveries" in planned && planned.deliveries?.["li/me"]).not.toHaveProperty("sendAt");
+  });
+
   it("schedules channels without records and keeps handed-over ones where they are", () => {
     const post = v({ deliveries: { "li/maker": { status: "handed_over", remoteId: "9" } } });
     expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toEqual({

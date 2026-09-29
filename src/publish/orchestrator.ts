@@ -3,7 +3,7 @@ import type { ChannelRegistry } from "../channels/registry";
 import type { ContentLoader, LoadedContent } from "../composer/content";
 import { HELD_REFUSAL, heldForReview } from "../index/queries";
 import type { SocialIndex } from "../index/socialIndex";
-import { MINUTE } from "../model/dates";
+import { formatDateTime, MINUTE, parseDateTime } from "../model/dates";
 import { PLATFORM_META, type Platform } from "../model/platforms";
 import { deliveryTime, transition } from "../model/stateMachine";
 import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
@@ -327,7 +327,10 @@ export class PublishOrchestrator {
         return { deliveries: { [channelId]: { ...d, error: CHANGED_RETRY } } };
       }
       const from = VIA_SCHEDULED.has(d.status) ? transition(d, "scheduled") : d;
-      const next = transition(from, "publishing", { at: this.deps.now(), attempts: (d.attempts ?? 0) + 1 });
+      const now = this.deps.now();
+      // M5 P17: the send key is written once per send, as it reads back from disk (whole seconds), and kept by retries.
+      const sendAt = from.sendAt ?? parseDateTime(formatDateTime(now)) ?? now;
+      const next = transition(from, "publishing", { at: now, attempts: (d.attempts ?? 0) + 1, sendAt });
       delete next.error;
       box.variant = fresh;
       box.delivery = next;

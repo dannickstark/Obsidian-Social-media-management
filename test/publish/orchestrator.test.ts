@@ -78,7 +78,7 @@ describe("PublishOrchestrator", () => {
     ref.c = c;
     expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "published", url: "https://t.me/eventx/42" });
     expect(seen).toEqual({
-      deliveries: { "tg/event-x": { status: "publishing", at: formatDateTime(TEST_NOW), attempts: 1 } },
+      deliveries: { "tg/event-x": { status: "publishing", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW) } },
       secret: "SECRET-TOKEN-123",
       text: "Doors open at 18:00",
     });
@@ -90,6 +90,42 @@ describe("PublishOrchestrator", () => {
       remoteId: "42",
       attempts: 1,
     });
+  });
+
+  it("keeps the send key of the first claim across retries and a re-send from failed; at moves, send_at does not (M5 P17)", async () => {
+    const EARLIER = TEST_NOW - 20 * MIN;
+    const seen: Array<{ at?: number; sendAt?: number }> = [];
+    const onDisk: unknown[] = [];
+    let calls = 0;
+    const { c, orchestrator } = await setup(
+      async (job) => {
+        seen.push({ at: job.delivery.at, sendAt: job.delivery.sendAt });
+        if (++calls < 2) throw http(502);
+        return { remoteId: "7", url: "https://t.me/eventx/7" };
+      },
+      {
+        notes: [note(P, { status: "failed", at: formatDateTime(EARLIER), send_at: formatDateTime(EARLIER), attempts: 1, error: "HTTP 502" })],
+        onDelay: async (ctx) => void onDisk.push(((await fm(ctx)).deliveries as Record<string, Record<string, unknown>>)["tg/event-x"]!.send_at),
+      },
+    );
+    expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "published" });
+    expect(seen).toEqual([
+      { at: TEST_NOW, sendAt: EARLIER },
+      { at: TEST_NOW, sendAt: EARLIER },
+    ]);
+    expect(onDisk).toEqual([formatDateTime(EARLIER)]);
+    // Published: the send key is dropped.
+    expect(((await fm(c)).deliveries as Record<string, Record<string, unknown>>)["tg/event-x"]).not.toHaveProperty("send_at");
+  });
+
+  it("writes the send key as it reads back from disk (whole seconds), so every attempt derives the same keys (M5 P17)", async () => {
+    const seen: Array<number | undefined> = [];
+    const { orchestrator } = await setup(async (job) => {
+      seen.push(job.delivery.sendAt);
+      return { remoteId: "7", url: "https://t.me/eventx/7" };
+    });
+    await orchestrator.run(P, "tg/event-x");
+    expect(seen).toEqual([TEST_NOW]);
   });
 
   it("refuses to claim a note held for review (#84 fix round 1, m2)", async () => {
@@ -251,7 +287,8 @@ describe("PublishOrchestrator", () => {
     expect(delays).toEqual([]);
     expect(failures).toEqual([{ path: P, channelId: "tg/event-x", kind: "needs_user", error }]);
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
-    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({ status: "failed", at: TEST_NOW, attempts: 1, error });
+    // M5 P17: a failed send keeps its send key for a re-send.
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toEqual({ status: "failed", at: TEST_NOW, attempts: 1, error, sendAt: TEST_NOW });
     expect(JSON.stringify(c.log.entries)).not.toContain("SECRET-TOKEN-123");
   });
 

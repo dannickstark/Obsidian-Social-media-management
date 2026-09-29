@@ -31,8 +31,6 @@ export const BS = {
   /** com.atproto.repo.getRecord */
   record: (rkey: string) => ({ uri: uriOf(rkey), cid: "bafyreirecord", value: { $type: "app.bsky.feed.post", text: "Doors open at 18:00", createdAt: new Date(CONTRACT_NOW).toISOString() } }),
   notFound: { error: "RecordNotFound", message: `Could not locate record: ${uriOf(RKEY0)}` },
-  /** com.atproto.repo.listRecords */
-  records: (text: string, createdAt: number) => ({ records: [{ uri: uriOf("3l5aaaaaaaa22"), cid: "bafyreiold", value: { $type: "app.bsky.feed.post", text, createdAt: new Date(createdAt).toISOString() } }], cursor: "3l5aaaaaaaa22" }),
   expired: { error: "ExpiredToken", message: "Token has expired" },
   badLogin: { error: "AuthenticationRequired", message: "Invalid identifier or password" },
   takedown: { error: "AccountTakedown", message: "Account has been taken down" },

@@ -40,6 +40,12 @@ export interface Delivery {
   remoteAt?: number;
   /** Native hand-over (#66): `contentDigest` of what was handed over; the note differs from the platform when it changes. */
   digest?: string;
+  /**
+   * The send key (M5 P17): written by the first claim of a send and kept across its retries and a re-send from
+   * `failed`, so an adapter can derive the same platform keys (Bluesky record keys) on every attempt. Unlike `at`,
+   * which every claim rewrites. Cleared once the delivery is published or re-planned (see `transition`).
+   */
+  sendAt?: number;
 }
 
 export interface Campaign {

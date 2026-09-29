@@ -8,7 +8,7 @@ import { adapterFor, attempt, contractDeps, expectDigestReads, trackedJob, type 
 
 /**
  * M5 P2: what a 5xx answer to each platform's publish commit must be. Telegram sends and Discord webhook executes are
- * not retry-safe (the post may be out); Mastodon (Idempotency-Key), Bluesky (findRecent) and WordPress (bySlug) are.
+ * not retry-safe (the post may be out); Mastodon (Idempotency-Key), Bluesky (record keys from the send key, M5 P17) and WordPress (bySlug) are.
  * A case whose platform is missing here fails: add the platform with its P2 class first.
  */
 const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> = {

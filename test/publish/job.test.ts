@@ -21,6 +21,10 @@ describe("deliveryJob", () => {
     expect(job.featured).toBeUndefined();
   });
 
+  it("passes the delivery's send key to the adapter (M5 P17)", () => {
+    expect(deliveryJob(variant("bluesky"), channel("bs/you"), { status: "publishing", at: 5_000, sendAt: 2_000, attempts: 2 }, { body: "Hi", media: [] }, "pw").delivery.sendAt).toBe(2_000);
+  });
+
   it("drops media on platforms that show none, and carries the featured image", () => {
     expect(deliveryJob(variant("hackernews"), channel("hn/you"), { status: "publishing" }, { body: "Hi", media: [img()] }, null).media).toEqual([]);
     const wp = deliveryJob(variant("wordpress"), channel("wp/blog"), { status: "handed_over" }, { body: "# Title", media: [], featured: img("cover.png") }, null);

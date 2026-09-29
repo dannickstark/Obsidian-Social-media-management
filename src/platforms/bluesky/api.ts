@@ -1,7 +1,7 @@
 import type { Channel } from "../../model/types";
 import { cyrb53 } from "../../util/hash";
 import type { AdapterDeps } from "../adapters";
-import { InvalidContentError, NeedsUserError, TransientError, UnknownOutcomeError } from "../errors";
+import { InvalidContentError, NeedsUserError, PublishError, TransientError, UnknownOutcomeError } from "../errors";
 import { partialNote, readMedia } from "../files";
 import { ApiClient, header, HTTP_TIMEOUT_MS, isOk, parseJson, send, UPLOAD_TIMEOUT_MS, type ApiFailure, type HttpRequest, type HttpResponse, type Phase } from "../http";
 import { isFetchable } from "../og";
@@ -14,7 +14,6 @@ export const BSKY_SERVICE = "https://bsky.social";
 /** app.bsky.embed.images / external thumb: at most 1,000,000 bytes per blob. */
 export const BLOB_MAX = 1_000_000;
 const POST = "app.bsky.feed.post";
-const HOUR = 60 * 60_000;
 const NEEDS_USER = new Set(["ExpiredToken", "InvalidToken", "AuthenticationRequired", "AccountTakedown", "AccountDeactivated", "AuthFactorTokenRequired"]);
 /** Any JWT (a session token), wherever it appears in text from the platform (M5 G4). */
 const JWT_IN_TEXT_RE = /eyJ[\w-]+\.[\w-]+\.[\w-]+/g;
@@ -47,6 +46,8 @@ export function redactSecrets(text: string, secrets: ReadonlyArray<string | null
   let out = text;
   for (const secret of secrets) {
     if (!secret) continue;
+    // Only strings of 8+ characters are replaced: a very short value (a stray test secret, "a") would otherwise blank
+    // out ordinary words of the message. App passwords (19) and JWTs are far longer.
     for (const s of [secret, encodeURIComponent(secret)]) if (s.length >= 8) out = out.split(s).join("[secret]");
   }
   return out.replace(JWT_IN_TEXT_RE, "[secret]");
@@ -84,10 +85,10 @@ function expired(res: HttpResponse): boolean {
 }
 
 /**
- * Posts through the AT Protocol with an app password (#91). Record keys are derived from the claim time, so
- * lookup() finds an interrupted post exactly (M5 P5). The first post's createRecord is retry-safe (M5 P2): a retry
- * first looks for the earlier attempt's post, and fails closed when it can't tell (M5 P6). Sessions stay in memory
- * only (M5 G5).
+ * Posts through the AT Protocol with an app password (#91). Record keys come from the delivery's send key (M5 P17),
+ * which the first claim writes and every retry keeps: a retry asks for each part by its key before creating it, so
+ * every createRecord is retry-safe (M5 P2), a thread resumes where it stopped, and lookup() is exact (M5 P5). A
+ * check that can't answer posts nothing (M5 P6). Sessions stay in memory only (M5 G5).
  */
 export class BlueskyAdapter implements PlatformAdapter {
   readonly platform = "bluesky" as const;
@@ -107,36 +108,34 @@ export class BlueskyAdapter implements PlatformAdapter {
 
   async publish(job: DeliveryJob): Promise<PublishResult> {
     const session = await this.session(job);
-    if ((job.delivery.attempts ?? 1) > 1) {
-      const earlier = await this.findRecent(job, session);
-      if (earlier) return earlier;
-    }
-    const claimAt = job.delivery.at ?? this.deps.now();
-    const root = await this.post(job, session, 0, claimAt);
+    // M5 P17: every record key comes from the send key the first claim wrote, the same on every attempt.
+    const sendAt = job.delivery.sendAt ?? job.delivery.at ?? this.deps.now();
+    // A retry (or a re-send from failed) asks for each part by its key first: the earlier attempt may have stored it.
+    const resume = (job.delivery.attempts ?? 1) > 1;
+    const root = await this.post(job, session, 0, sendAt, resume);
     let parent = root;
     for (let i = 1; i < job.items.length; i++) {
       try {
-        parent = await this.post(job, session, i, claimAt, { root, parent });
+        parent = await this.post(job, session, i, sendAt, resume, { root, parent });
       } catch (e) {
+        // Refused for now (5xx, 429, a failed upload): the retry finds the parts already out and continues the thread.
+        if (e instanceof PublishError && e.kind === "transient") {
+          throw new TransientError(`Bluesky: part ${i + 1} of ${job.items.length} is not posted yet; the parts before it are, and the retry continues the thread: ${e.message}`, e.retryAfterMs);
+        }
         return { ...this.result(session, root.uri), note: partialNote(i, job.items.length, e) };
       }
     }
     return this.result(session, root.uri);
   }
 
+  /** Exact (M5 P5): the first part's record, by the key the send key gives it, whichever attempt stored it (M5 P17). */
   async lookup(job: DeliveryJob): Promise<RemoteState | null> {
-    const at = job.delivery.at;
-    if (at === undefined) return null;
+    const sendAt = job.delivery.sendAt;
+    if (sendAt === undefined) return null;
     try {
       const s = await this.session(job);
-      const rkey = postRkey(at, 0, job.channel.id);
-      const res = await this.xrpc(job, "read", { path: "com.atproto.repo.getRecord", method: "GET", query: { repo: s.did, collection: POST, rkey } });
-      if (isOk(res)) {
-        const uri = (parseJson(res.text) as { uri?: unknown } | null)?.uri;
-        return { published: true, ...this.result(s, typeof uri === "string" ? uri : `at://${s.did}/${POST}/${rkey}`) };
-      }
-      const error = (parseJson(res.text) as { error?: string } | null)?.error;
-      return res.status === 400 && error === "RecordNotFound" ? { published: false } : null;
+      const ref = await this.stored(job, s, postRkey(sendAt, 0, job.channel.id));
+      return ref ? { published: true, ...this.result(s, ref.uri) } : { published: false };
     } catch {
       return null;
     }
@@ -222,10 +221,16 @@ export class BlueskyAdapter implements PlatformAdapter {
   }
 
   /**
-   * One post of the thread. Only the first part's createRecord is retry-safe (M5 P2): a retry of the publish looks for
-   * it first. A later part is never retried, so a 5xx there is an unknown outcome and the note says it may be out.
+   * The record of part `i` under its key from the send key (M5 P17). On a retry the stored part is reused (a
+   * RecordNotFound means it is created); so every createRecord is retry-safe (M5 P2), and a thread resumes where
+   * it stopped.
    */
-  private async post(job: DeliveryJob, s: Session, i: number, claimAt: number, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
+  private async post(job: DeliveryJob, s: Session, i: number, sendAt: number, resume: boolean, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
+    const rkey = postRkey(sendAt, i, job.channel.id);
+    if (resume) {
+      const earlier = await this.stored(job, s, rkey);
+      if (earlier) return earlier;
+    }
     const text = job.items[i] ?? "";
     const record: Record<string, unknown> = { $type: POST, text, createdAt: new Date(this.deps.now()).toISOString() };
     const facets = await buildFacets(text, (handle) => this.resolveHandle(job, handle));
@@ -235,8 +240,14 @@ export class BlueskyAdapter implements PlatformAdapter {
       const embed = await this.embed(job);
       if (embed) record.embed = embed;
     }
-    const res = await this.xrpc(job, "commit", { path: "com.atproto.repo.createRecord", method: "POST", json: { repo: s.did, collection: POST, rkey: postRkey(claimAt, i, job.channel.id), record } });
-    if (!isOk(res)) throw this.api(job).error(res, { phase: "commit", retrySafe: i === 0 });
+    const res = await this.xrpc(job, "commit", { path: "com.atproto.repo.createRecord", method: "POST", json: { repo: s.did, collection: POST, rkey, record } });
+    if (!isOk(res)) {
+      const error = this.api(job).error(res, { phase: "commit", retrySafe: true });
+      // On a retry, a refused create may mean the record is there after all (the earlier attempt's): ask by its key.
+      const found = resume ? await this.stored(job, s, rkey) : null;
+      if (found) return found;
+      throw error;
+    }
     const ref = parseJson(res.text) as { uri?: unknown; cid?: unknown } | null;
     if (typeof ref?.uri !== "string" || !ref.uri || typeof ref.cid !== "string" || !ref.cid) {
       throw new UnknownOutcomeError("Bluesky: the answer had no record id, so it is not known whether the post went out.");
@@ -278,7 +289,11 @@ export class BlueskyAdapter implements PlatformAdapter {
     return blob;
   }
 
-  /** The card's image as a blob; any failure means a card without an image. https public hosts only (SSRF guard). */
+  /**
+   * The card's image as a blob; any failure means a card without an image. https public hosts only (SSRF guard).
+   * Memory: requestUrl reads the whole answer before its size can be checked, so a huge og:image is downloaded in
+   * full (bounded only by the timeout) and then dropped when it is over BLOB_MAX; it is never uploaded.
+   */
   private async thumb(job: DeliveryJob, imageUrl: string): Promise<unknown> {
     if (!isFetchable(imageUrl)) return null;
     try {
@@ -302,23 +317,19 @@ export class BlueskyAdapter implements PlatformAdapter {
   }
 
   /**
-   * A retry (M5 P2): a post with the same first text from the last hour means an earlier attempt went out. The rkey
-   * can't find it, because every claim writes a new `at`. When the check can't answer, nothing is posted (M5 P6).
+   * The record under `rkey`: its strong ref when it is there, null on RecordNotFound. Any other answer, or none,
+   * means "can't tell", and nothing is posted (M5 P6, fail-closed).
    */
-  private async findRecent(job: DeliveryJob, s: Session): Promise<PublishResult | null> {
+  private async stored(job: DeliveryJob, s: Session, rkey: string): Promise<StrongRef | null> {
     let res: HttpResponse;
     try {
-      res = await this.xrpc(job, "read", { path: "com.atproto.repo.listRecords", method: "GET", query: { repo: s.did, collection: POST, limit: "10" } });
+      res = await this.xrpc(job, "read", { path: "com.atproto.repo.getRecord", method: "GET", query: { repo: s.did, collection: POST, rkey } });
     } catch {
       throw new TransientError(CHECK_FAILED);
     }
-    const records = isOk(res) ? (parseJson(res.text) as { records?: unknown } | null)?.records : undefined;
-    if (!Array.isArray(records)) throw new TransientError(CHECK_FAILED);
-    const since = this.deps.now() - HOUR;
-    for (const r of records as Array<{ uri?: unknown; value?: { text?: unknown; createdAt?: unknown } } | null>) {
-      const createdAt = r?.value?.createdAt;
-      if (typeof r?.uri === "string" && r.value?.text === job.items[0] && typeof createdAt === "string" && Date.parse(createdAt) >= since) return this.result(s, r.uri);
-    }
-    return null;
+    const body = parseJson(res.text) as { uri?: unknown; cid?: unknown; error?: unknown } | null;
+    if (isOk(res) && typeof body?.uri === "string" && body.uri && typeof body.cid === "string" && body.cid) return { uri: body.uri, cid: body.cid };
+    if (res.status === 400 && body?.error === "RecordNotFound") return null;
+    throw new TransientError(CHECK_FAILED);
   }
 }

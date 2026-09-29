@@ -32,6 +32,18 @@ describe("planReschedule", () => {
     expect(plan.ok && plan.patch.scheduledAt).toBe(T(12, 8, 30));
   });
 
+  it("drops the send key of a failed channel it moves, and keeps the one of a channel waiting for a check (M5 P17)", () => {
+    const v = variant({ deliveries: { "li/me": { status: "failed", attempts: 2, sendAt: T(8, 17, 30) }, "li/acme": { status: "check_needed", sendAt: T(8, 17, 45) } } });
+    const whole = planReschedule(rowOf(v, "li/me", T(8, 17, 30), "failed"), { at: T(9, 10, 0) });
+    if (!whole.ok) throw new Error();
+    expect(whole.patch.deliveries?.["li/me"]).toEqual({ status: "failed", attempts: 2 });
+    expect(whole.patch.deliveries?.["li/acme"]?.sendAt).toBe(T(8, 17, 45));
+    const own = variant({ deliveries: { "li/acme": { status: "failed", at: T(8, 20), sendAt: T(8, 20) } } });
+    const one = planReschedule(rowOf(own, "li/acme", T(8, 20), "failed"), { at: T(9, 8) });
+    if (!one.ok) throw new Error();
+    expect(one.patch.deliveries?.["li/acme"]).toEqual({ status: "failed", at: T(9, 8) });
+  });
+
   it("moves only the channel when it has an explicit time", () => {
     const v = variant({ deliveries: { "li/acme": { status: "scheduled", at: T(8, 20) } } });
     const plan = planReschedule(rowOf(v, "li/acme", T(8, 20)), { at: T(9, 8) });

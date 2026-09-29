@@ -6,7 +6,8 @@ import { BS, BS_ACCESS, BS_PASSWORD, BS_REFRESH, RATE_HEADERS, RKEY0, uriOf } fr
 const job = () => ({
   variant: { path: "Social/Posts/Bs.md", platform: "bluesky" as const, channels: ["bs/you"], mode: "auto" as const, status: "scheduled" as const, media: [], deliveries: {} },
   channel: channel("bs/you", { handle: "@you.bsky.social", method: "api" as const, secretId: "osmm-channel-bs-you" }),
-  delivery: { status: "publishing" as const, at: CONTRACT_NOW, attempts: 1 },
+  // M5 P17: the record keys come from the send key, which the first claim writes.
+  delivery: { status: "publishing" as const, at: CONTRACT_NOW, attempts: 1, sendAt: CONTRACT_NOW },
   text: "Doors open at 18:00",
   items: ["Doors open at 18:00"],
   body: "Doors open at 18:00",
@@ -24,11 +25,11 @@ export const blueskyCase: ContractCase = {
   authExpired: [json(400, BS.expired), json(400, BS.expired), json(401, BS.badLogin)],
   forbidden: [json(403, BS.takedown)],
   rejected: [json(400, BS.invalid)],
-  // M5 P2: createRecord is retry-safe, because a retry first looks for the earlier attempt's post (findRecent, P6).
+  // M5 P2/P17: createRecord is retry-safe: a retry asks for each part by its record key (getRecord) before creating it.
   serverError: { post: [json(502, BS.upstream)], kind: "transient" },
   sensitive: [BS_PASSWORD, BS_ACCESS, BS_REFRESH],
   lookup: {
-    job: () => ({ ...job(), delivery: { status: "check_needed" as const, at: CONTRACT_NOW } }),
+    job: () => ({ ...job(), delivery: { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW } }),
     found: [json(200, BS.session), json(200, BS.record(RKEY0))],
     expect: { published: true, remoteId: uriOf(RKEY0), url: `https://bsky.app/profile/you.bsky.social/post/${RKEY0}` },
     notFound: [json(200, BS.session), json(400, BS.notFound)],

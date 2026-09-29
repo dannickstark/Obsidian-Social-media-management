@@ -20,7 +20,7 @@ class Refusal {
 }
 
 /** Frontmatter keys owned by `serializeDelivery`; any other key in a raw delivery entry is kept. */
-const DELIVERY_KEYS = ["status", "at", "url", "remote_id", "error", "attempts", "reason", "remote_at", "digest"];
+const DELIVERY_KEYS = ["status", "at", "url", "remote_id", "error", "attempts", "reason", "remote_at", "digest", "send_at"];
 
 function applyFields(fm: Frontmatter, fields: Frontmatter): void {
   for (const [key, value] of Object.entries(fields)) {

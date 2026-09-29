@@ -207,6 +207,24 @@ describe("hand-over baseline (#66)", () => {
   });
 });
 
+describe("send key (M5 P17)", () => {
+  const fm = (delivery: Record<string, unknown>) => ({ type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", deliveries: { "bs/you": delivery } });
+
+  it("reads and writes send_at on a delivery", () => {
+    const sendAt = "2026-10-08T10:00:00+02:00";
+    const d = parseVariant(fm({ status: "failed", at: sendAt, send_at: sendAt, attempts: 2 }), "Social/P.md").value!.deliveries["bs/you"]!;
+    expect(d).toEqual({ status: "failed", at: Date.parse(sendAt), sendAt: Date.parse(sendAt), attempts: 2 });
+    expect(serializeDelivery(d)).toEqual({ status: "failed", at: formatDateTime(Date.parse(sendAt)), send_at: formatDateTime(Date.parse(sendAt)), attempts: 2 });
+  });
+
+  it("reports a malformed send_at and keeps the entry readable", () => {
+    const parsed = parseVariant(fm({ status: "failed", send_at: "soon" }), "Social/P.md");
+    expect(parsed.issues).toContainEqual(expect.objectContaining({ field: "deliveries.bs/you.send_at" }));
+    expect(parsed.value!.deliveries["bs/you"]).toEqual({ status: "failed" });
+    expect(parsed.value!.invalidDeliveries ?? []).not.toContain("bs/you");
+  });
+});
+
 describe("hand-over baseline, lenient reading (#66)", () => {
   const fm = (delivery: Record<string, unknown>) => ({ type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "scheduled", deliveries: { "ma/you": delivery } });
 

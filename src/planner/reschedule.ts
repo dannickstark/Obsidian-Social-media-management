@@ -12,6 +12,8 @@ export type ReschedulePlan =
 const FROZEN = new Set<RowStatus>(["published", "publishing", "skipped"]);
 /** Sibling channels in these statuses keep their current effective time when the whole post shifts. */
 const KEEP_TIME = new Set<DeliveryStatus>(["published", "skipped", "publishing"]);
+/** A send still outstanding: its send key stays for the retry or the lookup (M5 P17). */
+const KEEP_SEND_KEY = new Set<DeliveryStatus>(["publishing", "check_needed"]);
 
 function onDay(day: number, currentAt: number | undefined, defaultTime: string): number {
   const d = new Date(day);
@@ -60,6 +62,13 @@ export function planReschedule(row: PostRow, target: RescheduleTarget, defaultTi
   for (const id of affected) {
     const d = deliveries[id];
     if (d?.status === "overdue") deliveries[id] = transition(d, "scheduled");
+    // M5 P17: a moved delivery is a new send, so its send key goes; a check still waiting keeps the key its lookup needs.
+    const moved = deliveries[id];
+    if (moved?.sendAt !== undefined && !KEEP_SEND_KEY.has(moved.status)) {
+      const next = { ...moved };
+      delete next.sendAt;
+      deliveries[id] = next;
+    }
   }
   // Only deliveries that actually move need confirming: a sibling with its own explicit time stays put.
   const moving = explicit ? affected : affected.filter((id) => id === row.channelId || v.deliveries[id]?.at === undefined);

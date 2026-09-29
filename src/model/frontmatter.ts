@@ -136,6 +136,8 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     if (typeof value.reason === "string" && value.reason.trim()) d.reason = value.reason.trim();
     const remoteAt = takeDate(value.remote_at, `${field}.remote_at`, issues);
     if (remoteAt !== undefined) d.remoteAt = remoteAt;
+    const sendAt = takeDate(value.send_at, `${field}.send_at`, issues);
+    if (sendAt !== undefined) d.sendAt = sendAt;
     // YAML reads an all-digit digest as a number; it is still the same digest.
     const digest = typeof value.digest === "string" || typeof value.digest === "number" ? String(value.digest).trim() : "";
     if (digest) d.digest = digest;
@@ -272,6 +274,7 @@ export function serializeDelivery(d: Delivery): Record<string, unknown> {
   if (d.reason) out.reason = d.reason;
   if (d.remoteAt !== undefined) out.remote_at = formatDateTime(d.remoteAt);
   if (d.digest) out.digest = d.digest;
+  if (d.sendAt !== undefined) out.send_at = formatDateTime(d.sendAt);
   return out;
 }
 

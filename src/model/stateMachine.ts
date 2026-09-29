@@ -32,6 +32,9 @@ export function canTransition(from: DeliveryStatus, to: DeliveryStatus): boolean
   return TRANSITIONS[from].includes(to);
 }
 
+/** M5 P17: statuses that end a send or re-plan the delivery; entering one drops the send key. */
+const CLEARS_SEND_KEY = new Set<DeliveryStatus>(["published", "draft", "ready", "scheduled"]);
+
 export function transition(
   d: Delivery,
   to: DeliveryStatus,
@@ -43,7 +46,11 @@ export function transition(
   if (d.status === "check_needed" && to === "handed_over" && ("remoteAt" in patch ? patch.remoteAt : d.remoteAt) === undefined) {
     throw new IllegalTransitionError(d.status, to);
   }
-  return { ...d, ...patch, status: to };
+  const next: Delivery = { ...d, ...patch, status: to };
+  // M5 P17: the send key belongs to one send. It is kept while that send is outstanding (publishing, failed and
+  // retried, check_needed) and dropped once it is published or the delivery is re-planned.
+  if (CLEARS_SEND_KEY.has(to) && !("sendAt" in patch)) delete next.sendAt;
+  return next;
 }
 
 const PENDING = new Set<DeliveryStatus>(["scheduled", "handed_over", "publishing", "awaiting_you"]);
