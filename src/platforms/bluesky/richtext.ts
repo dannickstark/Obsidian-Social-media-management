@@ -24,9 +24,41 @@ const MENTION_RE = /(^|[\s(])@([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\
 /** A tag starts after a space (or the start), and has at least one letter or underscore (so #1 or #2026 are not tags). */
 const TAG_RE = /(^|\s)#([\p{L}\p{N}_]*[\p{L}_][\p{L}\p{N}_]*)/gu;
 
+const countChar = (s: string, ch: string): number => {
+  let n = 0;
+  for (const c of s) if (c === ch) n++;
+  return n;
+};
+
+/**
+ * Drops trailing `.,;:!?` unconditionally, and a trailing `)` or `]` only when it has no matching open
+ * bracket earlier in the (still-being-trimmed) URL, so a URL that itself balances its own parens
+ * (e.g. a Wikipedia "(disambiguation)" link) keeps them.
+ */
+function trimTrailingPunctuation(uri: string): string {
+  let end = uri.length;
+  while (end > 0) {
+    const ch = uri[end - 1]!;
+    if (".,;:!?".includes(ch)) {
+      end--;
+      continue;
+    }
+    if (ch === ")" || ch === "]") {
+      const open = ch === ")" ? "(" : "[";
+      const soFar = uri.slice(0, end);
+      if (countChar(soFar, ch) > countChar(soFar, open)) {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+  return uri.slice(0, end);
+}
+
 export function findLinks(text: string): Array<Span & { uri: string }> {
   return [...text.matchAll(LINK_RE)].map((m) => {
-    const uri = m[0].replace(/[.,;:!?)\]]+$/, "");
+    const uri = trimTrailingPunctuation(m[0]);
     const start = m.index ?? 0;
     return { start, end: start + uri.length, uri };
   });

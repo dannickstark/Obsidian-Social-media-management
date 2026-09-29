@@ -35,4 +35,77 @@ describe("Bluesky facets (byte offsets, review focus 2)", () => {
   it("finds a mention at the start and after a parenthesis", () => {
     expect(findMentions("@alice.bsky.social (@bob.test)").map((m) => m.handle)).toEqual(["alice.bsky.social", "bob.test"]);
   });
+
+  it("keeps a URL's own matching parenthesis but drops an unmatched wrapping one", async () => {
+    const text = "See (https://en.wikipedia.org/wiki/Term_(disambiguation)) for details";
+    const uri = "https://en.wikipedia.org/wiki/Term_(disambiguation)";
+    const start = text.indexOf(uri);
+    const end = start + uri.length;
+    const enc = new TextEncoder();
+    const byteStart = enc.encode(text.slice(0, start)).length;
+    const byteEnd = enc.encode(text.slice(0, end)).length;
+    expect(findLinks(text)).toEqual([{ start, end, uri }]);
+    expect(await buildFacets(text, resolve)).toEqual([{ index: { byteStart, byteEnd }, features: [{ $type: "app.bsky.richtext.facet#link", uri }] }]);
+  });
+
+  it("drops an unmatched closing bracket and a trailing comma", () => {
+    const text = "https://x.example/a),";
+    const uri = "https://x.example/a";
+    expect(findLinks(text)).toEqual([{ start: 0, end: uri.length, uri }]);
+  });
+
+  it("computes byte offsets after a ZWJ family emoji and a flag emoji, before a tag and a link", async () => {
+    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}"; // 👨‍👩‍👧‍👦
+    const flag = "\u{1F1E9}\u{1F1EA}"; // 🇩🇪
+    const text = `${family} ${flag} #home https://example.com`;
+    const enc = new TextEncoder();
+    const tagIdx = text.indexOf("#home");
+    const tagEnd = tagIdx + "#home".length;
+    const linkIdx = text.indexOf("https://example.com");
+    const linkEnd = linkIdx + "https://example.com".length;
+    expect(await buildFacets(text, resolve)).toEqual([
+      {
+        index: { byteStart: enc.encode(text.slice(0, tagIdx)).length, byteEnd: enc.encode(text.slice(0, tagEnd)).length },
+        features: [{ $type: "app.bsky.richtext.facet#tag", tag: "home" }],
+      },
+      {
+        index: { byteStart: enc.encode(text.slice(0, linkIdx)).length, byteEnd: enc.encode(text.slice(0, linkEnd)).length },
+        features: [{ $type: "app.bsky.richtext.facet#link", uri: "https://example.com" }],
+      },
+    ]);
+  });
+
+  it("computes byte offsets in RTL Arabic text with a mention, a tag and a link", async () => {
+    const text = "مرحبا @alice.bsky.social بالعالم #مرحبا https://example.com";
+    const enc = new TextEncoder();
+    const mentionIdx = text.indexOf("@alice.bsky.social");
+    const mentionEnd = mentionIdx + "@alice.bsky.social".length;
+    const tagIdx = text.indexOf("#مرحبا");
+    const tagEnd = tagIdx + "#مرحبا".length;
+    const linkIdx = text.indexOf("https://example.com");
+    const linkEnd = linkIdx + "https://example.com".length;
+    expect(await buildFacets(text, resolve)).toEqual([
+      {
+        index: { byteStart: enc.encode(text.slice(0, mentionIdx)).length, byteEnd: enc.encode(text.slice(0, mentionEnd)).length },
+        features: [{ $type: "app.bsky.richtext.facet#mention", did: "did:plc:alice" }],
+      },
+      {
+        index: { byteStart: enc.encode(text.slice(0, tagIdx)).length, byteEnd: enc.encode(text.slice(0, tagEnd)).length },
+        features: [{ $type: "app.bsky.richtext.facet#tag", tag: "مرحبا" }],
+      },
+      {
+        index: { byteStart: enc.encode(text.slice(0, linkIdx)).length, byteEnd: enc.encode(text.slice(0, linkEnd)).length },
+        features: [{ $type: "app.bsky.richtext.facet#link", uri: "https://example.com" }],
+      },
+    ]);
+  });
+
+  it("gives no facet for a bare @alice with no domain", async () => {
+    expect(findMentions("Thanks @alice for the help")).toEqual([]);
+    expect(await buildFacets("Thanks @alice for the help", resolve)).toEqual([]);
+  });
+
+  it("gives no facet for a lone trailing #", () => {
+    expect(findTags("Wait for it #")).toEqual([]);
+  });
 });
