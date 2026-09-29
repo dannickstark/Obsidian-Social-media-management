@@ -96,8 +96,9 @@ export class RemoteRemovedError extends PublishError {
  * to `check_needed` without `remote_id`, and the lookup searches the platform's schedule.
  */
 export class ReplacementUnknownError extends UnknownOutcomeError {
-  constructor(message = "Mastodon: the old scheduled post was removed; the new one may or may not be scheduled.") {
-    super(message);
+  /** `cause`: the (already redacted) message of the error behind it, appended in brackets. */
+  constructor(message = "Mastodon: the old scheduled post was removed; the new one may or may not be scheduled.", cause?: string) {
+    super(cause ? `${message} (${cause})` : message);
     this.name = "ReplacementUnknownError";
   }
 }

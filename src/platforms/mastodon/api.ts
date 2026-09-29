@@ -7,7 +7,6 @@ import { InvalidContentError, NeedsUserError, PublishError, RemoteRemovedError, 
 import { fileName, partialNote, readMedia } from "../files";
 import { ApiClient, header, isOk, parseJson, UPLOAD_TIMEOUT_MS, type ApiFailure, type HttpRequest, type HttpResponse } from "../http";
 import { multipart, type Part } from "../multipart";
-import { mastodonInstance } from "../share";
 import { withLink } from "../text";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, PublishResult, RemoteState, ScheduleResult, SyncChange, VerifyResult } from "../types";
 
@@ -24,6 +23,8 @@ const enc = encodeURIComponent;
 const MIXED = "Mastodon: an earlier version of this post is partly live on Mastodon; delete it there or mark it published.";
 const LIVE_LATE = "Mastodon: an earlier attempt at this post is live on Mastodon, and Mastodon only recognises a repeat within an hour; delete it there or mark it published.";
 const CHECK_FAILED = "Mastodon: could not check whether the earlier attempt went out; nothing was posted.";
+const MAYBE_REMOVED = "Mastodon: the old scheduled post may have been removed; nothing new was scheduled.";
+const STILL_THERE = "Mastodon: the old scheduled post could not be removed, so nothing was changed. Try again.";
 const GONE = "Mastodon: the post is no longer scheduled there (it went out, or it was deleted on Mastodon); nothing was changed.";
 
 interface MaStatus {
@@ -32,6 +33,9 @@ interface MaStatus {
   uri: string;
   created_at: string;
   content: string;
+  in_reply_to_id?: string | null;
+  /** A boost: someone else's post, never taken for ours. */
+  reblog?: unknown;
 }
 interface MaScheduled {
   id: string;
@@ -43,12 +47,25 @@ interface Target {
   auth: Record<string, string>;
   host: string;
   api: ApiClient;
+  secret: string;
 }
 
+/**
+ * Where the access token goes: the channel's `server`, else the exact host (and port) of an `@you@host` or
+ * `https://host/@you` handle, never a guess (no `www.` stripping). Anything else is ambiguous: null, and the
+ * channel needs its server address.
+ */
 export function mastodonBase(channel: Channel): string | null {
   if (channel.server) return channel.server;
-  const instance = mastodonInstance(channel.handle);
-  return instance ? `https://${instance}` : null;
+  const handle = channel.handle?.trim() ?? "";
+  const at = /^@?[^@\s/]+@([a-z0-9.-]+\.[a-z]{2,}(?::\d{1,5})?)$/i.exec(handle);
+  if (at) return `https://${at[1]!.toLowerCase()}`;
+  if (!/^https:\/\/[^/]+\/@[^/@\s]+\/?$/i.test(handle)) return null;
+  try {
+    return `https://${new URL(handle).host}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -108,23 +125,33 @@ export class MastodonAdapter implements PlatformAdapter {
   async publish(job: DeliveryJob): Promise<PublishResult> {
     const t = this.target(job);
     const resuming = job.resume === true || (job.delivery.attempts ?? 1) > 1;
-    if (resuming) {
+    let checked = false;
+    /**
+     * Before each part's commit (so after the uploads, which can take minutes): once a resumed send is past the key
+     * window, the parts still to send are looked for on the profile, once.
+     */
+    const lateCheck = async (from: number): Promise<void> => {
+      if (!resuming || checked) return;
       const since = job.delivery.sendAt;
-      if (since === undefined || this.deps.now() - since >= KEY_WINDOW_MS) await this.refuseIfLive(t, job, since ?? job.delivery.at);
-    }
+      if (since !== undefined && this.deps.now() - since < KEY_WINDOW_MS) return;
+      checked = true;
+      await this.refuseIfLive(t, this.texts(job).slice(from), since);
+    };
     const key = this.partKeys(job);
     const mediaIds = await this.uploadAll(t, job);
+    await lateCheck(0);
     const first = await this.status(t, key(0), resuming, { status: this.firstText(job), ...(mediaIds.length ? { media_ids: mediaIds } : {}) });
     let parent = first;
     for (let i = 1; i < job.items.length; i++) {
       try {
+        await lateCheck(i);
         parent = await this.status(t, key(i), resuming, { status: job.items[i] ?? "", in_reply_to_id: parent.id });
       } catch (e) {
         // Refused for now (5xx, 429): the retry replays the parts already out under their keys and continues the thread.
         if (e instanceof PublishError && e.kind === "transient") {
           throw new TransientError(`Mastodon: part ${i + 1} of ${job.items.length} is not posted yet; the parts before it are, and the retry continues the thread: ${e.message}`, e.retryAfterMs);
         }
-        if (e instanceof NeedsUserError && e.message === MIXED) throw e;
+        if (e instanceof NeedsUserError && (e.message === MIXED || e.message === LIVE_LATE)) throw e;
         return { ...this.result(first), note: partialNote(i, job.items.length, e) };
       }
     }
@@ -173,7 +200,7 @@ export class MastodonAdapter implements PlatformAdapter {
         if (e instanceof PublishError && e.kind !== "unknown") {
           throw new RemoteRemovedError(`Mastodon: the old scheduled post was removed, but the new one could not be scheduled (${e.message}). It will be posted from Obsidian at its time.`);
         }
-        throw new ReplacementUnknownError();
+        throw new ReplacementUnknownError(undefined, redactSecrets(e instanceof Error ? e.message : String(e), [t.secret]));
       }
     }
     if (job.items.length > 1) throw new InvalidContentError("Mastodon: only a single post can be edited, not a thread.");
@@ -217,10 +244,12 @@ export class MastodonAdapter implements PlatformAdapter {
           const found = await this.findPublished(t, text, d.remoteAt);
           return found?.published ? found : null;
         }
-        // An interrupted hand-over: look for it in the schedule, then among the published posts.
+        // An interrupted hand-over: look for it in the schedule, then among the published posts. Without letters or
+        // digits to recognise it by, it can't tell.
+        const want = fingerprint(text);
+        if (want === "") return null;
         const res = await t.api.read({ url: `${t.base}/api/v1/scheduled_statuses?limit=40`, method: "GET", headers: t.auth });
         if (!isOk(res)) return null;
-        const want = fingerprint(text);
         const list = parseJson(res.text);
         const hit = (Array.isArray(list) ? (list as MaScheduled[]) : []).find((s) => Date.parse(s.scheduled_at) === d.remoteAt && fingerprint(s.params?.text ?? "") === want);
         if (hit) return { published: false, remoteId: hit.id, scheduledAt: Date.parse(hit.scheduled_at) };
@@ -230,7 +259,8 @@ export class MastodonAdapter implements PlatformAdapter {
       const since = d.sendAt ?? d.at;
       if (since === undefined) return null;
       const found = await this.findPublished(t, text, since);
-      return found?.published ? found : null;
+      if (!found?.published || !found.remoteId) return null;
+      return job.items.length > 1 ? await this.wholeThread(t, job, found) : found;
     } catch {
       return null;
     }
@@ -257,12 +287,17 @@ export class MastodonAdapter implements PlatformAdapter {
     if (!secret) throw new NeedsUserError(`Add an access token for ${who.channel.name} on this device (Mastodon: Preferences → Development → New application, scopes read and write).`);
     const { http, now, timeoutMs } = this.deps;
     const api = new ApiClient({ platform: "mastodon", http, now, ...(timeoutMs !== undefined ? { timeoutMs } : {}), failure: mastodonFailure(now, () => [secret]) });
-    return { base, auth: { Authorization: `Bearer ${secret}` }, host: new URL(base).host, api };
+    return { base, auth: { Authorization: `Bearer ${secret}` }, host: new URL(base).host, api, secret };
   }
 
   /** The link goes on the first part only (Task 6 carry: checks.ts counts it there). */
   private firstText(job: DeliveryJob): string {
     return withLink(job.items[0] ?? "", job.variant.url);
+  }
+
+  /** Every part's text as sent: the link on the first part only. */
+  private texts(job: DeliveryJob): string[] {
+    return [this.firstText(job), ...job.items.slice(1)];
   }
 
   /**
@@ -333,17 +368,20 @@ export class MastodonAdapter implements PlatformAdapter {
   /** Removes a scheduled post before a new version is scheduled. Never schedules again unless the old one is surely gone. */
   private async removeScheduled(t: Target, id: string): Promise<void> {
     const url = `${t.base}/api/v1/scheduled_statuses/${enc(id)}`;
-    let res: HttpResponse;
+    let res: HttpResponse | null = null;
     try {
       res = await t.api.exchange("commit", { url, method: "DELETE", headers: t.auth });
     } catch (e) {
       if (!(e instanceof UnknownOutcomeError)) throw e;
-      const check = await t.api.read({ url, method: "GET", headers: t.auth }).catch(() => null);
-      if (check?.status === 404) return;
-      throw new TransientError("Mastodon: the old scheduled post could not be removed, so nothing was changed. Try again.");
     }
-    if (res.status === 404) throw new NeedsUserError(GONE);
-    if (!isOk(res)) throw t.api.error(res, { phase: "commit", retrySafe: true });
+    if (res && res.status === 404) throw new NeedsUserError(GONE);
+    if (res && isOk(res)) return;
+    if (res && res.status >= 400 && res.status < 500) throw t.api.error(res, { phase: "commit", retrySafe: true });
+    // No answer, a 5xx or an odd answer: the removal may have happened. Ask for the old post before anything else.
+    const check = await t.api.read({ url, method: "GET", headers: t.auth }).catch(() => null);
+    if (check?.status === 404) return;
+    if (check && isOk(check)) throw new TransientError(STILL_THERE);
+    throw new ReplacementUnknownError(MAYBE_REMOVED);
   }
 
   /** The account's latest posts (40), or null when they can't be read. */
@@ -352,31 +390,59 @@ export class MastodonAdapter implements PlatformAdapter {
       const me = await t.api.read({ url: `${t.base}/api/v1/accounts/verify_credentials`, method: "GET", headers: t.auth });
       const id = isOk(me) ? (parseJson(me.text) as { id?: unknown } | null)?.id : undefined;
       if (typeof id !== "string" || !id) return null;
-      const res = await t.api.read({ url: `${t.base}/api/v1/accounts/${enc(id)}/statuses?limit=40`, method: "GET", headers: t.auth });
+      const res = await t.api.read({ url: `${t.base}/api/v1/accounts/${enc(id)}/statuses?limit=40&exclude_reblogs=true`, method: "GET", headers: t.auth });
       const list = isOk(res) ? parseJson(res.text) : null;
-      return Array.isArray(list) ? (list as MaStatus[]) : null;
+      return Array.isArray(list) ? (list as MaStatus[]).filter((s) => s.reblog === undefined || s.reblog === null) : null;
     } catch {
       return null;
     }
   }
 
+  /** A text search (M5 P5): a post without letters or digits (images only, emoji only) can't be recognised: null. */
   private async findPublished(t: Target, text: string, since: number): Promise<RemoteState | null> {
+    const want = fingerprint(text);
+    if (want === "") return null;
     const list = await this.recent(t);
     if (!list) return null;
-    const want = fingerprint(text);
     const hit = list.find((s) => Date.parse(s.created_at) >= since - MINUTE && fingerprint(plain(s.content)) === want);
     return hit ? { published: true, remoteId: hit.id, url: hit.url ?? hit.uri } : { published: false };
   }
 
   /**
-   * A resumed send past the key window (or of unknown age): Mastodon may have forgotten the keys, so a repeat could
-   * post a part again. Any part found on the profile since the send began refuses; a check that can't answer posts
-   * nothing (M5 P6).
+   * The rest of a thread whose first part was found: each later part must be a reply, with its text, to the one
+   * before (from the root's context). All there: published. One missing: not published, with a note, so the
+   * delivery stays failed with its send key. Anything it can't tell: null.
    */
-  private async refuseIfLive(t: Target, job: DeliveryJob, since: number | undefined): Promise<void> {
+  private async wholeThread(t: Target, job: DeliveryJob, root: RemoteState): Promise<RemoteState | null> {
+    const wants = job.items.slice(1).map(fingerprint);
+    if (wants.includes("")) return null;
+    const res = await t.api.read({ url: `${t.base}/api/v1/statuses/${enc(root.remoteId ?? "")}/context`, method: "GET", headers: t.auth });
+    const descendants = isOk(res) ? (parseJson(res.text) as { descendants?: unknown } | null)?.descendants : null;
+    if (!Array.isArray(descendants)) return null;
+    const total = job.items.length;
+    let parent = root.remoteId;
+    for (let i = 1; i < total; i++) {
+      const next = (descendants as MaStatus[]).find((s) => s.in_reply_to_id === parent && fingerprint(plain(s.content ?? "")) === wants[i - 1]);
+      if (!next) {
+        return {
+          published: false,
+          note: `Part ${i} of ${total} is on Mastodon, part ${i + 1} and after are not. Post again posts the rest only within about 55 minutes of the first attempt; after that it is refused by design, so post the rest on Mastodon yourself and mark it published.`,
+        };
+      }
+      parent = next.id;
+    }
+    return root;
+  }
+
+  /**
+   * A resumed send past the key window (or of unknown age): Mastodon may have forgotten the keys, so a repeat could
+   * post a part again. Any of `texts` (the parts still to send) found on the profile since the send began (any
+   * time, without a send time) refuses; a check that can't answer posts nothing (M5 P6).
+   */
+  private async refuseIfLive(t: Target, texts: string[], since: number | undefined): Promise<void> {
     const list = await this.recent(t);
     if (!list) throw new TransientError(CHECK_FAILED);
-    const parts = new Set([this.firstText(job), ...job.items.slice(1)].map(fingerprint).filter((f) => f !== ""));
+    const parts = new Set(texts.map(fingerprint).filter((f) => f !== ""));
     const live = list.some((s) => (since === undefined || Date.parse(s.created_at) >= since - MINUTE) && parts.has(fingerprint(plain(s.content))));
     if (live) throw new NeedsUserError(LIVE_LATE);
   }

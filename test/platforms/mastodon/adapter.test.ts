@@ -123,15 +123,53 @@ describe("MastodonAdapter.publish", () => {
       message: "Mastodon: an earlier attempt at this post is live on Mastodon, and Mastodon only recognises a repeat within an hour; delete it there or mark it published.",
     });
     expect(requestUrlMock.calls.map((c) => c.method)).toEqual(["GET", "GET"]);
-    expect(call(1).url).toBe(`${BASE}/api/v1/accounts/109000000000000001/statuses?limit=40`);
+    expect(call(1).url).toBe(`${BASE}/api/v1/accounts/109000000000000001/statuses?limit=40&exclude_reblogs=true`);
     requestUrlMock.reset();
-    queue(json(200, MA.account), json(200, [MA.status("9", "Something else")]), json(200, MA.status()));
+    // A boost of the same text is someone else's post: never taken for ours.
+    const boost = { ...MA.status("98", "Doors open at 18:00", CONTRACT_NOW - 3_600_000), reblog: MA.status("55") };
+    queue(json(200, MA.account), json(200, [MA.status("9", "Something else"), boost]), json(200, MA.status()));
     expect(await make().publish(resumed({}, late))).toEqual(mastodonCase.success.expect);
     requestUrlMock.reset();
     // A check that can't answer posts nothing (M5 P6).
     queue(json(200, MA.account), json(500, MA.unavailable));
     await expect(make().publish(resumed({}, late))).rejects.toMatchObject({ kind: "transient", message: "Mastodon: could not check whether the earlier attempt went out; nothing was posted." });
     expect(requestUrlMock.calls).toHaveLength(2);
+    requestUrlMock.reset();
+    // Without a send time, every post in the list counts, however old (no time filter).
+    queue(json(200, MA.account), json(200, [MA.status("1", "One", CONTRACT_NOW - 5 * 3_600_000)]));
+    await expect(make().publish(resumed(thread(), { sendAt: undefined }))).rejects.toMatchObject({ kind: "needs_user" });
+  });
+
+  it("runs the late-key check at each part's commit, after the uploads (Task 9 fix round 1)", async () => {
+    let clock = CONTRACT_NOW;
+    const sleep = vi.fn(async (ms: number) => {
+      clock += ms;
+    });
+    const adapter = new MastodonAdapter({ ...contractDeps(), now: () => clock, sleep });
+    // 55 minutes old only once the image is processed.
+    const sendAt = CONTRACT_NOW - 55 * 60_000 + 500;
+    queue(json(202, MA.processing), json(200, { ...MA.processing, url: "https://files.mastodon.social/x.png" }), json(200, MA.account), json(200, []), json(200, MA.status()));
+    expect(await adapter.publish(resumed({ media: [img("cover.png")] }, { sendAt }))).toEqual(mastodonCase.success.expect);
+    expect(requestUrlMock.calls.map((c) => `${c.method} ${c.url.replace(BASE, "")}`)).toEqual([
+      "POST /api/v2/media",
+      "GET /api/v1/media/22348642",
+      "GET /api/v1/accounts/verify_credentials",
+      "GET /api/v1/accounts/109000000000000001/statuses?limit=40&exclude_reblogs=true",
+      "POST /api/v1/statuses",
+    ]);
+    requestUrlMock.reset();
+    // The window closes between two parts: the parts still to send are checked, not the ones this attempt holds.
+    const times = [CONTRACT_NOW, CONTRACT_NOW + 10 * 60_000];
+    const late = new MastodonAdapter({ ...contractDeps(), now: () => times.shift() ?? CONTRACT_NOW + 10 * 60_000 });
+    queue(json(200, MA.status("1", "One")), json(200, MA.account), json(200, [MA.status("1", "One")]), json(200, MA.status("2", "Two")), json(200, MA.status("3", "Three")));
+    expect(await late.publish(resumed(thread(), { sendAt: CONTRACT_NOW - 50 * 60_000 }))).toMatchObject({ remoteId: "1" });
+    expect(requestUrlMock.calls).toHaveLength(5);
+    requestUrlMock.reset();
+    const times2 = [CONTRACT_NOW, CONTRACT_NOW + 10 * 60_000];
+    const late2 = new MastodonAdapter({ ...contractDeps(), now: () => times2.shift() ?? CONTRACT_NOW + 10 * 60_000 });
+    queue(json(200, MA.status("1", "One")), json(200, MA.account), json(200, [MA.status("2", "Two", CONTRACT_NOW - 49 * 60_000)]));
+    await expect(late2.publish(resumed(thread(), { sendAt: CONTRACT_NOW - 50 * 60_000 }))).rejects.toMatchObject({ kind: "needs_user" });
+    expect(requestUrlMock.calls).toHaveLength(3);
   });
 
   it("refuses without an instance or a token, before any request", async () => {
@@ -142,9 +180,15 @@ describe("MastodonAdapter.publish", () => {
     expect(requestUrlMock.calls).toHaveLength(0);
   });
 
-  it("uses the channel's server when it is set", () => {
-    expect(mastodonBase(channel("ma/you", { handle: "@you@mastodon.social", server: "https://social.example" }))).toBe("https://social.example");
-    expect(mastodonBase(channel("ma/you", { handle: "@you@mastodon.social" }))).toBe("https://mastodon.social");
+  it("uses the channel's server when it is set, else the exact host and port of the handle, and never guesses", () => {
+    const base = (handle: string, server?: string) => mastodonBase(channel("ma/you", { handle, ...(server ? { server } : {}) }));
+    expect(base("@you@mastodon.social", "https://social.example:8443")).toBe("https://social.example:8443");
+    expect(base("@you@mastodon.social")).toBe("https://mastodon.social");
+    expect(base("you@Social.Example:8443")).toBe("https://social.example:8443");
+    expect(base("https://www.masto.example/@you")).toBe("https://www.masto.example");
+    expect(base("https://masto.example:8443/@you")).toBe("https://masto.example:8443");
+    // Ambiguous: no account on an instance. The server address is needed.
+    for (const handle of ["you", "mastodon.social", "https://mastodon.social", "http://masto.example/@you"]) expect(base(handle), handle).toBeNull();
   });
 
   it("never shows the access token, whole or URL-encoded, even when the server echoes it", async () => {
@@ -229,7 +273,7 @@ describe("MastodonAdapter native scheduling (#90)", () => {
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ReplacementUnknownError);
       expect(err).not.toBeInstanceOf(RemoteRemovedError);
-      expect(err).toMatchObject({ kind: "unknown", message: "Mastodon: the old scheduled post was removed; the new one may or may not be scheduled." });
+      expect(err).toMatchObject({ kind: "unknown", message: expect.stringMatching(/^Mastodon: the old scheduled post was removed; the new one may or may not be scheduled\. \(Mastodon: .+\)$/) });
     }
   });
 
@@ -247,6 +291,36 @@ describe("MastodonAdapter native scheduling (#90)", () => {
     queue(hang, json(200, MA.scheduled()));
     await expect(make().update(handedOver(), { content: true, time: false })).rejects.toMatchObject({ kind: "transient" });
     expect(requestUrlMock.calls).toHaveLength(2);
+  });
+
+  it("checks a removal answered with a 5xx the same way, and says nothing changed only when the old post is still there", async () => {
+    const replace = () =>
+      make()
+        .update(handedOver(), { content: true, time: false })
+        .catch((e: unknown) => e);
+    // P3a: the old post is gone after all: the new version is scheduled.
+    queue(json(503, MA.unavailable), json(404, MA.notFound), json(200, MA.scheduled("3222")));
+    expect(await replace()).toEqual({ remoteId: "3222" });
+    expect(call(1)).toMatchObject({ url: `${BASE}/api/v1/scheduled_statuses/3221`, method: "GET" });
+    // P3b: the old post is still there: nothing was changed.
+    requestUrlMock.reset();
+    queue(json(503, MA.unavailable), json(200, MA.scheduled()));
+    expect(await replace()).toMatchObject({ kind: "transient", message: "Mastodon: the old scheduled post could not be removed, so nothing was changed. Try again." });
+    expect(requestUrlMock.calls).toHaveLength(2);
+    // P3c: the check can't tell: the old post may be gone, and nothing new was scheduled (Task 14 parks it on check_needed).
+    for (const [first, check] of [
+      [json(503, MA.unavailable), hang],
+      [json(503, MA.unavailable), json(500, MA.unavailable)],
+      [hang, hang],
+      [netError, json(502, MA.unavailable)],
+    ] as const) {
+      requestUrlMock.reset();
+      queue(first, check);
+      const err = await replace();
+      expect(err).toBeInstanceOf(ReplacementUnknownError);
+      expect(err).toMatchObject({ kind: "unknown", message: "Mastodon: the old scheduled post may have been removed; nothing new was scheduled." });
+      expect(requestUrlMock.calls).toHaveLength(2);
+    }
   });
 
   it("edits a live post, but not a live thread", async () => {
@@ -278,7 +352,7 @@ describe("MastodonAdapter.lookup", () => {
   it("finds the published post once the scheduled one is gone, and can't tell when it finds nothing", async () => {
     queue(json(404, MA.notFound), json(200, MA.account), json(200, [MA.status("5", "Doors open at 18:00", MA_AT)]));
     expect(await make().lookup(handedOver())).toEqual({ published: true, remoteId: "5", url: "https://mastodon.social/@you/5" });
-    expect(call(2).url).toBe(`${BASE}/api/v1/accounts/109000000000000001/statuses?limit=40`);
+    expect(call(2).url).toBe(`${BASE}/api/v1/accounts/109000000000000001/statuses?limit=40&exclude_reblogs=true`);
     queue(json(404, MA.notFound), json(200, MA.account), json(200, []));
     expect(await make().lookup(handedOver())).toBeNull();
   });
@@ -298,6 +372,38 @@ describe("MastodonAdapter.lookup", () => {
     expect(await make().lookup(job({ delivery: d }))).toEqual({ published: true, remoteId: "7", url: "https://mastodon.social/@you/7" });
     queue(json(200, MA.account), json(500, MA.unavailable));
     expect(await make().lookup(job({ delivery: d }))).toBeNull();
+  });
+
+  it("checks every part of a thread, and says which part is missing (whole-thread lookup)", async () => {
+    const d = { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: MA_KEY };
+    const reply = (id: string, t: string, parent: string) => ({ ...MA.status(id, t, CONTRACT_NOW + 2_000), in_reply_to_id: parent });
+    const root = [MA.status("1", "One", CONTRACT_NOW + 1_000)];
+    queue(json(200, MA.account), json(200, root), json(200, { ancestors: [], descendants: [reply("2", "Two", "1"), reply("8", "Three", "1"), reply("3", "Three", "2")] }));
+    expect(await make().lookup(job({ ...thread(), delivery: d }))).toEqual({ published: true, remoteId: "1", url: "https://mastodon.social/@you/1" });
+    expect(call(2).url).toBe(`${BASE}/api/v1/statuses/1/context`);
+    queue(json(200, MA.account), json(200, root), json(200, { ancestors: [], descendants: [reply("2", "Two", "1"), reply("8", "Three", "1")] }));
+    expect(await make().lookup(job({ ...thread(), delivery: d }))).toEqual({
+      published: false,
+      note: "Part 2 of 3 is on Mastodon, part 3 and after are not. Post again posts the rest only within about 55 minutes of the first attempt; after that it is refused by design, so post the rest on Mastodon yourself and mark it published.",
+    });
+    // The replies can't be read: can't tell.
+    queue(json(200, MA.account), json(200, root), json(500, MA.unavailable));
+    expect(await make().lookup(job({ ...thread(), delivery: d }))).toBeNull();
+    // The first part isn't found: can't tell (a text search, M5 P5).
+    queue(json(200, MA.account), json(200, []));
+    expect(await make().lookup(job({ ...thread(), delivery: d }))).toBeNull();
+  });
+
+  it("can't tell for an image-only or emoji-only post, and never takes a boost for the post", async () => {
+    const d = { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: MA_KEY };
+    expect(await make().lookup(job({ items: [""], text: "", media: [img("cover.png")], delivery: d }))).toBeNull();
+    expect(await make().lookup(job({ items: ["\u{1F389}\u{1F389}"], text: "\u{1F389}\u{1F389}", delivery: d }))).toBeNull();
+    expect(await make().lookup({ ...handedOver({ remoteId: undefined }), items: ["\u{1F389}"], text: "\u{1F389}" })).toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
+    const boost = { ...MA.status("99", "Doors open at 18:00", CONTRACT_NOW + 30_000), reblog: MA.status("55") };
+    queue(json(200, MA.account), json(200, [boost]));
+    expect(await make().lookup(job({ delivery: d }))).toBeNull();
+    expect(call(1).url).toBe(`${BASE}/api/v1/accounts/109000000000000001/statuses?limit=40&exclude_reblogs=true`);
   });
 
   it("matches by text regardless of HTML, case, mentions and links (M5 P5)", () => {
