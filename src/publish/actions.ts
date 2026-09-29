@@ -304,7 +304,8 @@ export class PublishActions {
     // one the platform removed, is not "not found"; the delivery stays check_needed (can't tell).
     if (!state.published && (state.scheduledAt !== undefined || state.gone)) return;
     const at = this.deps.now();
-    const error = "Not found on the platform after an interrupted publish.";
+    // M5 P17c: a lookup that found part of a thread says so; the delivery keeps its send key, so Post again resumes it.
+    const error = state.note ?? "Not found on the platform after an interrupted publish.";
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
       if (d?.status !== "check_needed") return { refuse: "The delivery changed." };

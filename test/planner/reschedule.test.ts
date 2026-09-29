@@ -32,16 +32,18 @@ describe("planReschedule", () => {
     expect(plan.ok && plan.patch.scheduledAt).toBe(T(12, 8, 30));
   });
 
-  it("drops the send key of a failed channel it moves, and keeps the one of a channel waiting for a check (M5 P17)", () => {
-    const v = variant({ deliveries: { "li/me": { status: "failed", attempts: 2, sendAt: T(8, 17, 30), sendKey: "3mxdyj6ws22jm" }, "li/acme": { status: "check_needed", sendAt: T(8, 17, 45), sendKey: "3mxdyj6ws22jn" } } });
+  it("keeps every channel's send key when it moves the post: the moved one and the siblings that stay (M5 P17c)", () => {
+    const v = variant({ deliveries: { "li/me": { status: "failed", attempts: 2, sendAt: T(8, 17, 30), sendKey: "3mxdyj6ws22jm" }, "li/acme": { status: "failed", at: T(8, 20), sendAt: T(8, 20), sendKey: "3mxdyj6ws22jn" } } });
+    // The whole post shifts; li/acme has its own time and stays put.
     const whole = planReschedule(rowOf(v, "li/me", T(8, 17, 30), "failed"), { at: T(9, 10, 0) });
     if (!whole.ok) throw new Error();
-    expect(whole.patch.deliveries?.["li/me"]).toEqual({ status: "failed", attempts: 2 });
-    expect(whole.patch.deliveries?.["li/acme"]).toMatchObject({ sendAt: T(8, 17, 45), sendKey: "3mxdyj6ws22jn" });
-    const own = variant({ deliveries: { "li/acme": { status: "failed", at: T(8, 20), sendAt: T(8, 20) } } });
-    const one = planReschedule(rowOf(own, "li/acme", T(8, 20), "failed"), { at: T(9, 8) });
+    expect(whole.patch.deliveries?.["li/me"]).toMatchObject({ status: "failed", sendAt: T(8, 17, 30), sendKey: "3mxdyj6ws22jm" });
+    expect(whole.patch.deliveries?.["li/acme"]).toMatchObject({ at: T(8, 20), sendAt: T(8, 20), sendKey: "3mxdyj6ws22jn" });
+    // Only li/acme moves (its own time).
+    const one = planReschedule(rowOf(v, "li/acme", T(8, 20), "failed"), { at: T(9, 8) });
     if (!one.ok) throw new Error();
-    expect(one.patch.deliveries?.["li/acme"]).toEqual({ status: "failed", at: T(9, 8) });
+    expect(one.patch.deliveries?.["li/acme"]).toEqual({ status: "failed", at: T(9, 8), sendAt: T(8, 20), sendKey: "3mxdyj6ws22jn" });
+    expect(one.patch.deliveries?.["li/me"] ?? v.deliveries["li/me"]).toMatchObject({ sendKey: "3mxdyj6ws22jm" });
   });
 
   it("moves only the channel when it has an explicit time", () => {

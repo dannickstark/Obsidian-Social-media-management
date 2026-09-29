@@ -130,6 +130,24 @@ describe("PublishOrchestrator", () => {
     expect(seen).toEqual([TEST_NOW]);
   });
 
+  it("tells the adapter to resume when the claim found a send key on disk, even with an unreadable attempts count (M5 P17c)", async () => {
+    const Q = "Social/Posts/Tg2.md";
+    const seen: Array<[string, boolean | undefined]> = [];
+    const { orchestrator } = await setup(
+      async (job) => {
+        seen.push([job.variant.path, job.resume]);
+        return { remoteId: "7", url: "https://t.me/eventx/7" };
+      },
+      { notes: [note(), note(Q, { status: "failed", send_key: "3mxdyj6ws22jm", attempts: "many" })] },
+    );
+    await orchestrator.run(P, "tg/event-x");
+    await orchestrator.run(Q, "tg/event-x");
+    expect(seen).toEqual([
+      [P, undefined],
+      [Q, true],
+    ]);
+  });
+
   it("gives two notes claimed in the same second different send keys (M5 P17b)", async () => {
     const Q = "Social/Posts/Tg2.md";
     const keys: Array<string | undefined> = [];

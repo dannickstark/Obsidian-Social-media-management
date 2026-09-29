@@ -45,6 +45,13 @@ describe("board", () => {
     expect(unscheduleDeliveries(scheduled, "ready")).toEqual({ "li/me": { status: "ready", at: 5 } });
   });
 
+  it("keeps a send key through schedule and unschedule (M5 P17c)", () => {
+    const post = v({ channels: ["li/me"], deliveries: { "li/me": { status: "failed", sendAt: 5, sendKey: "3mxdyj6ws22jm" } } });
+    expect(scheduleDeliveries(post)["li/me"]).toEqual({ status: "scheduled", sendAt: 5, sendKey: "3mxdyj6ws22jm" });
+    const scheduled = v({ channels: ["li/me"], deliveries: { "li/me": { status: "scheduled", sendAt: 5, sendKey: "3mxdyj6ws22jm" } } });
+    expect(unscheduleDeliveries(scheduled, "draft")["li/me"]).toEqual({ status: "draft", sendAt: 5, sendKey: "3mxdyj6ws22jm" });
+  });
+
   it("proposes a sensible default time", () => {
     const now = new Date(2026, 9, 8, 10).getTime();
     expect(defaultScheduleTime(now, v({ scheduledAt: now + 3_600_000 }))).toBe(now + 3_600_000);

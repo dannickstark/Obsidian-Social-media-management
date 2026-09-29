@@ -30,7 +30,7 @@ export const BS = {
   resolved: { did: "did:plc:alice" },
   unresolved: { error: "InvalidRequest", message: "Unable to resolve handle" },
   /** com.atproto.repo.getRecord */
-  record: (rkey: string) => ({ uri: uriOf(rkey), cid: "bafyreirecord", value: { $type: "app.bsky.feed.post", text: "Doors open at 18:00", createdAt: new Date(CONTRACT_NOW).toISOString() } }),
+  record: (rkey: string, text = "Doors open at 18:00") => ({ uri: uriOf(rkey), cid: "bafyreirecord", value: { $type: "app.bsky.feed.post", text, createdAt: new Date(CONTRACT_NOW).toISOString() } }),
   notFound: { error: "RecordNotFound", message: `Could not locate record: ${uriOf(RKEY0)}` },
   expired: { error: "ExpiredToken", message: "Token has expired" },
   badLogin: { error: "AuthenticationRequired", message: "Invalid identifier or password" },

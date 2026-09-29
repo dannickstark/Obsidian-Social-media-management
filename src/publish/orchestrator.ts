@@ -227,8 +227,9 @@ export class PublishOrchestrator {
     }
   }
 
-  private async send(p: Prepared, attempt: number, claim: { variant: Variant; delivery: Delivery }): Promise<Attempt> {
+  private async send(p: Prepared, attempt: number, claim: { variant: Variant; delivery: Delivery; resume: boolean }): Promise<Attempt> {
     const job = deliveryJob(claim.variant, p.channel, claim.delivery, p.content, p.secret);
+    if (claim.resume) job.resume = true;
     try {
       const res = await p.publish(job);
       const at = this.deps.now();
@@ -310,9 +311,9 @@ export class PublishOrchestrator {
   }
 
   /** Writes `publishing` + timestamp before any network call; the plan runs on fresh frontmatter, so nothing is claimed twice. */
-  private async claim(p: Prepared, first: boolean): Promise<{ variant: Variant; delivery: Delivery } | { refuse: string; changed?: true }> {
+  private async claim(p: Prepared, first: boolean): Promise<{ variant: Variant; delivery: Delivery; resume: boolean } | { refuse: string; changed?: true }> {
     const { file, channelId } = p;
-    const box: { variant?: Variant; delivery?: Delivery; changed?: true } = {};
+    const box: { variant?: Variant; delivery?: Delivery; changed?: true; resume?: boolean } = {};
     const result = await this.deps.writer.updateVariant(file, (fresh) => {
       // Fix round 1 (m2): a note still held for review (e.g. review was set again since) is never claimed;
       // covers a retry of a note that became held again, on top of the upstream guards (dueItems, freshChecked).
@@ -333,6 +334,8 @@ export class PublishOrchestrator {
       const sendAt = from.sendAt ?? parseDateTime(formatDateTime(now)) ?? now;
       // M5 P17b: and a random TID beside it, so two sends in the same second never share platform keys.
       const sendKey = from.sendKey ?? newSendKey(now);
+      // M5 P17c: a key already on disk means an earlier send of this delivery may have posted part of it.
+      box.resume = from.sendKey !== undefined;
       const next = transition(from, "publishing", { at: now, attempts: (d.attempts ?? 0) + 1, sendAt, sendKey });
       delete next.error;
       box.variant = fresh;
@@ -341,7 +344,7 @@ export class PublishOrchestrator {
     });
     if ("refuse" in result) return result;
     if (box.changed) return { refuse: CHANGED_RETRY, changed: true };
-    return { variant: box.variant!, delivery: box.delivery! };
+    return { variant: box.variant!, delivery: box.delivery!, resume: box.resume === true };
   }
 
   /**

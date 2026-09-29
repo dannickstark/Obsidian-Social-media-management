@@ -8,7 +8,7 @@ import { isFetchable } from "../og";
 import { urlsIn } from "../text";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, PublishResult, RemoteState, VerifyResult } from "../types";
 import { buildFacets } from "./richtext";
-import { postRkey, tidParts, TID_RE } from "./tid";
+import { newSendKey, tidParts, TID_RE } from "./tid";
 
 export const BSKY_SERVICE = "https://bsky.social";
 /** app.bsky.embed.images / external thumb: at most 1,000,000 bytes per blob. */
@@ -18,6 +18,13 @@ const NEEDS_USER = new Set(["ExpiredToken", "InvalidToken", "AuthenticationRequi
 /** Any JWT (a session token), wherever it appears in text from the platform (M5 G4). */
 const JWT_IN_TEXT_RE = /eyJ[\w-]+\.[\w-]+\.[\w-]+/g;
 const CHECK_FAILED = "Bluesky: could not check whether the earlier attempt went out; nothing was posted.";
+const MIXED = "An earlier version of this post is partly live on Bluesky; delete it there or mark it published.";
+
+/** A stored part is reused only when it holds the text being sent now; otherwise the send refuses (M5 P17c). */
+function sameVersion(found: StoredRecord, text: string): StrongRef {
+  if (found.text !== text) throw new NeedsUserError(MIXED);
+  return { uri: found.uri, cid: found.cid };
+}
 
 interface Session {
   did: string;
@@ -30,6 +37,10 @@ interface Session {
 interface StrongRef {
   uri: string;
   cid: string;
+}
+/** A record found under its key: its strong ref and the text it holds. */
+interface StoredRecord extends StrongRef {
+  text: string | null;
 }
 interface Xrpc {
   path: string;
@@ -80,13 +91,13 @@ function pdsOf(didDoc: unknown): string | null {
 
 /**
  * The record key of each thread part: from the delivery's send key (M5 P17b; part i = root + i µs, same clock id).
- * A job without one (not claimed by the orchestrator) falls back to the claim time, as in Task 7.
+ * A job without one (not claimed by the orchestrator) gets a fresh random key for this call only, never one derived
+ * from the claim time, which could equal another send's key.
  */
 function partKeys(job: DeliveryJob, now: number): (i: number) => string {
-  const root = job.delivery.sendKey;
-  if (root && TID_RE.test(root)) return (i) => tidParts(root, i);
-  const at = job.delivery.sendAt ?? job.delivery.at ?? now;
-  return (i) => postRkey(at, i, job.channel.id);
+  const stored = job.delivery.sendKey;
+  const root = stored && TID_RE.test(stored) ? stored : newSendKey(now);
+  return (i) => tidParts(root, i);
 }
 
 function expired(res: HttpResponse): boolean {
@@ -121,32 +132,46 @@ export class BlueskyAdapter implements PlatformAdapter {
     const session = await this.session(job);
     // M5 P17b: every record key comes from the send key (a random TID) the first claim wrote, the same on every attempt.
     const rkey = partKeys(job, this.deps.now());
-    // A retry (or a re-send from failed) asks for each part by its key first: the earlier attempt may have stored it.
-    const resume = (job.delivery.attempts ?? 1) > 1;
-    const root = await this.post(job, session, 0, rkey(0), resume);
+    // M5 P17c: a claim that found a send key on disk (a retry, a re-send, a re-planned failure) may have parts out
+    // already: every part is asked for by its key before anything is posted, and a stored part of another version
+    // refuses the send (versions are never mixed).
+    const stored = job.resume === true || (job.delivery.attempts ?? 1) > 1 ? await this.storedParts(job, session, rkey) : [];
+    const root = await this.post(job, session, 0, rkey(0), stored[0] ?? null);
     let parent = root;
     for (let i = 1; i < job.items.length; i++) {
       try {
-        parent = await this.post(job, session, i, rkey(i), resume, { root, parent });
+        parent = await this.post(job, session, i, rkey(i), stored[i] ?? null, { root, parent });
       } catch (e) {
         // Refused for now (5xx, 429, a failed upload): the retry finds the parts already out and continues the thread.
         if (e instanceof PublishError && e.kind === "transient") {
           throw new TransientError(`Bluesky: part ${i + 1} of ${job.items.length} is not posted yet; the parts before it are, and the retry continues the thread: ${e.message}`, e.retryAfterMs);
         }
+        if (e instanceof NeedsUserError && e.message === MIXED) throw e;
         return { ...this.result(session, root.uri), note: partialNote(i, job.items.length, e) };
       }
     }
     return this.result(session, root.uri);
   }
 
-  /** Exact (M5 P5): the first part's record, under the stored send key, whichever attempt stored it (M5 P17b). */
+  /**
+   * Exact (M5 P5, P17c): every part of the thread, under the stored send key, whichever attempt stored them. All
+   * there: published. The first part there but a later one missing: not published, with a note, so the delivery
+   * ends failed with its key and Post again posts the rest. Anything it can't tell: null.
+   */
   async lookup(job: DeliveryJob): Promise<RemoteState | null> {
     const sendKey = job.delivery.sendKey;
     if (!sendKey || !TID_RE.test(sendKey)) return null;
     try {
       const s = await this.session(job);
-      const ref = await this.stored(job, s, sendKey);
-      return ref ? { published: true, ...this.result(s, ref.uri) } : { published: false };
+      const total = Math.max(1, job.items.length);
+      const root = await this.stored(job, s, sendKey);
+      if (!root) return { published: false };
+      for (let i = 1; i < total; i++) {
+        if (!(await this.stored(job, s, tidParts(sendKey, i)))) {
+          return { published: false, note: `Part ${i} of ${total} is on Bluesky, part ${i + 1} and after are not. Use Post again to post the rest after it.` };
+        }
+      }
+      return { published: true, ...this.result(s, root.uri) };
     } catch {
       return null;
     }
@@ -236,12 +261,9 @@ export class BlueskyAdapter implements PlatformAdapter {
    * RecordNotFound means it is created); so every createRecord is retry-safe (M5 P2), and a thread resumes where
    * it stopped.
    */
-  private async post(job: DeliveryJob, s: Session, i: number, rkey: string, resume: boolean, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
-    if (resume) {
-      const earlier = await this.stored(job, s, rkey);
-      if (earlier) return earlier;
-    }
+  private async post(job: DeliveryJob, s: Session, i: number, rkey: string, earlier: StoredRecord | null, reply?: { root: StrongRef; parent: StrongRef }): Promise<StrongRef> {
     const text = job.items[i] ?? "";
+    if (earlier) return sameVersion(earlier, text);
     const record: Record<string, unknown> = { $type: POST, text, createdAt: new Date(this.deps.now()).toISOString() };
     const facets = await buildFacets(text, (handle) => this.resolveHandle(job, handle));
     if (facets.length) record.facets = facets;
@@ -253,9 +275,9 @@ export class BlueskyAdapter implements PlatformAdapter {
     const res = await this.xrpc(job, "commit", { path: "com.atproto.repo.createRecord", method: "POST", json: { repo: s.did, collection: POST, rkey, record } });
     if (!isOk(res)) {
       const error = this.api(job).error(res, { phase: "commit", retrySafe: true });
-      // On a retry, a refused create may mean the record is there after all (the earlier attempt's): ask by its key.
-      const found = resume ? await this.stored(job, s, rkey) : null;
-      if (found) return found;
+      // On a resumed send, a refused create may mean the record is there after all (an earlier attempt's): ask by its key.
+      const found = job.resume === true || (job.delivery.attempts ?? 1) > 1 ? await this.stored(job, s, rkey) : null;
+      if (found) return sameVersion(found, text);
       throw error;
     }
     const ref = parseJson(res.text) as { uri?: unknown; cid?: unknown } | null;
@@ -330,15 +352,28 @@ export class BlueskyAdapter implements PlatformAdapter {
    * The record under `rkey`: its strong ref when it is there, null on RecordNotFound. Any other answer, or none,
    * means "can't tell", and nothing is posted (M5 P6, fail-closed).
    */
-  private async stored(job: DeliveryJob, s: Session, rkey: string): Promise<StrongRef | null> {
+  /** Every part's stored record (or null), asked for in order before anything is posted; refuses a mixed version. */
+  private async storedParts(job: DeliveryJob, s: Session, rkey: (i: number) => string): Promise<Array<StoredRecord | null>> {
+    const out: Array<StoredRecord | null> = [];
+    for (let i = 0; i < job.items.length; i++) {
+      const found = await this.stored(job, s, rkey(i));
+      if (found) sameVersion(found, job.items[i] ?? "");
+      out.push(found);
+    }
+    return out;
+  }
+
+  private async stored(job: DeliveryJob, s: Session, rkey: string): Promise<StoredRecord | null> {
     let res: HttpResponse;
     try {
       res = await this.xrpc(job, "read", { path: "com.atproto.repo.getRecord", method: "GET", query: { repo: s.did, collection: POST, rkey } });
     } catch {
       throw new TransientError(CHECK_FAILED);
     }
-    const body = parseJson(res.text) as { uri?: unknown; cid?: unknown; error?: unknown } | null;
-    if (isOk(res) && typeof body?.uri === "string" && body.uri && typeof body.cid === "string" && body.cid) return { uri: body.uri, cid: body.cid };
+    const body = parseJson(res.text) as { uri?: unknown; cid?: unknown; error?: unknown; value?: { text?: unknown } } | null;
+    if (isOk(res) && typeof body?.uri === "string" && body.uri && typeof body.cid === "string" && body.cid) {
+      return { uri: body.uri, cid: body.cid, text: typeof body.value?.text === "string" ? body.value.text : null };
+    }
     if (res.status === 400 && body?.error === "RecordNotFound") return null;
     throw new TransientError(CHECK_FAILED);
   }

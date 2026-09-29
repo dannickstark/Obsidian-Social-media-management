@@ -55,20 +55,17 @@ describe("delivery transitions (spec §5)", () => {
     expect(() => transition({ status: "check_needed", remoteAt: 5 }, "handed_over", { remoteAt: undefined })).toThrow(IllegalTransitionError);
   });
 
-  it("keeps the send key (sendAt) while a send is outstanding and clears it once the delivery is done or re-planned (M5 P17)", () => {
+  it("keeps the send key through every re-plan and clears it only once the delivery is published (M5 P17c)", () => {
     const d = (status: DeliveryStatus): Delivery => ({ status, at: 1000, sendAt: 2000, sendKey: "3mxdyj6ws22jm" });
-    // Kept: the retry, the user's re-send from failed, the check.
-    expect(transition(d("publishing"), "failed").sendAt).toBe(2000);
-    expect(transition(d("failed"), "publishing").sendAt).toBe(2000);
-    expect(transition(d("publishing"), "check_needed").sendAt).toBe(2000);
-    expect(transition(d("check_needed"), "failed").sendAt).toBe(2000);
-    // M5 P17b: the send key's TID follows the same rules.
-    expect(transition(d("publishing"), "failed").sendKey).toBe("3mxdyj6ws22jm");
-    expect(transition(d("failed"), "publishing").sendKey).toBe("3mxdyj6ws22jm");
-    // Cleared: published, back to draft or ready, rescheduled or unscheduled.
-    for (const [from, to] of [["publishing", "published"], ["check_needed", "published"], ["failed", "scheduled"], ["check_needed", "scheduled"], ["failed", "ready"], ["overdue", "scheduled"], ["scheduled", "draft"]] as Array<[DeliveryStatus, DeliveryStatus]>) {
-      expect(transition(d(from), to), `${from} → ${to}`).not.toHaveProperty("sendAt");
-      expect(transition(d(from), to), `${from} → ${to}`).not.toHaveProperty("sendKey");
+    // Kept: retries, the user's re-send, checks, and every re-plan (reschedule, schedule, unschedule, draft, ready).
+    for (const [from, to] of [["publishing", "failed"], ["failed", "publishing"], ["publishing", "check_needed"], ["check_needed", "failed"], ["failed", "scheduled"], ["check_needed", "scheduled"], ["failed", "ready"], ["overdue", "scheduled"], ["scheduled", "draft"], ["scheduled", "ready"]] as Array<[DeliveryStatus, DeliveryStatus]>) {
+      expect(transition(d(from), to), `${from} → ${to}`).toMatchObject({ sendAt: 2000, sendKey: "3mxdyj6ws22jm" });
+    }
+    // Cleared: published, from wherever it gets there.
+    for (const from of ["publishing", "check_needed", "handed_over", "awaiting_you", "overdue"] as DeliveryStatus[]) {
+      const next = transition(d(from), "published");
+      expect(next, from).not.toHaveProperty("sendAt");
+      expect(next, from).not.toHaveProperty("sendKey");
     }
   });
 

@@ -97,6 +97,11 @@ export interface DeliveryJob {
   featured?: MediaInfo;
   /** The channel's credential on this device, if any. */
   secret: string | null;
+  /**
+   * M5 P17c: the claim found this delivery's send key already on disk (a retry, a re-send, a re-planned failure), so
+   * an earlier attempt may have posted part of it. Set by the orchestrator.
+   */
+  resume?: boolean;
 }
 
 /** What the platform says about a post. `published: false` with nothing else means "not found". */
@@ -108,6 +113,8 @@ export interface RemoteState {
   scheduledAt?: number;
   /** The platform is sure it no longer has the post (deleted or taken off its schedule there). */
   gone?: boolean;
+  /** Not (fully) published, and why: part of a thread is out (M5 P17c). Kept as the delivery's error. */
+  note?: string;
 }
 
 export interface PublishResult {

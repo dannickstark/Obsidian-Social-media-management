@@ -3,13 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { requestUrlMock } from "../../fakes/obsidian";
 import type { Channel, Variant } from "../../../src/model/types";
 import { BlueskyAdapter, BLOB_MAX, blueskyFailure } from "../../../src/platforms/bluesky/api";
-import { tid, tidParts } from "../../../src/platforms/bluesky/tid";
+import { postRkey, tid, tidMicros, tidParts, TID_RE } from "../../../src/platforms/bluesky/tid";
 import type { AdapterDeps } from "../../../src/platforms/adapters";
 import type { DeliveryJob } from "../../../src/platforms/types";
 import { img } from "../fixtures";
 import { contractDeps, CONTRACT_NOW, expectDigestReads, PNG, trackedJob } from "../contract/harness";
 import { bytes, call, hang, json, netError, queue, sentJson, text, type Fixture } from "../http";
 import { makeCtx } from "../../ui/ctx";
+import { mcpCtx } from "../../mcp/helpers";
+import { indexed } from "../../helpers";
+import { expandRows } from "../../../src/index/queries";
 import { blueskyCase } from "./contract";
 import { BS, BS_ACCESS, BS_DID, BS_PASSWORD, BS_PDS, BS_REFRESH, RKEY0, uriOf } from "./fixtures";
 
@@ -222,15 +225,15 @@ describe("BlueskyAdapter.publish", () => {
     const first = { ...THREAD, media: [img("a.png")] };
     await expect(adapter.publish(job({ ...first, delivery: { status: "publishing", at: EARLIER, attempts: 1, sendAt: EARLIER, sendKey: KEY_E } }))).rejects.toMatchObject({ kind: "transient" });
     requestUrlMock.reset();
-    // Attempt 2, 1 minute later: part 1 is there, parts 2 and 3 are not.
-    queue(json(200, BS.record(key(0))), json(400, BS.notFound), json(200, BS.created(key(1))), json(400, BS.notFound), json(200, BS.created(key(2))));
+    // Attempt 2, 1 minute later: part 1 is there, parts 2 and 3 are not. Every part is checked before anything is posted.
+    queue(json(200, BS.record(key(0), "One")), json(400, BS.notFound), json(400, BS.notFound), json(200, BS.created(key(1))), json(200, BS.created(key(2))));
     const res = await adapter.publish(job({ ...first, delivery: { status: "publishing", at: CONTRACT_NOW, attempts: 2, sendAt: EARLIER, sendKey: KEY_E } }));
     expect(res).toEqual({ remoteId: uriOf(key(0)), url: `https://bsky.app/profile/you.bsky.social/post/${key(0)}` });
     const q = (i: number) => `${BS_PDS}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(BS_DID)}&collection=app.bsky.feed.post&rkey=${key(i)}`;
-    expect(requestUrlMock.calls.map((c) => c.url)).toEqual([q(0), q(1), `${BS_PDS}/xrpc/com.atproto.repo.createRecord`, q(2), `${BS_PDS}/xrpc/com.atproto.repo.createRecord`]);
+    expect(requestUrlMock.calls.map((c) => c.url)).toEqual([q(0), q(1), q(2), `${BS_PDS}/xrpc/com.atproto.repo.createRecord`, `${BS_PDS}/xrpc/com.atproto.repo.createRecord`]);
     // No second copy of part 1, no second upload of its image; the rest replies to the stored part 1.
     const root = { uri: uriOf(key(0)), cid: "bafyreirecord" };
-    expect(sentJson(2)).toMatchObject({ rkey: key(1), record: { text: "Two", reply: { root, parent: root } } });
+    expect(sentJson(3)).toMatchObject({ rkey: key(1), record: { text: "Two", reply: { root, parent: root } } });
     expect(sentJson(4)).toMatchObject({ rkey: key(2), record: { text: "Three", reply: { root, parent: { uri: uriOf(key(1)) } } } });
   });
 
@@ -246,6 +249,36 @@ describe("BlueskyAdapter.publish", () => {
     expect(call(1).url).toContain(`rkey=${B}`);
     expect(sentJson(2).rkey).toBe(B);
     expect(res.remoteId).toBe(uriOf(B));
+  });
+
+  it("never mixes versions: on a retry, a stored part whose text differs refuses before posting anything (M5 P17c)", async () => {
+    const key = (i: number) => tidParts(KEY_E, i);
+    const retry = { ...THREAD, delivery: { status: "publishing" as const, at: CONTRACT_NOW, attempts: 2, sendAt: EARLIER, sendKey: KEY_E } };
+    const REFUSAL = "An earlier version of this post is partly live on Bluesky; delete it there or mark it published.";
+    queue(json(200, BS.session), json(200, BS.record(key(0), "One (before the edit)")), json(400, BS.notFound), json(400, BS.notFound));
+    await expect(make().publish(job(retry))).rejects.toMatchObject({ kind: "needs_user", message: REFUSAL });
+    expect(requestUrlMock.calls.filter((c) => c.url.endsWith("createRecord"))).toHaveLength(0);
+    requestUrlMock.reset();
+    // A later stored part that differs refuses too, even though part 1 matches.
+    queue(json(200, BS.session), json(200, BS.record(key(0), "One")), json(200, BS.record(key(1), "Two, edited")), json(400, BS.notFound));
+    await expect(make().publish(job(retry))).rejects.toMatchObject({ kind: "needs_user", message: REFUSAL });
+    expect(requestUrlMock.calls.filter((c) => c.url.endsWith("createRecord"))).toHaveLength(0);
+  });
+
+  it("resumes whenever the claim found a send key on disk, even when attempts can't be read (M5 P17c)", async () => {
+    queue(json(200, BS.session), json(200, BS.record(RKEY0)));
+    const res = await make().publish(job({ resume: true, delivery: { status: "publishing", at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: RKEY0 } }));
+    expect(res.remoteId).toBe(uriOf(RKEY0));
+    expect(requestUrlMock.calls.filter((c) => c.url.endsWith("createRecord"))).toHaveLength(0);
+  });
+
+  it("gives a job without a send key a fresh random one, never a key derived from the claim time (M5 P17c)", async () => {
+    queue(json(200, BS.session), json(200, BS.created("x")));
+    await make().publish(job({ delivery: { status: "publishing", at: CONTRACT_NOW, attempts: 1 } }));
+    const rkey = sentJson(1).rkey as string;
+    expect(rkey).toMatch(TID_RE);
+    expect(Math.floor(tidMicros(rkey) / 1000)).toBe(CONTRACT_NOW);
+    expect(rkey).not.toBe(postRkey(CONTRACT_NOW, 0, "bs/you"));
   });
 
   it("on a retry whose check can't answer, posts nothing and is transient (M5 P6)", async () => {
@@ -315,6 +348,25 @@ describe("BlueskyAdapter.lookup and verify", () => {
     expect(requestUrlMock.calls).toHaveLength(0);
   });
 
+  it("checks every part of a thread: all there is published; a missing later part is not, with a note, so Post again resumes (M5 P17c)", async () => {
+    const key = (i: number) => tidParts(KEY_E, i);
+    const check = () => job({ ...THREAD, delivery: { status: "check_needed", at: CONTRACT_NOW, attempts: 1, sendAt: EARLIER, sendKey: KEY_E } });
+    queue(json(200, BS.session), json(200, BS.record(key(0), "One")), json(200, BS.record(key(1), "Two")), json(200, BS.record(key(2), "Three")));
+    expect(await make().lookup(check())).toEqual({ published: true, remoteId: uriOf(key(0)), url: `https://bsky.app/profile/you.bsky.social/post/${key(0)}` });
+    requestUrlMock.reset();
+    queue(json(200, BS.session), json(200, BS.record(key(0), "One")), json(400, BS.notFound), json(400, BS.notFound));
+    expect(await make().lookup(check())).toEqual({
+      published: false,
+      note: "Part 1 of 3 is on Bluesky, part 2 and after are not. Use Post again to post the rest after it.",
+    });
+    requestUrlMock.reset();
+    queue(json(200, BS.session), json(400, BS.notFound));
+    expect(await make().lookup(check())).toEqual({ published: false });
+    requestUrlMock.reset();
+    queue(json(200, BS.session), json(200, BS.record(key(0), "One")), json(502, BS.upstream));
+    expect(await make().lookup(check())).toBeNull();
+  });
+
   it("stays exact after a new attempt: it asks for the send key's record, not this attempt's (M5 P17)", async () => {
     queue(json(200, BS.session), json(200, BS.record(KEY_E)));
     const found = await make().lookup(job({ delivery: { status: "check_needed", at: CONTRACT_NOW, attempts: 2, sendAt: EARLIER, sendKey: KEY_E } }));
@@ -353,10 +405,10 @@ describe("a Bluesky thread retried after a 5xx (M5 P2, P17)", () => {
     c.adapters.register(new BlueskyAdapter(contractDeps()));
     // The send key is random (made at the claim): the answers echo the record key each request asks for or sends.
     const rkeyOf = (req: { url: string; body?: unknown }): string => new URL(req.url).searchParams.get("rkey") ?? (JSON.parse(req.body as string) as { rkey: string }).rkey;
-    const record: Fixture = (req) => json(200, BS.record(rkeyOf(req)))(req);
+    const record: Fixture = (req) => json(200, BS.record(rkeyOf(req), "One"))(req);
     const made: Fixture = (req) => json(200, BS.created(rkeyOf(req)))(req);
     // The 502 came after the PDS stored part 1: the retry finds it by the stored key and posts parts 2 and 3 after it.
-    queue(json(200, BS.session), json(502, BS.upstream), record, json(400, BS.notFound), made, json(400, BS.notFound), made);
+    queue(json(200, BS.session), json(502, BS.upstream), record, json(400, BS.notFound), json(400, BS.notFound), made, made);
     const res = await c.ctx.publish.orchestrator.run(P, "bs/you");
     const creates = requestUrlMock.calls.filter((x) => x.url.endsWith("createRecord")).map((x) => rkeyOf(x));
     const key = (i: number) => tidParts(creates[0]!, i);
@@ -367,5 +419,128 @@ describe("a Bluesky thread retried after a 5xx (M5 P2, P17)", () => {
     expect(fm.deliveries["bs/you"]).toMatchObject({ status: "published", remote_id: uriOf(key(0)), attempts: 2 });
     expect(fm.deliveries["bs/you"]).not.toHaveProperty("send_at");
     expect(fm.deliveries["bs/you"]).not.toHaveProperty("send_key");
+  });
+});
+
+/**
+ * A fake PDS for runs through the orchestrator: records by rkey, and a per-part answer to createRecord (`fail`):
+ * "503" refuses it without storing it, "stored-then-hang" stores it and never answers.
+ */
+function fakePds() {
+  const records = new Map<string, string>();
+  const creates: string[] = [];
+  const pds = { records, creates, fail: (_text: string): "503" | "stored-then-hang" | null => null };
+  const route: Fixture = (req) => {
+    const url = new URL(req.url);
+    const method = url.pathname.split("/xrpc/")[1];
+    if (method === "com.atproto.server.createSession") return json(200, BS.session)(req);
+    if (method === "com.atproto.repo.getRecord") {
+      const rkey = url.searchParams.get("rkey")!;
+      const text = records.get(rkey);
+      return text === undefined ? json(400, BS.notFound)(req) : json(200, BS.record(rkey, text))(req);
+    }
+    if (method === "com.atproto.repo.createRecord") {
+      const body = JSON.parse(req.body as string) as { rkey: string; record: { text: string } };
+      creates.push(body.rkey);
+      const how = pds.fail(body.record.text);
+      if (how === "503") return json(503, BS.upstream)(req);
+      if (records.has(body.rkey)) return json(400, { error: "InvalidRequest", message: "Record already exists" })(req);
+      records.set(body.rkey, body.record.text);
+      if (how === "stored-then-hang") return hang(req);
+      return json(200, BS.created(body.rkey))(req);
+    }
+    return json(404, { error: "MethodNotImplemented", message: method ?? "" })(req);
+  };
+  queue(...Array.from({ length: 80 }, () => route));
+  return pds;
+}
+
+const THREAD_NOTE = "Social/Posts/BsThread.md";
+const DAY = 86_400_000;
+
+async function threadCtx() {
+  const c = await mcpCtx({
+    now: CONTRACT_NOW,
+    notes: [{ path: THREAD_NOTE, frontmatter: { type: "social-post", platform: "bluesky", channels: ["bs/you"], status: "scheduled", scheduled_at: "2026-10-08T10:00:00+02:00", deliveries: { "bs/you": { status: "scheduled" } } }, body: "One\n---\nTwo\n---\nThree" }],
+  });
+  await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("bs/you")!, handle: "you.bsky.social", secretId: "osmm-channel-bs-you" });
+  c.app.secretStorage.setSecret("osmm-channel-bs-you", BS_PASSWORD);
+  c.adapters.register(new BlueskyAdapter(contractDeps()));
+  const delivery = async () => (parseYaml(getFrontMatterInfo(await c.app.vault.read(c.app.vault.getFileByPath(THREAD_NOTE)!)).frontmatter) as { deliveries: Record<string, Record<string, unknown>> }).deliveries["bs/you"]!;
+  return { c, delivery };
+}
+
+describe("a failed Bluesky thread re-planned and sent again (M5 P17c)", () => {
+  /** Part 2 answers 503 on every try: the retries run out, and the delivery is failed with part 1 live. */
+  async function failedThread() {
+    const { c, delivery } = await threadCtx();
+    const pds = fakePds();
+    pds.fail = (text) => (text === "Two" ? "503" : null);
+    expect(await c.ctx.publish.orchestrator.run(THREAD_NOTE, "bs/you")).toMatchObject({ status: "failed" });
+    const failed = await delivery();
+    const root = failed.send_key as string;
+    expect(failed).toMatchObject({ status: "failed" });
+    expect(root).toMatch(TID_RE);
+    expect([...pds.records]).toEqual([[root, "One"]]);
+    return { c, delivery, pds, root };
+  }
+
+  async function sendsAgainWithTheSameKey(t: Awaited<ReturnType<typeof failedThread>>) {
+    const { c, delivery, pds, root } = t;
+    await indexed(c.index, () => c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.sendKey === root);
+    expect((await delivery()).send_key).toBe(root);
+    pds.fail = () => null;
+    expect(await c.ctx.publish.orchestrator.run(THREAD_NOTE, "bs/you")).toMatchObject({ status: "published", url: `https://bsky.app/profile/you.bsky.social/post/${root}` });
+    // Part 1 was created exactly once, ever; parts 2 and 3 follow it under the same key.
+    expect(pds.creates.filter((k) => k === root)).toHaveLength(1);
+    expect([...pds.records]).toEqual([
+      [root, "One"],
+      [tidParts(root, 1), "Two"],
+      [tidParts(root, 2), "Three"],
+    ]);
+    expect(await delivery()).not.toHaveProperty("send_key");
+  }
+
+  it("through the planner's Reschedule", async () => {
+    const t = await failedThread();
+    const row = expandRows(t.c.index.variants(), 15).find((r) => r.variant.path === THREAD_NOTE && r.channelId === "bs/you")!;
+    expect(await t.c.ctx.actions.reschedule(row, { at: CONTRACT_NOW + DAY })).toBe(true);
+    await indexed(t.c.index, () => t.c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.at === CONTRACT_NOW + DAY);
+    await sendsAgainWithTheSameKey(t);
+  });
+
+  it("through the composer's Schedule", async () => {
+    const t = await failedThread();
+    const v = t.c.index.getVariant(THREAD_NOTE)!;
+    expect(await t.c.ctx.composer.schedule(v, { at: CONTRACT_NOW + DAY, reminders: [] }, [])).toBe(true);
+    await indexed(t.c.index, () => t.c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.status === "scheduled");
+    await sendsAgainWithTheSameKey(t);
+  });
+
+  it("through MCP schedule", async () => {
+    const t = await failedThread();
+    expect(await t.c.call("schedule", { path: THREAD_NOTE, at: "2026-10-09T10:00:00+02:00" })).toMatchObject({ ok: true });
+    await indexed(t.c.index, () => t.c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.status === "scheduled");
+    await sendsAgainWithTheSameKey(t);
+  });
+});
+
+describe("an interrupted Bluesky thread found half-posted (M5 P17c)", () => {
+  it("check_needed → failed with the note and the key; Post again posts parts 2 and 3 only", async () => {
+    const { c, delivery } = await threadCtx();
+    const pds = fakePds();
+    let first = true;
+    // Part 1 is stored, but its answer never comes (the connection times out).
+    pds.fail = (text) => (text === "One" && first ? ((first = false), "stored-then-hang") : null);
+    expect(await c.ctx.publish.orchestrator.run(THREAD_NOTE, "bs/you")).toEqual({ status: "check_needed" });
+    const root = (await delivery()).send_key as string;
+    await indexed(c.index, () => c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.status === "check_needed");
+    await c.ctx.publish.resolveCheck(THREAD_NOTE, "bs/you");
+    const failed = await delivery();
+    expect(failed).toMatchObject({ status: "failed", send_key: root, error: "Part 1 of 3 is on Bluesky, part 2 and after are not. Use Post again to post the rest after it." });
+    await indexed(c.index, () => c.index.getVariant(THREAD_NOTE)?.deliveries["bs/you"]?.status === "failed");
+    expect(await c.ctx.publish.orchestrator.run(THREAD_NOTE, "bs/you")).toMatchObject({ status: "published", url: `https://bsky.app/profile/you.bsky.social/post/${root}` });
+    expect(pds.creates).toEqual([root, tidParts(root, 1), tidParts(root, 2)]);
+    expect([...pds.records.values()]).toEqual(["One", "Two", "Three"]);
   });
 });
