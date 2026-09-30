@@ -26,7 +26,8 @@ import { effectiveDelivery, unreadable } from "./eligibility";
 import { deliveryJob } from "./job";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
-import { PublishOrchestrator, type FailureInfo, type PublishedInfo, type RunResult } from "./orchestrator";
+import { LATE_SUCCESS_WINDOW_MS, PublishOrchestrator, type FailureInfo, type PublishedInfo, type RunResult } from "./orchestrator";
+import { HandOverService } from "./handover";
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
 import { transition } from "../model/stateMachine";
 import { effectiveMethod, platformDef } from "../platforms/registry";
@@ -120,6 +121,9 @@ const GONE = "That note is no longer available.";
 const BLOCKING = "The post has blocking issues, so nothing was sent.";
 const CHANGED = "The post changed after it was approved, so nothing was sent. Ask again with the new text.";
 const NOTHING = "Nothing left to post for this note.";
+const NOT_FOUND = "Not found on the platform after an interrupted publish.";
+const NOT_FOUND_YET = "Not found on the platform yet. A late answer can still settle it; if it stays missing, mark it as not published.";
+const NOT_SCHEDULED = "Not found in the platform's scheduled posts. Check there: if it is missing, mark it as not published and schedule it again.";
 export const ALL_WAITING = "The channels left are waiting for the user to post them by hand, so nothing was sent.";
 // Fix round 1 (m4): say how it is released, not just where to approve it. Unlike HELD_REFUSAL (a Notice for
 // the user in Obsidian), this one goes back to Claude through publish_now/push_update, so it names both ways out.
@@ -164,6 +168,7 @@ export class PublishActions {
   }
 
   readonly orchestrator: PublishOrchestrator;
+  readonly handover: HandOverService;
   notifier: DeliveryNotifier = SILENT;
 
   constructor(protected readonly deps: PublishDeps) {
@@ -183,6 +188,31 @@ export class PublishActions {
       defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
       ...(deps.isPublisher ? { isPublisher: () => deps.isPublisher!() } : {}),
     });
+    this.handover = new HandOverService({
+      writer: deps.writer,
+      index: deps.index,
+      channels: deps.channels,
+      adapters: deps.adapters,
+      secrets: deps.secrets,
+      content: deps.composer.content,
+      check: (v, content) => deps.composer.check(v, content),
+      flush: async (path) => {
+        const editor = openMarkdownView(deps.app, path);
+        if (editor) await editor.save();
+      },
+      log: deps.log,
+      now: () => deps.now(),
+      isPublisher: () => deps.isPublisher?.() ?? false,
+      defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
+      warn: (message) => void new Notice(message, 0),
+      onFailure: (info) => this.notifier.failed(info),
+      onPublished: (info) => this.notifier.published?.(info),
+    });
+  }
+
+  /** Scheduler: starts native hand-overs and platform checks without holding the tick. */
+  background(_now: number): void {
+    this.handover.run().catch(() => undefined);
   }
 
   /** Runs one API delivery and reports the outcome (failures are reported by the notifier). */
@@ -202,7 +232,7 @@ export class PublishActions {
 
   /** This device's own API run has the delivery in `publishing` right now: it is live, not stuck. */
   isInFlight(path: string, channelId: string): boolean {
-    return this.orchestrator.isInFlight(path, channelId);
+    return this.orchestrator.isInFlight(path, channelId) || this.handover.isInFlight(path, channelId);
   }
 
   /** Whether "Check again" can ask the platform: the note's adapter has a lookup(). */
@@ -294,7 +324,26 @@ export class PublishActions {
     // Native channels are handed over when scheduled (M5). One still pending at its time is posted now, never skipped silently.
     if (method === "native") method = adapter?.publish ? "api" : "assisted";
     if (method === "api") {
-      this.runApiInBackground(item.path, item.channelId);
+      // The note may have changed since it was scheduled. Flush and validate the exact saved content before any
+      // automatic send, then make the orchestrator re-check that same snapshot inside its fresh claim.
+      const fresh = await this.freshContent(item.path);
+      if (!fresh) return;
+      const issues = this.deps.composer.check(fresh.v, fresh.content).filter((issue) => issue.level === "error");
+      if (heldForReview(fresh.v) || issues.length) {
+        const error = heldForReview(fresh.v) ? HELD_REFUSAL : issues.map((issue) => issue.message).join(" ");
+        this.notifier.failed({ path: item.path, channelId: item.channelId, kind: "invalid_content", error });
+        new Notice(error);
+        return;
+      }
+      const digest = sendDigest(fresh.v, fresh.content);
+      this.runApiInBackground(
+        item.path,
+        item.channelId,
+        (claimed, content) =>
+          !heldForReview(claimed) &&
+          sendDigest(claimed, content) === digest &&
+          !this.deps.composer.check(claimed, content).some((issue) => issue.level === "error"),
+      );
       return;
     }
     if (await this.startAssisted(item.path, item.channelId)) this.notifier.due(item.path, item.channelId);
@@ -312,17 +361,17 @@ export class PublishActions {
     if (!("refuse" in result)) void this.deps.log.append({ at: this.deps.now(), path: item.path, channelId: item.channelId, result: "overdue" });
   }
 
-  /**
-   * Startup: Obsidian closed mid-publish. The delivery is never retried automatically (spec §5.1).
-   * A publish this device still has in flight is not stuck: it is left to its own run.
-   */
+  /** Startup: an interrupted API publish or native hand-over becomes check_needed and is never retried. */
   async markCheckNeeded(path: string, channelId: string): Promise<boolean> {
     const v = this.deps.index.getVariant(path);
     if (!v || this.isInFlight(path, channelId)) return false;
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
-      if (d?.status !== "publishing" || this.isInFlight(path, channelId)) return { refuse: "The delivery changed." };
-      const error = "Obsidian closed while this was being published. Check the platform, then mark it as published or not.";
+      const handing = d?.status === "handed_over" && !d.remoteId;
+      if (!d || (d.status !== "publishing" && !handing) || this.isInFlight(path, channelId)) return { refuse: "The delivery changed." };
+      const error = handing
+        ? "Obsidian closed while this was being handed over to the platform. Check its scheduled posts, then mark it as published or not."
+        : "Obsidian closed while this was being published. Check the platform, then mark it as published or not.";
       return { deliveries: { [channelId]: transition(d, "check_needed", { error }) } };
     });
     if ("refuse" in result) return false;
@@ -330,31 +379,53 @@ export class PublishActions {
     return true;
   }
 
-  /** Resolves a check-needed delivery with the adapter's lookup(); leaves it to the user when that can't tell. */
+  /** Resolve a startup check without risking a duplicate or losing an uncertain native hand-over. */
   async resolveCheck(path: string, channelId: string): Promise<void> {
     const state = await this.orchestrator.lookup(path, channelId);
     const v = this.deps.index.getVariant(path);
     if (!state || !v) return;
-    // Interim guard until the hand-over settle path (M5 Task 13): a post still on the platform's schedule, or
-    // one the platform removed, is not "not found"; the delivery stays check_needed (can't tell).
-    if (!state.published && (state.scheduledAt !== undefined || state.gone)) return;
     const at = this.deps.now();
-    // M5 P17c: a lookup that found part of a thread says so; the delivery keeps its send key, so Post again resumes it.
-    const error = state.note ?? "Not found on the platform after an interrupted publish.";
+    let outcome: "published" | "handed_over" | "failed" | "kept" = "kept";
     const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
       const d = fresh.deliveries[channelId];
       if (d?.status !== "check_needed") return { refuse: "The delivery changed." };
-      if (!state.published) return { deliveries: { [channelId]: transition(d, "failed", { error }) } };
-      const next = transition(d, "published", { at, ...(state.url ? { url: state.url } : {}), ...(state.remoteId ? { remoteId: state.remoteId } : {}) });
-      delete next.error;
-      return { deliveries: { [channelId]: next } };
+      if (state.published) {
+        outcome = "published";
+        const next = transition(d, "published", { at, ...(state.url ? { url: state.url } : {}), ...(state.remoteId ? { remoteId: state.remoteId } : {}) });
+        delete next.error;
+        return { deliveries: { [channelId]: next } };
+      }
+      // An immediate publish has no hand-over baseline. Seeing some scheduled post (or a gone result) does not
+      // prove that this plugin's request failed, so leave it for the user rather than inventing a state.
+      if (d.remoteAt === undefined && (state.scheduledAt !== undefined || state.gone)) return {};
+      // P11: only a claim known to be a native hand-over may return to handed_over.
+      if (d.remoteAt !== undefined && state.scheduledAt !== undefined && state.remoteId) {
+        outcome = "handed_over";
+        const next = transition(d, "handed_over", { remoteId: state.remoteId, remoteAt: state.scheduledAt, ...(d.at === undefined ? { at: state.scheduledAt } : {}) });
+        delete next.error;
+        return { deliveries: { [channelId]: next } };
+      }
+      if (d.remoteAt !== undefined) return { deliveries: { [channelId]: { ...d, error: NOT_SCHEDULED } } };
+      // A partial-thread note means the platform positively found an incomplete live send. Mark it failed now
+      // so the retained send key can resume the missing parts; this is not an ambiguous late-success miss.
+      if (state.note) {
+        outcome = "failed";
+        return { deliveries: { [channelId]: transition(d, "failed", { error: state.note }) } };
+      }
+      if (at - (d.at ?? 0) < LATE_SUCCESS_WINDOW_MS) return { deliveries: { [channelId]: { ...d, error: NOT_FOUND_YET } } };
+      outcome = "failed";
+      return { deliveries: { [channelId]: transition(d, "failed", { error: state.note ?? NOT_FOUND }) } };
     });
-    if ("refuse" in result) return;
-    void this.deps.log.append(
-      state.published ? { at, path, channelId, result: "published", ...(state.url ? { url: state.url } : {}) } : { at, path, channelId, result: "failed", error },
-    );
-    // M3 P8: a lookup that confirms the publish counts as an API publish for the phone confirmation.
-    if (!state.published) return;
+    if ("refuse" in result || outcome === "kept") return;
+    if (outcome === "failed") {
+      void this.deps.log.append({ at, path, channelId, result: "failed", error: state.note ?? NOT_FOUND });
+      return;
+    }
+    if (outcome === "handed_over") {
+      void this.deps.log.append({ at, path, channelId, result: "handed_over" });
+      return;
+    }
+    void this.deps.log.append({ at, path, channelId, result: "published", ...(state.url ? { url: state.url } : {}) });
     try {
       this.notifier.published?.({ path, channelId, ...(state.url ? { url: state.url } : {}) });
     } catch {

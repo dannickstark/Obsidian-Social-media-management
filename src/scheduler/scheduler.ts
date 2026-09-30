@@ -12,6 +12,8 @@ export interface SchedulerPort {
   resolveCheck(path: string, channelId: string): Promise<void>;
   /** True while this device's own API run has the delivery in `publishing`; a reconcile leaves it alone. */
   isInFlight?(path: string, channelId: string): boolean;
+  /** Native hand-overs and platform checks: started after due items, never awaited. */
+  background?(now: number): void;
 }
 
 export interface SchedulerDeps {
@@ -110,6 +112,13 @@ export class Scheduler {
           }
         } catch (e) {
           this.deps.warn(`Could not run ${item.path}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      if (current()) {
+        try {
+          this.deps.publish.background?.(now);
+        } catch (e) {
+          this.deps.warn(e instanceof Error ? e.message : String(e));
         }
       }
       return result;

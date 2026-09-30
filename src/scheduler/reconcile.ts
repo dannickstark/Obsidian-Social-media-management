@@ -7,7 +7,8 @@ export type ReconcileAction =
   | { kind: "overdue"; item: DueItem };
 
 /**
- * Startup (spec §5.1–5.2): a delivery left in `publishing` becomes check_needed and is never retried;
+ * Startup (spec §5.1–5.2): a delivery left in `publishing`, or handed over without the platform id,
+ * becomes check_needed and is never retried;
  * a past-due scheduled delivery goes to the Overdue tray unless it is within the grace or auto-post window.
  */
 export function reconcilePlan(
@@ -21,7 +22,9 @@ export function reconcilePlan(
   const actions: ReconcileAction[] = [];
   for (const v of variants) {
     for (const id of v.channels) {
-      if (v.deliveries[id]?.status === "publishing" && !inFlight(v.path, id)) actions.push({ kind: "check_needed", path: v.path, channelId: id });
+      const d = v.deliveries[id];
+      const stuck = d?.status === "publishing" || (d?.status === "handed_over" && !d.remoteId);
+      if (stuck && !inFlight(v.path, id)) actions.push({ kind: "check_needed", path: v.path, channelId: id });
     }
   }
   for (const item of dueItems(variants, now, defaultStagger)) {

@@ -160,6 +160,29 @@ describe("Scheduler", () => {
   });
 });
 
+describe("background hand-over (M5)", () => {
+  it("starts the background pass after the due items, on the publisher only", async () => {
+    const c = await makeCtx({ notes: [note(A, T)], now: T });
+    const order: string[] = [];
+    const background = vi.fn(() => void order.push("background"));
+    let publisher = true;
+    const port = {
+      dispatch: async () => void order.push("dispatch"),
+      markOverdue: async () => undefined,
+      markCheckNeeded: async () => false,
+      resolveCheck: async () => undefined,
+      background,
+    };
+    const { scheduler } = await build(c, { publish: port, isPublisher: () => publisher });
+    await scheduler.tick();
+    expect(order).toEqual(["dispatch", "background"]);
+    expect(background).toHaveBeenCalledWith(T);
+    publisher = false;
+    await scheduler.tick();
+    expect(background).toHaveBeenCalledOnce();
+  });
+});
+
 describe("Scheduler before the startup reconcile (final review Important 4)", () => {
   it("ignores ticks until reconcile has run", async () => {
     const c = await makeCtx({ notes: [note(A, T)], now: T });
@@ -204,6 +227,22 @@ describe("dispatch through PublishActions", () => {
     await scheduler.tick();
     await indexed(c.index, () => c.index.getVariant(A)?.status === "published");
     expect(c.index.getVariant(A)!.deliveries["bs/you"]?.url).toBe("https://bsky.app/profile/you/post/1");
+  });
+
+  it("api: re-validates the saved post at send time and leaves invalid content scheduled", async () => {
+    const invalid = { ...note(A, T), body: "x".repeat(301) };
+    const c = await makeCtx({ notes: [invalid], now: T });
+    await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("bs/you")!, method: "api" });
+    const publish = vi.fn(async () => ({ remoteId: "1", url: "https://bsky.app/profile/you/post/1" }));
+    const failed = vi.fn();
+    c.adapters.register({ platform: "bluesky", publish });
+    c.ctx.publish.notifier = { due: vi.fn(), failed };
+    const { scheduler } = await build(c, { publish: c.ctx.publish });
+    await scheduler.tick();
+    await vi.waitFor(() => expect(failed).toHaveBeenCalled());
+    expect(publish).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ path: A, channelId: "bs/you", kind: "invalid_content" }));
+    expect(c.index.getVariant(A)!.deliveries["bs/you"]?.status).toBe("scheduled");
   });
 
   it("late: the delivery becomes overdue", async () => {

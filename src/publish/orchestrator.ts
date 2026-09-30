@@ -22,6 +22,8 @@ import { Semaphore } from "./semaphore";
 export const BACKOFF_MS: readonly number[] = [1 * MINUTE, 5 * MINUTE, 15 * MINUTE];
 /** A lookup that has not answered by then counts as "can't tell" (it runs during reconciles and holds a platform slot). */
 export const LOOKUP_TIMEOUT_MS = 30_000;
+/** A publish lookup miss is only final after a late platform success is this unlikely. */
+export const LATE_SUCCESS_WINDOW_MS = 15 * MINUTE;
 
 export interface FailureInfo {
   path: string;

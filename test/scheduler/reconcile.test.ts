@@ -36,8 +36,8 @@ function scheduler(c: TestCtx, isPublisher = true) {
   });
 }
 
-async function withLookup(lookup: () => Promise<RemoteState | null>) {
-  const c = await makeCtx({ notes: [note(P, T, { status: "publishing", at: formatDateTime(T) })], now: T + 10 * MIN });
+async function withLookup(lookup: () => Promise<RemoteState | null>, now = T + 10 * MIN) {
+  const c = await makeCtx({ notes: [note(P, T, { status: "publishing", at: formatDateTime(T) })], now });
   const publish = vi.fn(async () => ({ remoteId: "1", url: "https://t.me/eventx/1" }));
   c.adapters.register({ platform: "telegram", publish, lookup });
   return { c, publish };
@@ -48,12 +48,15 @@ describe("reconcilePlan", () => {
     const c = await makeCtx({
       notes: [
         note("Social/Posts/Stuck.md", T, { status: "publishing" }),
+        note("Social/Posts/Handing.md", T + 60 * MIN, { status: "handed_over", at: formatDateTime(T + 60 * MIN) }),
+        note("Social/Posts/Handed.md", T + 60 * MIN, { status: "handed_over", remote_id: "7" }),
         note("Social/Posts/Late.md", T - 60 * MIN, { status: "scheduled" }),
         note("Social/Posts/Now.md", T - MIN, { status: "scheduled" }),
       ],
     });
     const plan = reconcilePlan(c.index.variants(), T, 15, null);
     expect(plan.map((a) => (a.kind === "check_needed" ? `${a.kind}:${a.path}` : `${a.kind}:${a.item.path}`)).sort()).toEqual([
+      "check_needed:Social/Posts/Handing.md",
       "check_needed:Social/Posts/Stuck.md",
       "dispatch:Social/Posts/Now.md",
       "overdue:Social/Posts/Late.md",
@@ -92,11 +95,45 @@ describe("startup reconciliation (review focus 2)", () => {
   });
 
   it("marks it failed when lookup() finds nothing", async () => {
-    const { c } = await withLookup(async () => ({ published: false }));
+    const { c } = await withLookup(async () => ({ published: false }), T + 20 * MIN);
     await scheduler(c).reconcile();
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]?.error).toBe("Not found on the platform after an interrupted publish.");
     expect(c.log.entries.at(-1)).toMatchObject({ path: P, channelId: "tg/event-x", result: "failed", error: "Not found on the platform after an interrupted publish." });
+  });
+
+  it("keeps a recent interrupted publish on check_needed when lookup() finds nothing (M3 P11)", async () => {
+    const { c } = await withLookup(async () => ({ published: false }));
+    await scheduler(c).reconcile();
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.error?.startsWith("Not found on the platform yet") === true);
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]!.status).toBe("check_needed");
+    expect(c.log.entries.map((e) => e.result)).toEqual(["check_needed"]);
+  });
+
+  it("checks an interrupted hand-over at startup and returns it to handed_over when the platform has it (M5)", async () => {
+    const M = "Social/Posts/Ma.md";
+    const c = await makeCtx({
+      notes: [{ path: M, frontmatter: { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "scheduled", scheduled_at: formatDateTime(T + 60 * MIN), deliveries: { "ma/you": { status: "handed_over", at: formatDateTime(T + 60 * MIN), remote_at: formatDateTime(T + 60 * MIN), digest: "d" } } }, body: "Hi" }],
+      now: T,
+    });
+    const schedule = vi.fn(async () => ({ remoteId: "x" }));
+    c.adapters.register({ platform: "mastodon", schedule, lookup: async () => ({ published: false, remoteId: "3221", scheduledAt: T + 60 * MIN }) });
+    expect(await scheduler(c).reconcile()).toMatchObject({ checkNeeded: 1 });
+    await indexed(c.index, () => c.index.getVariant(M)?.deliveries["ma/you"]?.remoteId === "3221");
+    expect(c.index.getVariant(M)!.deliveries["ma/you"]).toMatchObject({ status: "handed_over", remoteAt: T + 60 * MIN });
+    expect(schedule).not.toHaveBeenCalled();
+  });
+
+  it("leaves an interrupted hand-over the platform doesn't have to the user", async () => {
+    const M = "Social/Posts/Ma.md";
+    const c = await makeCtx({
+      notes: [{ path: M, frontmatter: { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "scheduled", scheduled_at: formatDateTime(T + 60 * MIN), deliveries: { "ma/you": { status: "handed_over", at: formatDateTime(T + 60 * MIN), remote_at: formatDateTime(T + 60 * MIN), digest: "d" } } }, body: "Hi" }],
+      now: T + 60 * MIN,
+    });
+    c.adapters.register({ platform: "mastodon", schedule: async () => ({ remoteId: "x" }), lookup: async () => ({ published: false }) });
+    await scheduler(c).reconcile();
+    await indexed(c.index, () => c.index.getVariant(M)?.deliveries["ma/you"]?.error?.startsWith("Not found in the platform's scheduled posts") === true);
+    expect(c.index.getVariant(M)!.deliveries["ma/you"]!.status).toBe("check_needed");
   });
 
   it("leaves it for the user when lookup() fails", async () => {
