@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { SecretComponent } from "../fakes/obsidian";
+import { requestUrlMock, SecretComponent } from "../fakes/obsidian";
 import ChannelForm from "../../src/settings/ChannelForm.svelte";
 import ChannelsSection from "../../src/settings/ChannelsSection.svelte";
 import { osmmContext } from "../../src/ui/context";
 import { makeCtx } from "../ui/ctx";
+import { TelegramAdapter } from "../../src/platforms/telegram/api";
+import { contractDeps } from "../platforms/contract/harness";
+import { json, queue } from "../platforms/http";
+import { TG, TG_TOKEN } from "../platforms/telegram/fixtures";
 
 describe("ChannelForm", () => {
+  const pick = (value: string) => fireEvent.change(screen.getByLabelText("Platform"), { target: { value } });
+  const methods = () => [...(screen.getByLabelText("Publishing") as HTMLSelectElement).options].map((o) => o.value);
+
   it("suggests an id from the name and saves a valid channel with its secret id", async () => {
     const { ctx } = await makeCtx();
     const close = vi.fn();
@@ -56,6 +63,91 @@ describe("ChannelForm", () => {
     await fireEvent.input(screen.getByLabelText("Character limit"), { target: { value: "1000" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
     expect(ctx.channels.get("ma/fosstodon")?.maxChars).toBe(1000);
+  });
+
+  it("offers only the publishing methods the platform supports (M5)", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("hackernews");
+    expect(methods()).toEqual(["assisted"]);
+    await pick("telegram");
+    expect(methods()).toEqual(["api", "assisted"]);
+    await pick("wordpress");
+    expect(methods()).toEqual(["api", "native", "assisted"]);
+  });
+
+  it("saves a WordPress site address and user name, and refuses a site without https", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("wordpress");
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Event X blog" } });
+    await fireEvent.input(screen.getByLabelText("Site address (https://…)"), { target: { value: "http://eventx.berlin" } });
+    await fireEvent.input(screen.getByLabelText("User name"), { target: { value: "editor" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(screen.getByRole("alert").textContent).toContain("server: Use an https:// address");
+    await fireEvent.input(screen.getByLabelText("Site address (https://…)"), { target: { value: "https://eventx.berlin/" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(ctx.channels.get("wp/event-x-blog")).toMatchObject({ server: "https://eventx.berlin", login: "editor" });
+  });
+
+  it("saves Discord's post-as name and avatar", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("discord");
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "News" } });
+    await fireEvent.input(screen.getByLabelText("Post as name (optional)"), { target: { value: "Event X" } });
+    await fireEvent.input(screen.getByLabelText("Post as avatar URL (optional)"), { target: { value: "https://event.example/logo.png" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(ctx.channels.get("dc/news")).toMatchObject({ postAsName: "Event X", postAsAvatar: "https://event.example/logo.png" });
+  });
+
+  it("refuses a Discord post-as name that Discord will reject", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("discord");
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "News" } });
+    await fireEvent.input(screen.getByLabelText("Post as name (optional)"), { target: { value: "@everyone" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    expect(screen.getByRole("alert").textContent).toContain("postAsName: Discord won't accept this post-as name");
+    expect(ctx.channels.get("dc/news")).toBeUndefined();
+  });
+
+  it("tests the connection with this device's credential, and never shows the secret", async () => {
+    const c = await makeCtx({ seed: true });
+    c.app.secretStorage.setSecret("osmm-channel-tg-event-x", "SECRET-TOKEN-1234");
+    c.adapters.register({ platform: "telegram", verify: async (_channel, secret) => ({ ok: false, error: `Telegram refused ${secret ?? ""}` }) });
+    const channel = { ...c.ctx.channels.get("tg/event-x")!, handle: "@eventx", secretId: "osmm-channel-tg-event-x" };
+    render(ChannelForm, { props: { channel, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toBe("Telegram refused •••");
+  });
+
+  it("shows the account when the connection works", async () => {
+    const c = await makeCtx({ seed: true });
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: true, account: "Event X, posting as @osmm_bot" }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toBe("Connected: Event X, posting as @osmm_bot");
+  });
+
+  it("has no Test connection where the plugin has no API adapter", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("hackernews");
+    expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
+  });
+
+  it("finds a Telegram chat id from what the bot has seen only after the user asks", async () => {
+    const c = await makeCtx({ seed: true });
+    c.app.secretStorage.setSecret("osmm-channel-tg-event-x", TG_TOKEN);
+    c.adapters.register(new TelegramAdapter(contractDeps()));
+    const channel = { ...c.ctx.channels.get("tg/event-x")!, secretId: "osmm-channel-tg-event-x" };
+    render(ChannelForm, { props: { channel, close: () => {} }, context: osmmContext(c.ctx) });
+    expect(requestUrlMock.calls).toHaveLength(0);
+    queue(json(200, TG.getUpdates));
+    await fireEvent.click(screen.getByRole("button", { name: "Find chat id" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Event X (@eventx)" }));
+    expect((screen.getByLabelText("Chat id (@name or -100…)") as HTMLInputElement).value).toBe("@eventx");
   });
 });
 

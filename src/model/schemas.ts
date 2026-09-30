@@ -86,6 +86,13 @@ export const zChannel = z
         message: `Channel id must start with "${meta.prefix}/" for ${meta.label}`,
       });
     }
+    if (
+      c.platform === "discord" &&
+      c.postAsName &&
+      (/discord|clyde|[@#:]/i.test(c.postAsName) || c.postAsName.includes("```") || /^(everyone|here)$/i.test(c.postAsName))
+    ) {
+      ctx.addIssue({ code: "custom", path: ["postAsName"], message: "Discord won't accept this post-as name (avoid Discord, Clyde, everyone, here, @, #, :, and ```)." });
+    }
   });
 
 export const zChannelGroup = z.object({

@@ -7,11 +7,12 @@ import { HELD_REFUSAL, heldForReview, LIVE_STATUSES } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseVariant } from "../model/frontmatter";
-import { PLATFORM_META } from "../model/platforms";
+import { PLATFORM_META, type Platform } from "../model/platforms";
 import type { Channel, Issue, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
-import type { AssistedTarget, ClipItem, MediaInfo } from "../platforms/types";
+import type { AssistedTarget, ClipItem, MediaInfo, VerifyResult } from "../platforms/types";
 import type { AdapterRegistry } from "../platforms/registry";
+import { TelegramAdapter, type TelegramChat } from "../platforms/telegram/api";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
 import { SvelteModal } from "../ui/dialogs";
@@ -32,6 +33,10 @@ import { effectiveMethod, platformDef } from "../platforms/registry";
 import { postItems, postText } from "../platforms/text";
 import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { GRACE_MS, type DueItem } from "../scheduler/due";
+import { withTimeout } from "../util/time";
+
+/** How long "Test connection" waits for the platform. */
+export const VERIFY_TIMEOUT_MS = 20_000;
 
 export interface PublishDeps {
   app: App;
@@ -129,6 +134,34 @@ export type MarkResult = { ok: true } | { ok: false; reason: string };
 export class PublishActions {
   /** Set by the plugin so actions can open Svelte modals with the same context. */
   context: OsmmContext | null = null;
+
+  /** Channel settings, "Test connection" (M5): asks the platform with this device's credential. Never throws; never shows the secret. */
+  async verifyChannel(channel: Channel): Promise<VerifyResult> {
+    const label = PLATFORM_META[channel.platform].label;
+    const adapter = this.deps.adapters.get(channel.platform);
+    if (!adapter?.verify) return { ok: false, error: `${label} has no API connection in this version; it uses the assisted flow.` };
+    const secret = channel.secretId ? this.deps.secrets.get(channel.secretId) : null;
+    const asked = adapter.verify(channel, secret).catch((e: unknown): VerifyResult => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    const answer = await withTimeout(asked, VERIFY_TIMEOUT_MS, { ok: false, error: `${label} did not answer in time.` } as VerifyResult);
+    if (answer.ok || !channel.secretId) return answer;
+    return { ok: false, error: this.deps.secrets.redact(answer.error, [channel.secretId]) };
+  }
+
+  canVerify(platform: Platform): boolean {
+    return !!this.deps.adapters.get(platform)?.verify;
+  }
+
+  /** Channel settings, Telegram "Find chat id": the channels the bot saw recently. */
+  async findTelegramChats(secretId: string): Promise<TelegramChat[] | { error: string }> {
+    const telegram = this.deps.adapters.get("telegram");
+    if (!(telegram instanceof TelegramAdapter)) return { error: "Telegram isn't connected in this version." };
+    try {
+      return await telegram.findChats(secretId ? this.deps.secrets.get(secretId) : null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
+    }
+  }
 
   readonly orchestrator: PublishOrchestrator;
   notifier: DeliveryNotifier = SILENT;
