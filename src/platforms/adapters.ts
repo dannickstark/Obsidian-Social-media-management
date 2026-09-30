@@ -5,6 +5,7 @@ import { MastodonAdapter } from "./mastodon/api";
 import type { LinkCard } from "./og";
 import { TelegramAdapter } from "./telegram/api";
 import type { PlatformAdapter } from "./types";
+import { WordPressAdapter } from "./wordpress/api";
 
 /** A file embedded in a note's body, resolved in the vault (WordPress uploads it). */
 export interface EmbedFile {
@@ -29,5 +30,5 @@ export interface AdapterDeps {
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
 export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
-  return [new TelegramAdapter(deps), new DiscordAdapter(deps), new BlueskyAdapter(deps), new MastodonAdapter(deps)];
+  return [new TelegramAdapter(deps), new DiscordAdapter(deps), new BlueskyAdapter(deps), new MastodonAdapter(deps), new WordPressAdapter(deps)];
 }

@@ -467,8 +467,9 @@ describe("the question shows everything that is sent (fix round 1: I1, I2, m2)",
         tags: ["berlin", "makers"],
         excerpt: "What happened",
         featured_image: "[[cover.png]]",
+        media_meta: { "inside.png": { alt: "The room during the talk" } },
       },
-      body: "Recap text",
+      body: "Recap text\n\n![[inside.png]]",
     };
     const c = await mcpCtx({ notes: [tg, wp], approvals: approvals.gate });
     await c.app.vault.createBinary("cover.png", new ArrayBuffer(8));
@@ -478,6 +479,7 @@ describe("the question shows everything that is sent (fix round 1: I1, I2, m2)",
     await c.call("publish_now", { path: WP });
     expect(rows(1)).toMatchObject({ Title: "Event X recap", Slug: "event-x-recap", Categories: "Events", Tags: "berlin, makers", Excerpt: "What happened" });
     expect(rows(1)["Featured image"]).toContain("cover.png");
+    expect(rows(1)["Image in text 1"]).toBe("inside.png, alt text: The room during the talk");
   });
 
   it("shows a channel waiting for the user, and the channel setting never sends it (m2)", async () => {

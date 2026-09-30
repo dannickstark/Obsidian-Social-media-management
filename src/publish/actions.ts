@@ -30,6 +30,7 @@ import { toAwaiting, toPublished, toSkipped } from "./transitions";
 import { transition } from "../model/stateMachine";
 import { effectiveMethod, platformDef } from "../platforms/registry";
 import { postItems, postText } from "../platforms/text";
+import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { GRACE_MS, type DueItem } from "../scheduler/due";
 
 export interface PublishDeps {
@@ -68,7 +69,8 @@ export function sendDigest(v: Variant, content: LoadedContent): string {
   const media = (m: MediaInfo | undefined) => (m ? [m.target, m.path ?? null, m.alt ?? null, m.focus ?? null] : null);
   // Media a platform never sends (maxCount 0) is neither shown nor part of the digest.
   const sent = platformDef(v.platform).capabilities.media.maxCount > 0 ? content.media : [];
-  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, sent.map(media), media(content.featured), v.wordpress ?? null]);
+  const bodyImages = v.platform === "wordpress" ? imageEmbeds(content.body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
+  return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, bodyImages, sent.map(media), media(content.featured), v.wordpress ?? null]);
 }
 
 /** One labelled line of the approval question ("Link", "Image 1", "Slug" …). */
@@ -497,6 +499,10 @@ export class PublishActions {
     add("Link", v.url);
     if (platformDef(v.platform).capabilities.media.maxCount > 0) content.media.forEach((m, i) => add(`${m.kind === "video" ? "Video" : "Image"} ${i + 1}`, image(m)));
     if (v.wordpress) {
+      imageEmbeds(content.body).forEach((target, i) => {
+        const alt = v.mediaMeta?.[target]?.alt;
+        add(`Image in text ${i + 1}`, [target, alt ? `alt text: ${alt}` : "no alt text"].join(", "));
+      });
       add("Slug", v.wordpress.slug);
       add("Categories", v.wordpress.categories.join(", "));
       add("Tags", v.wordpress.tags.join(", "));

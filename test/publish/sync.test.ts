@@ -41,6 +41,23 @@ describe("contentDigest (#66)", () => {
     const moved = { ...base, scheduledAt: 5, channels: [], status: "draft" as const, deliveries: { "wp/blog": { status: "draft" as const } }, review: "claude" };
     expect(contentDigest(moved, "Body")).toBe(contentDigest(base, "Body"));
   });
+
+  it("changes when an image embedded in the WordPress body gets new alt text (M5 P8)", () => {
+    const body = "Intro\n\n![[inside.png]]";
+    const before = { ...base, mediaMeta: { ...base.mediaMeta, "inside.png": { alt: "Before" } } };
+    const after = { ...before, mediaMeta: { ...before.mediaMeta, "inside.png": { alt: "After" } } };
+    expect(contentDigest(after, body)).not.toBe(contentDigest(before, body));
+    const content = { body, media: [], featured: img("cover.png") };
+    expect(sendDigest(after, content)).not.toBe(sendDigest(before, content));
+  });
+
+  it("does not digest body-image alt text for a platform that does not send WordPress body images", () => {
+    const body = "Intro\n\n![[inside.png]]";
+    const before = { ...base, platform: "mastodon" as const, wordpress: undefined, mediaMeta: { "inside.png": { alt: "Before" } } };
+    const after = { ...before, mediaMeta: { "inside.png": { alt: "After" } } };
+    expect(contentDigest(after, body)).toBe(contentDigest(before, body));
+    expect(sendDigest(after, { body, media: [] })).toBe(sendDigest(before, { body, media: [] }));
+  });
 });
 
 describe("variant field classes (M4 carry, #87)", () => {

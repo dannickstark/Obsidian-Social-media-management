@@ -1,4 +1,5 @@
 import type { Variant } from "../model/types";
+import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { cyrb53 } from "../util/hash";
 
 /**
@@ -33,6 +34,7 @@ type DigestedField = (typeof DIGESTED_VARIANT_FIELDS)[number];
 export function contentDigest(v: Pick<Variant, DigestedField>, body: string): string {
   const meta = (target: string) => [v.mediaMeta?.[target]?.alt ?? null, v.mediaMeta?.[target]?.focus ?? null];
   const featured = v.wordpress?.featuredImage;
-  const parts = [v.platform, v.title ?? "", v.url ?? "", body, v.media.map((t) => [t, ...meta(t)]), v.wordpress ?? null, featured ? meta(featured) : null];
+  const bodyImages = v.platform === "wordpress" ? imageEmbeds(body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
+  const parts = [v.platform, v.title ?? "", v.url ?? "", body, bodyImages, v.media.map((t) => [t, ...meta(t)]), v.wordpress ?? null, featured ? meta(featured) : null];
   return cyrb53(JSON.stringify(parts)).toString(36);
 }
