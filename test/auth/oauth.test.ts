@@ -1,7 +1,7 @@
-import { request } from "node:http";
+import { createServer, request, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { OAuthFlow, type TokenRequest } from "../../src/auth/oauth";
+import { OAuthFlow, postTokenNoFollow, type TokenRequest } from "../../src/auth/oauth";
 import { createPkce, equalState } from "../../src/auth/pkce";
 import { SecretIds, Secrets, allSecretIds } from "../../src/secrets/secrets";
 import { CredentialHealthStore, loadDeviceSettings } from "../../src/settings/device";
@@ -28,6 +28,17 @@ function callback(authorizeUrl: string, fields: Record<string, string>): string 
   const url = new URL(auth.searchParams.get("redirect_uri")!);
   for (const [key, value] of Object.entries(fields)) url.searchParams.set(key, value);
   return url.href;
+}
+
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Test server did not bind");
+  return address.port;
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 describe("desktop OAuth", () => {
@@ -74,6 +85,55 @@ describe("desktop OAuth", () => {
     expect(body.get("code_verifier")).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(new URL(exchange?.body ? body.get("redirect_uri")! : "").hostname).toBe("127.0.0.1");
     expect(body.has("client_secret")).toBe(false);
+  });
+
+  it("uses the configured callback path in authorization, listener validation, and token exchange", async () => {
+    let tokenRedirect = "";
+    const flow = new OAuthFlow({
+      openBrowser: async (url) => {
+        const state = new URL(url).searchParams.get("state")!;
+        const redirect = new URL(new URL(url).searchParams.get("redirect_uri")!);
+        expect(redirect.pathname).toBe("/redirect");
+        const wrongPath = new URL(callback(url, { state, code: "wrong-path-code" }));
+        wrongPath.pathname = "/callback";
+        expect(await get(wrongPath.href)).toBe(404);
+        expect(await get(callback(url, { state, code: "right-path-code" }))).toBe(200);
+      },
+      requestToken: async (req) => {
+        tokenRedirect = new URLSearchParams(req.body).get("redirect_uri")!;
+        return { status: 200, text: '{"access_token":"token"}' };
+      },
+    });
+    await flow.start({ ...config, redirectPath: "/redirect" });
+    expect(new URL(tokenRedirect).pathname).toBe("/redirect");
+  });
+
+  it.each(["//evil.example", "/redirect?code=x", "/a/../redirect", "https://evil.example/redirect"])(
+    "rejects unsafe callback path %s before opening a browser", async (redirectPath) => {
+      const flow = new OAuthFlow({ openBrowser: () => { throw new Error("browser should stay closed"); } });
+      await expect(flow.start({ ...config, redirectPath })).rejects.toThrow(/redirect path/i);
+    },
+  );
+
+  it.each([307, 308])("does not follow a %i token redirect or send the authorization code to its target", async (status) => {
+    let forwarded = 0;
+    const target = createServer((_req, res) => { forwarded++; res.writeHead(200).end('{"access_token":"stolen"}'); });
+    const targetPort = await listen(target);
+    const source = createServer((req, res) => {
+      req.resume();
+      res.writeHead(status, { Location: `http://127.0.0.1:${targetPort}/steal` }).end();
+    });
+    const sourcePort = await listen(source);
+    try {
+      await expect(postTokenNoFollow(
+        { url: "https://oauth.example.test/token", method: "POST", body: "code=secret-code&code_verifier=secret-verifier", headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+        (_url, options, onResponse) => request(`http://127.0.0.1:${sourcePort}/token`, options, onResponse),
+      )).rejects.toThrow(/redirect/i);
+      expect(forwarded).toBe(0);
+    } finally {
+      await close(source);
+      await close(target);
+    }
   });
 
   it("rejects mismatched state and never exchanges the code", async () => {

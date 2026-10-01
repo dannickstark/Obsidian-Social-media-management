@@ -1,6 +1,5 @@
-import type { Server } from "node:http";
+import type { ClientRequest, IncomingMessage, Server } from "node:http";
 import type { Socket } from "node:net";
-import { requestUrl } from "obsidian";
 import { createPkce, equalState, newState } from "./pkce";
 
 export interface OAuthProviderConfig {
@@ -10,6 +9,7 @@ export interface OAuthProviderConfig {
   tokenUrl: string;
   scopes: string[];
   redirectPort?: number;
+  redirectPath?: string;
 }
 
 export interface OAuthTokens {
@@ -24,6 +24,7 @@ export interface TokenRequest {
   method: "POST";
   body: string;
   headers: { "Content-Type": "application/x-www-form-urlencoded" };
+  signal?: AbortSignal;
 }
 
 export interface TokenResponse {
@@ -40,9 +41,14 @@ export interface LoopbackListener {
 export interface OAuthDependencies {
   openBrowser(url: string): void | Promise<void>;
   requestToken(request: TokenRequest): Promise<TokenResponse>;
-  listen(port: number, state: string): Promise<LoopbackListener>;
+  listen(port: number, state: string, path: string): Promise<LoopbackListener>;
   timeoutMs: number;
   now(): number;
+}
+
+function validRedirectPath(path: string): string {
+  if (!/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path)) throw new Error("Invalid OAuth redirect path.");
+  return path;
 }
 
 function validConfig(config: OAuthProviderConfig): void {
@@ -57,6 +63,7 @@ function validConfig(config: OAuthProviderConfig): void {
   if (config.redirectPort !== undefined && (!Number.isInteger(config.redirectPort) || config.redirectPort < 0 || config.redirectPort > 65535)) {
     throw new Error("Invalid OAuth redirect port.");
   }
+  validRedirectPath(config.redirectPath ?? "/callback");
 }
 
 function parseTokens(response: TokenResponse, now: number): OAuthTokens {
@@ -86,7 +93,8 @@ function parseTokens(response: TokenResponse, now: number): OAuthTokens {
 }
 
 /** A single local callback. Neither the state nor code is included in responses or error messages. */
-export async function listenLoopback(port: number, state: string): Promise<LoopbackListener> {
+export async function listenLoopback(port: number, state: string, path = "/callback"): Promise<LoopbackListener> {
+  validRedirectPath(path);
   // The Node listener is unavailable on phones; defer loading until a desktop flow actually starts.
   const { createServer } = await import("node:http");
   let resolveCode!: (code: string) => void;
@@ -114,7 +122,7 @@ export async function listenLoopback(port: number, state: string): Promise<Loopb
     }
     let url: URL;
     try { url = new URL(req.url, `http://${host}`); } catch { res.writeHead(400).end("Invalid callback."); return; }
-    if (url.pathname !== "/callback") { res.writeHead(404).end("Callback path required."); return; }
+    if (url.pathname !== path) { res.writeHead(404).end("Callback path required."); return; }
     consumed = true;
     const states = url.searchParams.getAll("state");
     if (states.length !== 1 || !equalState(state, states[0] ?? "")) {
@@ -150,7 +158,7 @@ export async function listenLoopback(port: number, state: string): Promise<Loopb
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Could not open OAuth loopback listener.");
   return {
-    redirectUri: `http://127.0.0.1:${address.port}/callback`, result,
+    redirectUri: `http://127.0.0.1:${address.port}${path}`, result,
     close: async () => {
       if (!server.listening) return;
       await new Promise<void>((resolve) => { server.close(() => resolve()); for (const socket of sockets) socket.destroy(); });
@@ -158,12 +166,43 @@ export async function listenLoopback(port: number, state: string): Promise<Loopb
   };
 }
 
+type RequestOptions = { method: "POST"; headers: Record<string, string>; signal?: AbortSignal };
+type RequestOpener = (url: URL, options: RequestOptions, onResponse: (response: IncomingMessage) => void) => ClientRequest;
+
+/** Node's HTTPS request performs one request and never follows Location. The opener is injected for transport tests. */
+export async function postTokenNoFollow(req: TokenRequest, opener?: RequestOpener): Promise<TokenResponse> {
+  const url = new URL(req.url);
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("OAuth token endpoint must use HTTPS.");
+  const open = opener ?? (await import("node:https")).request;
+  return new Promise<TokenResponse>((resolve, reject) => {
+    const headers = { ...req.headers, Accept: "application/json", "Content-Length": String(Buffer.byteLength(req.body)) };
+    const request = open(url, { method: "POST", headers, signal: req.signal }, (response) => {
+      const status = response.statusCode ?? 0;
+      if (status >= 300 && status < 400) {
+        response.resume();
+        reject(new Error("OAuth token endpoint redirected; credentials were not forwarded."));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 65_536) {
+          response.destroy();
+          reject(new Error("OAuth token response is too large."));
+        } else chunks.push(chunk);
+      });
+      response.on("end", () => resolve({ status, text: Buffer.concat(chunks).toString("utf8") }));
+      response.on("error", () => reject(new Error("OAuth token request failed.")));
+    });
+    request.on("error", () => reject(new Error("OAuth token request failed.")));
+    request.end(req.body);
+  });
+}
+
 const defaults: OAuthDependencies = {
   openBrowser: (url) => { window.open(url); },
-  requestToken: async (req) => {
-    const response = await requestUrl({ url: req.url, method: req.method, body: req.body, headers: req.headers, throw: false });
-    return { status: response.status, text: response.text };
-  },
+  requestToken: postTokenNoFollow,
   listen: listenLoopback,
   timeoutMs: 120_000,
   now: () => Date.now(),
@@ -180,6 +219,7 @@ export class OAuthFlow {
 
   async start(config: OAuthProviderConfig, signal?: AbortSignal): Promise<OAuthTokens> {
     validConfig(config);
+    const path = config.redirectPath ?? "/callback";
     if (this.active) throw new Error("An OAuth flow is already active.");
     if (signal?.aborted) throw new Error("OAuth flow cancelled.");
     if (!Number.isSafeInteger(this.deps.timeoutMs) || this.deps.timeoutMs < 1) throw new Error("Invalid OAuth timeout.");
@@ -193,7 +233,7 @@ export class OAuthFlow {
       const cancel = () => reject(new Error("OAuth flow cancelled."));
       controller.signal.addEventListener("abort", cancel, { once: true });
       onAbort = () => controller.signal.removeEventListener("abort", cancel);
-      timer = setTimeout(() => reject(new Error("OAuth flow timed out.")), this.deps.timeoutMs);
+      timer = setTimeout(() => { reject(new Error("OAuth flow timed out.")); controller.abort(); }, this.deps.timeoutMs);
     });
     stopped.catch(() => undefined);
     if (signal) {
@@ -206,11 +246,11 @@ export class OAuthFlow {
     try {
       const { verifier, challenge } = await Promise.race([createPkce(), stopped]);
       const state = newState();
-      const opening = this.deps.listen(config.redirectPort ?? 0, state);
+      const opening = this.deps.listen(config.redirectPort ?? 0, state, path);
       opening.then((opened) => { if (ended) void opened.close().catch(() => undefined); }).catch(() => undefined);
       listener = await Promise.race([opening, stopped]);
       const redirect = new URL(listener.redirectUri);
-      if (redirect.protocol !== "http:" || redirect.hostname !== "127.0.0.1" || redirect.pathname !== "/callback" || !redirect.port || redirect.search || redirect.hash || redirect.username || redirect.password || (config.redirectPort && Number(redirect.port) !== config.redirectPort)) {
+      if (redirect.protocol !== "http:" || redirect.hostname !== "127.0.0.1" || redirect.pathname !== path || !redirect.port || redirect.search || redirect.hash || redirect.username || redirect.password || (config.redirectPort && Number(redirect.port) !== config.redirectPort)) {
         throw new Error("OAuth listener returned a non-loopback callback.");
       }
       const auth = new URL(config.authorizeUrl);
@@ -231,7 +271,7 @@ export class OAuthFlow {
       const body = new URLSearchParams({ grant_type: "authorization_code", client_id: config.clientId, code, redirect_uri: listener.redirectUri, code_verifier: verifier });
       let response: TokenResponse;
       try {
-        response = await Promise.race([this.deps.requestToken({ url: config.tokenUrl, method: "POST", body: body.toString(), headers: { "Content-Type": "application/x-www-form-urlencoded" } }), stopped]);
+        response = await Promise.race([this.deps.requestToken({ url: config.tokenUrl, method: "POST", body: body.toString(), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: controller.signal }), stopped]);
       } catch (error) {
         if (error instanceof Error && /^OAuth flow (cancelled|timed out)\.$/.test(error.message)) throw error;
         throw new Error("OAuth token exchange failed.");
