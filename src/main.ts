@@ -1,6 +1,7 @@
 import { Notice, Platform, Plugin } from "obsidian";
 import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
+import { OAuthFlow } from "./auth/oauth";
 import { ChannelRegistry } from "./channels/registry";
 import { createVoiceProfile } from "./claude/voice";
 import { registerCommands } from "./commands";
@@ -40,7 +41,7 @@ import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
 import { allSecretIds, Secrets } from "./secrets/secrets";
-import { loadDeviceSettings, saveDeviceSettings, type DeviceSettings } from "./settings/device";
+import { CredentialHealthStore, loadDeviceSettings, saveDeviceSettings, type DeviceSettings } from "./settings/device";
 import { PublisherService } from "./settings/publisher";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
@@ -67,6 +68,8 @@ export default class OsmmPlugin extends Plugin {
   device!: DeviceSettings;
   publisher!: PublisherService;
   secrets!: Secrets;
+  oauth!: OAuthFlow;
+  credentialHealth!: CredentialHealthStore;
   writer!: SafeWriter;
   factory!: NoteFactory;
   channels!: ChannelRegistry;
@@ -127,6 +130,9 @@ export default class OsmmPlugin extends Plugin {
       },
     });
     this.secrets = new Secrets(this.app);
+    this.oauth = new OAuthFlow();
+    this.register(() => this.oauth.cancel());
+    this.credentialHealth = new CredentialHealthStore(() => this.device, (next) => this.setDevice({ credentialHealth: next.credentialHealth }));
     this.linkCards = new LinkCardFetcher({ http: obsidianHttp, now: () => Date.now() });
     // M5: the API adapters (spec §4.2). Registered on every device; only the publisher dispatches through them.
     for (const adapter of createAdapters(this.adapterDeps())) this.adapters.register(adapter);
