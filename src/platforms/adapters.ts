@@ -1,5 +1,6 @@
 import { BlueskyAdapter } from "./bluesky/api";
 import { DiscordAdapter } from "./discord/api";
+import { FacebookAdapter } from "./facebook/api";
 import type { HttpFn } from "./http";
 import { MastodonAdapter } from "./mastodon/api";
 import { MetaClient } from "./meta/client";
@@ -31,10 +32,23 @@ export interface AdapterDeps {
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
 export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
-  return [new TelegramAdapter(deps), new DiscordAdapter(deps), new BlueskyAdapter(deps), new MastodonAdapter(deps), new WordPressAdapter(deps)];
+  return [
+    new TelegramAdapter(deps),
+    new DiscordAdapter(deps),
+    new BlueskyAdapter(deps),
+    new MastodonAdapter(deps),
+    new WordPressAdapter(deps),
+    new FacebookAdapter(deps),
+  ];
 }
 
 /** Shared Graph discovery for future Facebook and Instagram adapters, using this device's HTTP dependency. */
-export function createMetaClient(deps: Pick<AdapterDeps, "http" | "now" | "timeoutMs">): MetaClient {
-  return new MetaClient({ http: deps.http, now: deps.now, ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}) });
+export function createMetaClient(
+  deps: Pick<AdapterDeps, "http" | "now" | "timeoutMs">,
+): MetaClient {
+  return new MetaClient({
+    http: deps.http,
+    now: deps.now,
+    ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+  });
 }

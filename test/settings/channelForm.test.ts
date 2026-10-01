@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { requestUrlMock, SecretComponent } from "../fakes/obsidian";
 import ChannelForm from "../../src/settings/ChannelForm.svelte";
 import ChannelsSection from "../../src/settings/ChannelsSection.svelte";
@@ -9,6 +9,8 @@ import { TelegramAdapter } from "../../src/platforms/telegram/api";
 import { contractDeps } from "../platforms/contract/harness";
 import { json, queue } from "../platforms/http";
 import { TG, TG_TOKEN } from "../platforms/telegram/fixtures";
+import { createAdapters } from "../../src/platforms/adapters";
+import { before as facebookBefore, PAGE_TOKEN, USER_TOKEN, PAGE } from "../platforms/facebook/contract";
 
 describe("ChannelForm", () => {
   const pick = (value: string) => fireEvent.change(screen.getByLabelText("Platform"), { target: { value } });
@@ -149,8 +151,59 @@ describe("ChannelForm", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Use Event X (@eventx)" }));
     expect((screen.getByLabelText("Chat id (@name or -100…)") as HTMLInputElement).value).toBe("@eventx");
   });
-});
 
+  it("discovers Facebook Pages with a supplied token, verifies permissions, and saves only the Page id and credential reference", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    c.app.secretStorage.setSecret("fb-token", USER_TOKEN);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/OAuth.*unverified/)).toBeTruthy();
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "My Page" } });
+    await SecretComponent.last!.change("fb-token");
+    expect(requestUrlMock.calls).toHaveLength(0);
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Event X" }));
+    expect((screen.getByLabelText("Page id") as HTMLInputElement).value).toBe("11");
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("page");
+    expect(methods()).toEqual(["api", "native", "assisted"]);
+    expect(screen.queryByText(/^Connected:/)).toBeNull();
+    await fireEvent.change(screen.getByLabelText("Publishing"), { target: { value: "native" } });
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    await waitFor(() =>
+      expect(c.ctx.channels.get("fb/my-page")).toMatchObject({
+        handle: "11",
+        kind: "page",
+        method: "native",
+        secretId: "fb-token",
+      }),
+    );
+    expect(JSON.stringify(c.ctx.channels.get("fb/my-page"))).not.toContain(USER_TOKEN);
+    expect(document.body.textContent).not.toContain(PAGE_TOKEN);
+  });
+
+  it("keeps Facebook assisted when permissions are missing and invalidates selection on credential changes", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    c.app.secretStorage.setSecret("fb-token", USER_TOKEN);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    await SecretComponent.last!.change("fb-token");
+    queue(json(200, { data: [PAGE] }), json(200, { data: [] }));
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: /Use Event X/ }));
+    expect(methods()).toEqual(["assisted"]);
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Event X" }));
+    expect(methods()).toEqual(["api", "native", "assisted"]);
+    await SecretComponent.last!.change("other-token");
+    expect(methods()).toEqual(["assisted"]);
+  });
+});
 describe("ChannelsSection", () => {
   it("lists channels grouped by platform and removes after confirmation, warning about usage", async () => {
     const { ctx } = await makeCtx({ seed: true });

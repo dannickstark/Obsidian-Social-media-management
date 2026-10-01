@@ -27,6 +27,12 @@ Run on test accounts before each release with a production build in a test vault
 - [ ] Two images retain their alt descriptions. **(QA)** verify the descriptions in Discord.
 - [ ] The delivery link opens the server message; a deleted webhook produces a readable needs-user failure.
 
+## Facebook Pages
+
+- [ ] A user token discovers only Pages, verifies Page publishing permissions, and saves only the selected Page id and local credential reference. **(QA)** verify with a Meta test app.
+- [ ] Text, link-only, and up to ten image posts publish to the selected Page; profiles and groups stay on assisted publishing.
+- [ ] Native scheduling, time/content updates, startup lookup, and cancellation affect only confirmed Page posts. An unanswered create stays **Check needed**. **(QA)** verify the scheduled post in Meta.
+
 ## Mastodon
 
 - [ ] Read/write token and `@you@instance` handle connect successfully.
@@ -50,10 +56,10 @@ Run on test accounts before each release with a production build in a test vault
 
 ## Native scheduling
 
-- [ ] On Mastodon and WordPress, a post scheduled at least 7 or 3 minutes ahead is handed over within one tick and is visible in the platform scheduler. **(QA)** verify the remote schedule.
+- [ ] On Facebook, Mastodon, and WordPress, a post scheduled at least 12, 7, or 3 minutes ahead is handed over within one tick and is visible in the platform scheduler. **(QA)** verify the remote schedule.
 - [ ] With Obsidian closed, the platform publishes on time; reopening settles it to **Published** with the live link, or to **Check needed** after a day with no confirmation.
 - [ ] Editing or moving a handed-over post shows **Out of sync** in the composer, calendar chip and campaign table. Nothing changes remotely until **Push update**.
 - [ ] **Revert time** restores the platform time; **Push update** moves the remote time and content; both are refused inside the platform lead.
-- [ ] **Unschedule on Mastodon/WordPress** removes the remote schedule and makes the local channel a draft.
+- [ ] **Unschedule on Facebook/Mastodon/WordPress** removes the remote schedule and makes the local channel a draft.
 - [ ] A Mastodon thread is not handed over; it posts from Obsidian at its time.
 - [ ] Quitting during a hand-over leaves **Check needed**; startup lookup returns it to **Handed over** when the platform has it. **(QA)** throttle the network during the claim.

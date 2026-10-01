@@ -14,6 +14,7 @@ import { adapterFor, attempt, contractDeps, expectDigestReads, trackedJob, type 
 const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> = {
   telegram: "unknown",
   discord: "unknown",
+  facebook: "unknown",
   mastodon: "transient",
   bluesky: "transient",
   wordpress: "transient",
@@ -41,7 +42,6 @@ describe("adapter registry (#87)", () => {
     }
   });
 });
-
 function scenarios(c: ContractCase): Array<[string, Fixture[]]> {
   return [
     ["rate limited", [...c.before, ...c.rateLimited.post]],

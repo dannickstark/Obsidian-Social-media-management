@@ -13,6 +13,7 @@ import type { SafeWriter } from "../model/writer";
 import type { AssistedTarget, ClipItem, MediaInfo, SyncChange, VerifyResult } from "../platforms/types";
 import { RemoteRemovedError, ReplacementUnknownError } from "../platforms/errors";
 import type { AdapterRegistry } from "../platforms/registry";
+import { FacebookAdapter, type FacebookPageChoice } from "../platforms/facebook/api";
 import { TelegramAdapter, type TelegramChat } from "../platforms/telegram/api";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
@@ -164,6 +165,18 @@ export class PublishActions {
     if (!(telegram instanceof TelegramAdapter)) return { error: "Telegram isn't connected in this version." };
     try {
       return await telegram.findChats(secretId ? this.deps.secrets.get(secretId) : null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
+    }
+  }
+
+  /** Channel settings, Facebook "Find Pages": only Page names, ids and publish eligibility leave the adapter. */
+  async findFacebookPages(secretId: string): Promise<FacebookPageChoice[] | { error: string }> {
+    const facebook = this.deps.adapters.get("facebook");
+    if (!(facebook instanceof FacebookAdapter)) return { error: "Facebook Pages publishing isn't connected in this version." };
+    try {
+      return await facebook.findPages(secretId ? this.deps.secrets.get(secretId) : null);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };

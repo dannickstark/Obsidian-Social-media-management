@@ -5,6 +5,7 @@
   import type { Channel, Issue } from "../model/types";
   import { platformDef } from "../platforms/registry";
   import type { TelegramChat } from "../platforms/telegram/api";
+  import type { FacebookPageChoice } from "../platforms/facebook/api";
   import { useOsmm } from "../ui/context";
   import { secretField } from "../ui/secretField";
   import { PLATFORM_COLORS } from "../ui/colors";
@@ -35,6 +36,11 @@
   let testResult = $state("");
   let chats = $state<TelegramChat[]>([]);
   let chatNote = $state("");
+  let facebookPages = $state<FacebookPageChoice[]>([]);
+  let facebookNote = $state("");
+  let findingFacebookPages = $state(false);
+  let selectedFacebookPageId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.handle ?? "" : "");
+  let selectedFacebookSecretId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.secretId ?? "" : "");
 
   $effect(() => {
     if (!idTouched) id = name.trim() ? channels.suggestId(platform, name) : "";
@@ -46,6 +52,7 @@
     telegram: "Chat id (@name or -100…)",
     mastodon: "Handle (@you@your.instance)",
     bluesky: "Handle (you.bsky.social)",
+    facebook: "Page id",
   };
   const SERVER_LABEL: Partial<Record<Platform, string>> = { mastodon: "Server (optional)", bluesky: "PDS (optional)", wordpress: "Site address (https://…)" };
   const CREDENTIAL_HINT: Partial<Record<Platform, string>> = {
@@ -54,10 +61,16 @@
     mastodon: "An access token (Preferences → Development → New application, scopes read and write).",
     bluesky: "An app password (Settings → Privacy and security → App passwords), not your account password.",
     wordpress: "An application password (Users → Profile → Application passwords).",
+    facebook: "A user access token with pages_show_list, pages_read_engagement and pages_manage_posts. Page access tokens stay in memory and are never saved to settings.",
   };
 
   const def = $derived(platformDef(platform));
-  const methods = $derived(PUBLISH_METHODS.filter((m) => m === "assisted" || (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule)));
+  const facebookReady = $derived(platform !== "facebook" || (!!secretId && !!app.secretStorage.getSecret(secretId) && kind === "page" && /^\d+$/.test(handle) && handle === selectedFacebookPageId && secretId === selectedFacebookSecretId));
+  const methods = $derived(PUBLISH_METHODS.filter((m) => {
+    if (m === "assisted") return true;
+    if (platform === "facebook" && !facebookReady) return false;
+    return (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule);
+  }));
   $effect(() => {
     if (!methods.includes(method)) method = "assisted";
   });
@@ -84,6 +97,18 @@
 
   async function save(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    const parsed = zChannel.safeParse(input());
+    if (!parsed.success) {
+      issues = zodIssues(parsed.error);
+      return;
+    }
+    if (platform === "facebook" && method !== "assisted") {
+      const answer = await publish.verifyChannel(parsed.data);
+      if (!answer.ok) {
+        method = "assisted";
+        facebookNote = `${answer.error} Assisted publishing remains available.`;
+      }
+    }
     // Editing never renames (that would orphan notes using the old id); adding never overwrites.
     const result = editing ? await channels.upsertChannel(input()) : await channels.createChannel(input());
     if (!result.ok) {
@@ -120,6 +145,44 @@
     handle = c.username ? `@${c.username}` : c.id;
     chats = [];
   }
+
+  function changeSecret(id: string): void {
+    if (platform === "facebook" && id !== secretId) {
+      facebookPages = [];
+      facebookNote = "";
+      selectedFacebookPageId = "";
+      selectedFacebookSecretId = "";
+      handle = "";
+      method = "assisted";
+    }
+    secretId = id;
+  }
+
+  async function findFacebookPages(): Promise<void> {
+    facebookPages = [];
+    facebookNote = "";
+    findingFacebookPages = true;
+    const found = await publish.findFacebookPages(secretId);
+    findingFacebookPages = false;
+    if ("error" in found) {
+      facebookNote = found.error;
+      selectedFacebookPageId = "";
+      selectedFacebookSecretId = "";
+      method = "assisted";
+    }
+    else if (!found.length) facebookNote = "No Pages were found for this token. Check the token and Page access, or use assisted publishing.";
+    else facebookPages = found;
+  }
+
+  function useFacebookPage(page: FacebookPageChoice): void {
+    handle = page.id;
+    kind = "page";
+    selectedFacebookPageId = page.canPublish ? page.id : "";
+    selectedFacebookSecretId = page.canPublish ? secretId : "";
+    if (!page.canPublish) method = "assisted";
+    facebookNote = page.canPublish ? "Page access and publishing permissions verified." : "This Page is missing publishing permissions. Assisted publishing remains available.";
+    facebookPages = [];
+  }
 </script>
 
 <form class="osmm-form" onsubmit={save}>
@@ -149,6 +212,20 @@
       </div>
     {/if}
   {/if}
+  {#if platform === "facebook"}
+    <p class="osmm-progress">OAuth app review is unverified. Add a user access token to discover Pages; profiles and groups use assisted publishing.</p>
+    <div class="osmm-row">
+      <button type="button" disabled={!secretId || findingFacebookPages} onclick={() => void findFacebookPages()}>Find Facebook Pages</button>
+      {#if facebookNote}<span class="osmm-progress" role="status">{facebookNote}</span>{/if}
+    </div>
+    {#if facebookPages.length}
+      <div class="osmm-chips" role="group" aria-label="Facebook Pages the token can see">
+        {#each facebookPages as page (page.id)}
+          <button type="button" onclick={() => useFacebookPage(page)}>Use {page.name}</button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
   {#if SERVER_LABEL[platform]}
     <label>{SERVER_LABEL[platform]}<input type="url" placeholder="https://" bind:value={server} /></label>
   {/if}
@@ -171,7 +248,7 @@
   <div>
     <span>Credential (stored only on this device)</span>
     {#if CREDENTIAL_HINT[platform]}<p class="osmm-progress">{CREDENTIAL_HINT[platform]}</p>{/if}
-    <div use:secretField={{ app, value: secretId, onchange: (v) => (secretId = v) }}></div>
+    <div use:secretField={{ app, value: secretId, onchange: changeSecret }}></div>
   </div>
   {#if publish.canVerify(platform)}
     <div class="osmm-row">

@@ -1,5 +1,13 @@
 import { NeedsUserError } from "../errors";
-import { ApiClient, parseJson, type ApiFailure, type HttpFn, type HttpResponse } from "../http";
+import {
+  ApiClient,
+  parseJson,
+  type ApiFailure,
+  type HttpFn,
+  type HttpResponse,
+  type HttpRequest,
+  type Phase,
+} from "../http";
 import {
   discoverInstagramBusinesses,
   discoverPages,
@@ -59,6 +67,32 @@ function metaFailure(res: HttpResponse, token: string): ApiFailure {
 
 export class MetaClient {
   constructor(private readonly options: MetaClientOptions) {}
+
+  /** Page operations share the same Graph origin, token handling, and phase-aware failure classification. */
+  async request(
+    path: string,
+    token: string,
+    options: {
+      phase: Phase;
+      method: "GET" | "POST" | "DELETE";
+      query?: Record<string, string>;
+      body?: HttpRequest["body"];
+      contentType?: string;
+      timeoutMs?: number;
+      retrySafe?: boolean;
+    },
+  ): Promise<HttpResponse> {
+    if (!token.trim()) throw new NeedsUserError("Meta: provide an access token before connecting.");
+    const { phase, query, retrySafe, ...fields } = options;
+    const req = {
+      ...fields,
+      url: this.url(path, query ?? {}),
+      headers: { Authorization: `Bearer ${token}` },
+    };
+    const api = this.api(token);
+    if (phase === "read") return api.read(req);
+    return phase === "prepare" ? api.prepare(req) : api.commit(req, { retrySafe });
+  }
 
   private api(token: string): ApiClient {
     return new ApiClient({

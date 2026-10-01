@@ -4,6 +4,19 @@ export const def: PlatformDef = {
   id: "facebook",
   dialect: "plain",
   preview: "feed",
+  validate: (_input, channel) =>
+    channel &&
+    channel.method !== "assisted" &&
+    (channel.kind !== "page" || !/^\d+$/.test(channel.handle ?? ""))
+      ? [
+          {
+            level: "error",
+            field: "channels",
+            message:
+              "Facebook API publishing needs a selected Page with a numeric Page id; use assisted publishing for profiles and groups.",
+          },
+        ]
+      : [],
   capabilities: {
     api: true,
     nativeSchedule: true,
