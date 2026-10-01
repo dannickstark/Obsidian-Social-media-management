@@ -2,6 +2,7 @@ import { BlueskyAdapter } from "./bluesky/api";
 import { DiscordAdapter } from "./discord/api";
 import { FacebookAdapter } from "./facebook/api";
 import { InstagramAdapter } from "./instagram/api";
+import { AssistedOnlyInstagramMediaHost } from "./instagram/media";
 import { LinkedInAdapter } from "./linkedin/api";
 import type { Channel } from "../model/types";
 import type { InstagramMediaHost } from "./instagram/media";
@@ -50,7 +51,7 @@ export interface AdapterDeps {
   linkedInTokenForChannel?: (channel: Channel) => string | null;
 }
 
-/** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
+/** Every API adapter the plugin ships. Provider eligibility remains a runtime gate on the adapter. */
 export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
   const adapters: PlatformAdapter[] = [
     new TelegramAdapter(deps),
@@ -59,10 +60,10 @@ export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
     new MastodonAdapter(deps),
     new WordPressAdapter(deps),
     new FacebookAdapter(deps),
+    new InstagramAdapter(deps, deps.instagramMediaHost ?? new AssistedOnlyInstagramMediaHost()),
     new LinkedInAdapter(deps),
     new XAdapter(deps),
   ];
-  if (deps.instagramMediaHost) adapters.push(new InstagramAdapter(deps, deps.instagramMediaHost));
   return adapters;
 }
 

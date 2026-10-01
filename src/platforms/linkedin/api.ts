@@ -46,11 +46,15 @@ export class LinkedInAdapter implements PlatformAdapter {
     if (channel.platform !== "linkedin") return false;
     if (channel.kind !== "profile" && channel.kind !== "page") return false;
     const token = this.deps.linkedInTokenForChannel?.(channel);
-    if (!token?.trim() || !this.canPublish(channel.kind)) return false;
+    return this.canPublishToken(channel.kind, token);
+  }
+
+  canPublishToken(kind: "profile" | "page", token: string | null | undefined): boolean {
+    if (!token?.trim() || !this.canPublish(kind)) return false;
     const access = this.deps.linkedInTokenAccess?.(token);
     if (!access || !access.signInWithLinkedInProductVerified) return false;
     if (!access.grantedScopes.includes("openid") || !access.grantedScopes.includes("profile")) return false;
-    return channel.kind === "profile"
+    return kind === "profile"
       ? access.grantedScopes.includes("w_member_social")
       : access.grantedScopes.includes("r_organization_admin") && access.grantedScopes.includes("w_organization_social");
   }

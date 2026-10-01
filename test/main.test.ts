@@ -10,8 +10,9 @@ import { indexed, nextChange, settle, writeNote } from "./helpers";
 import { freePort, portIsFree } from "./mcp/net";
 import { NTFY } from "./reminders/ntfy/fixtures";
 import { WITHDRAW_WAIT_MS } from "../src/reminders/ntfy/booker";
+import { SecretIds } from "../src/secrets/secrets";
 import { createAdapters } from "../src/platforms/adapters";
-import { PLATFORMS } from "../src/model/platforms";
+import { PLATFORMS, type Platform } from "../src/model/platforms";
 
 const manifest = { id: "osmm-social-planner", name: "OSMM", version: "0.1.0", minAppVersion: "1.11.4", description: "", author: "" };
 
@@ -702,12 +703,28 @@ describe("OsmmPlugin", () => {
     expect(fired).toBe(false);
   });
 
-  it("registers every API adapter the plugin ships (M5)", async () => {
+  it("registers every shipped API adapter, including the M6 providers", async () => {
     const { plugin } = await loaded();
     const shipped = createAdapters({ http: async () => ({ status: 200, headers: {}, text: "", arrayBuffer: new ArrayBuffer(0) }), now: () => 0, readBinary: async () => new ArrayBuffer(0), sleep: async () => undefined })
       .map((a) => a.platform)
       .sort();
     expect(PLATFORMS.filter((p) => plugin.adapters.get(p)).sort()).toEqual(shipped);
+    expect(["facebook", "instagram", "linkedin", "x"].every((platform) => plugin.adapters.get(platform as Platform))).toBe(true);
+    plugin.unload();
+  });
+
+  it("keeps OAuth token values in device secret storage instead of synced settings", async () => {
+    const { app, plugin } = await loaded();
+    const id = "li/me";
+    const accessSecretId = SecretIds.oauthAccess(id);
+    plugin.secrets.setOAuthTokens(id, { accessToken: "LI-ACCESS-SECRET", refreshToken: "LI-REFRESH-SECRET" });
+    await plugin.channels.upsertChannel({ id, platform: "linkedin", name: "Me", kind: "profile", handle: "urn:li:person:123", avatarColor: "#c9c3b8", method: "assisted", secretId: accessSecretId });
+    const synced = JSON.stringify(await plugin.loadData());
+    expect(app.secretStorage.getSecret(accessSecretId)).toBe("LI-ACCESS-SECRET");
+    expect(app.secretStorage.getSecret(SecretIds.oauthRefresh(id))).toBe("LI-REFRESH-SECRET");
+    expect(synced).not.toContain("LI-ACCESS-SECRET");
+    expect(synced).not.toContain("LI-REFRESH-SECRET");
+    expect(synced).toContain(accessSecretId);
     plugin.unload();
   });
 });

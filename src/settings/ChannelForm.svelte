@@ -77,7 +77,7 @@
     // No public media host is configured by the plugin yet; keep Instagram on the assisted path.
     if (platform === "instagram" && m === "api") return false;
     if (platform === "facebook" && !facebookReady) return false;
-    if (platform === "linkedin" && (kind !== "profile" && kind !== "page" || !publish.canPublishLinkedIn(kind === "page" ? "page" : "profile"))) return false;
+    if (platform === "linkedin" && (kind !== "profile" && kind !== "page" || !publish.canPublishLinkedIn(kind === "page" ? "page" : "profile", secretId))) return false;
     return (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule);
   }));
   $effect(() => {
@@ -220,7 +220,7 @@
   function useLinkedInAccount(account: LinkedInAccountChoice): void {
     handle = account.id;
     kind = account.kind;
-    method = account.canPublish && publish.canPublishLinkedIn(account.kind) ? "api" : "assisted";
+    method = account.canPublish && publish.canPublishLinkedIn(account.kind, secretId) ? "api" : "assisted";
     linkedInNote = account.permissionStatus === "granted" && method === "api"
       ? "Account and required publishing access verified."
       : `Identity found; ${account.requiredPermission} or LinkedIn app access is not verified. Assisted publishing remains available.`;

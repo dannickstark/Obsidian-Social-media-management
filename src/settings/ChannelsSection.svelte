@@ -11,6 +11,17 @@
   const { app, settings, snapshot, channels, actions } = ctx;
   const METHOD_LABEL: Record<string, string> = { api: "API · auto", native: "API · native schedule", assisted: "Assisted" };
 
+  function credentialSummary(channel: Channel): string {
+    if (!channel.secretId) return "no credential";
+    switch (channel.platform) {
+      case "facebook": return "user token · Page discovery";
+      case "instagram": return "credential set · public image host required";
+      case "linkedin": return "credential set · exact-token grants required";
+      case "x": return "credential set · identity only; write tier unverified";
+      default: return "credential set";
+    }
+  }
+
   const grouped = $derived(
     PLATFORMS.map((p) => ({ p, list: $settings.channels.filter((c) => c.platform === p) })).filter((g) => g.list.length),
   );
@@ -44,7 +55,7 @@
         <ChannelAvatar channel={c} />
         <span class="osmm-row-title">{c.name} <span class="osmm-progress">{c.id}</span></span>
         <span class="osmm-pill-status">{METHOD_LABEL[c.method]}</span>
-        <span class="osmm-progress">{c.secretId ? "credential set" : "no credential"}</span>
+        <span class="osmm-progress">{credentialSummary(c)}</span>
         <button type="button" onclick={() => editChannel(c)}>Edit</button>
         <button type="button" aria-label={`Remove ${c.name}`} onclick={() => void removeChannel(c)}>Remove</button>
       </div>

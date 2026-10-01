@@ -86,9 +86,39 @@ describe("ChannelForm", () => {
     expect(screen.getByText(/public image host.*Meta can fetch/i)).toBeTruthy();
   });
 
-  it("discovers a LinkedIn profile and keeps it assisted while PKCE and product access are unverified", async () => {
+  it("keeps X assisted until write scopes and API-tier access are verified", async () => {
     const c = await makeCtx();
-    for (const a of createAdapters({ ...contractDeps(), linkedInMemberAccessVerified: false, linkedInCommunityManagementAccessVerified: false, linkedInTokenAccess: () => ({ grantedScopes: ["openid", "profile"], signInWithLinkedInProductVerified: true }) })) c.adapters.register(a);
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("x");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/cannot verify tweet\.write\/media\.write scopes or API tier yet/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeTruthy();
+  });
+
+  it("shows account discovery only for providers with token-based discovery", async () => {
+    const c = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    expect(screen.getByRole("button", { name: "Find Facebook Pages" })).toBeTruthy();
+    await pick("linkedin");
+    expect(screen.getByRole("button", { name: "Find LinkedIn accounts" })).toBeTruthy();
+    await pick("x");
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+    await pick("instagram");
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+  });
+
+  it("discovers a LinkedIn profile but keeps it assisted when that exact token lacks the publishing scope", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters({
+      ...contractDeps(),
+      linkedInMemberAccessVerified: true,
+      linkedInCommunityManagementAccessVerified: true,
+      linkedInTokenForChannel: () => "LINKEDIN-TOKEN",
+      linkedInTokenAccess: () => ({ grantedScopes: ["openid", "profile"], signInWithLinkedInProductVerified: true }),
+    })) c.adapters.register(a);
     c.app.secretStorage.setSecret("li-token", "LINKEDIN-TOKEN");
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
     expect(methods()).toEqual(["assisted"]);
@@ -244,5 +274,20 @@ describe("ChannelsSection", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Remove Acme Studio" }));
     expect(asked).toMatch(/used by 1 note/);
     expect(ctx.channels.get("li/acme-studio")).toBeUndefined();
+  });
+
+  it("shows provider-specific credential limits without exposing token values", async () => {
+    const c = await makeCtx({ seed: true });
+    await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("li/acme-studio")!, secretId: "li-token" });
+    await c.ctx.channels.upsertChannel({ id: "x/you", platform: "x", name: "X", kind: "profile", avatarColor: "#c9c3b8", method: "assisted", secretId: "x-token" });
+    await c.ctx.channels.upsertChannel({ id: "ig/you", platform: "instagram", name: "Instagram", kind: "profile", avatarColor: "#c9c3b8", method: "assisted", secretId: "ig-token" });
+    c.app.secretStorage.setSecret("li-token", "LI-PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("x-token", "X-PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("ig-token", "IG-PRIVATE-TOKEN");
+    render(ChannelsSection, { context: osmmContext(c.ctx) });
+    expect(screen.getByText("credential set · exact-token grants required")).toBeTruthy();
+    expect(screen.getByText("credential set · identity only; write tier unverified")).toBeTruthy();
+    expect(screen.getByText("credential set · public image host required")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("PRIVATE-TOKEN");
   });
 });

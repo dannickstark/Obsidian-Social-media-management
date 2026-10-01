@@ -49,8 +49,13 @@ describe("effectiveMethod", () => {
 
   it("uses the adapter when the channel and the post allow it", () => {
     expect(effectiveMethod("auto", channel("api"), publisher)).toBe("api");
-    expect(effectiveMethod("auto", channel("native"), scheduler)).toBe("native");
+    const facebook = { ...channel("native"), id: "fb/page", platform: "facebook" as const, kind: "page" as const, handle: "123", secretId: "fb-token" };
+    expect(effectiveMethod("auto", facebook, { ...scheduler, platform: "facebook" })).toBe("native");
     expect(effectiveMethod("auto", channel("native"), publisher)).toBe("api");
+  });
+
+  it("does not expose native scheduling when the platform does not support it", () => {
+    expect(effectiveMethod("auto", channel("native"), scheduler)).toBe("api");
   });
 
   it("keeps X assisted until API permissions are verified", () => {
@@ -72,15 +77,16 @@ describe("effectiveMethod", () => {
     expect(registry.get("linkedin")).toBe(publisher);
   });
 
-  it("does not register Instagram API publishing without a public media host", () => {
+  it("registers Instagram but keeps it assisted without a public media host", () => {
     const adapters = createAdapters({
       http: async () => ({ status: 200, headers: {}, text: "", arrayBuffer: new ArrayBuffer(0) }),
       now: () => 0,
       readBinary: async () => new ArrayBuffer(0),
       sleep: async () => undefined,
     });
-    expect(adapters.some((adapter) => adapter.platform === "instagram")).toBe(false);
+    const instagram = adapters.find((adapter) => adapter.platform === "instagram");
+    expect(instagram).toBeDefined();
     const igChannel = { ...channel("api"), id: "ig/me", platform: "instagram" as const };
-    expect(effectiveMethod("auto", igChannel, undefined)).toBe("assisted");
+    expect(effectiveMethod("auto", igChannel, instagram)).toBe("assisted");
   });
 });

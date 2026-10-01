@@ -197,9 +197,11 @@ export class PublishActions {
     }
   }
 
-  canPublishLinkedIn(kind: "profile" | "page"): boolean {
+  canPublishLinkedIn(kind: "profile" | "page", secretId?: string): boolean {
     const linkedin = this.deps.adapters.get("linkedin");
-    return linkedin instanceof LinkedInAdapter && linkedin.canPublish(kind);
+    if (!(linkedin instanceof LinkedInAdapter)) return false;
+    const token = secretId ? this.deps.secrets.get(secretId) : null;
+    return linkedin.canPublishToken(kind, token);
   }
 
   readonly orchestrator: PublishOrchestrator;

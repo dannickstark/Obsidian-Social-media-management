@@ -45,6 +45,10 @@ export class InstagramAdapter implements PlatformAdapter {
     this.meta = new MetaClient(deps);
   }
 
+  apiAvailable(): boolean {
+    return !(this.host instanceof AssistedOnlyInstagramMediaHost);
+  }
+
   async verify(channel: Channel, secret: string | null): Promise<VerifyResult> {
     try {
       const { account } = await this.target({ channel, secret });

@@ -68,7 +68,11 @@ export function effectiveMethod(
   )
     return "assisted";
   if (adapter?.apiAvailable && !adapter.apiAvailable(channel)) return "assisted";
-  if (channel.method === "native" && adapter?.schedule) return "native";
+  if (
+    channel.method === "native" &&
+    PLATFORM_DEFS[channel.platform].capabilities.nativeSchedule &&
+    adapter?.schedule
+  ) return "native";
   if (adapter?.publish) return "api";
   return "assisted";
 }

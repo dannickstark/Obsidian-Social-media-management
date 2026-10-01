@@ -416,6 +416,12 @@ export default class OsmmPlugin extends Plugin {
         return file && mime ? { path: file.path, name: file.name, mime } : null;
       },
       linkCard: (url) => this.linkCards.get(url),
+      // API consent is provider-specific and remains fail-closed until a verified setup exists.
+      xApiAccessVerified: false,
+      linkedInMemberAccessVerified: false,
+      linkedInCommunityManagementAccessVerified: false,
+      // Grant metadata is bound to one exact token; no production verifier is configured yet.
+      linkedInTokenAccess: () => null,
       linkedInTokenForChannel: (channel) => channel.secretId ? this.secrets.get(channel.secretId) : null,
     };
   }
