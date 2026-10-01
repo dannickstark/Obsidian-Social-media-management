@@ -5,7 +5,7 @@ import { effectiveMethod, platformDef } from "../../../src/platforms/registry";
 import { CONTRACT_NOW, contractDeps, expectDigestReads, trackedJob } from "../contract/harness";
 import { img } from "../fixtures";
 import { call, formParts, json, netError, queue, sentJson } from "../http";
-import { RemoteRemovedError } from "../../../src/platforms/errors";
+import { InvalidContentError, RemoteRemovedError } from "../../../src/platforms/errors";
 import {
   before,
   facebookJob,
@@ -53,6 +53,29 @@ describe("Facebook Pages", () => {
       message: "Doors open",
       attached_media: [{ media_fbid: "51" }, { media_fbid: "52" }],
     });
+  });
+  it("marks scheduled image uploads temporary and declares scheduled feed content", async () => {
+    queue(...before(), json(200, { id: "51" }), json(200, { id: "11_42" }));
+    const j = handedOver();
+    delete j.delivery.remoteId;
+    j.media = [img()];
+    await adapter().schedule!(j);
+    expect(formParts(2).published?.value).toBe("false");
+    expect(formParts(2).temporary?.value).toBe("true");
+    expect(sentJson(3)).toEqual({
+      message: "Doors open",
+      attached_media: [{ media_fbid: "51" }],
+      published: false,
+      scheduled_publish_time: 1791450000,
+      unpublished_content_type: "SCHEDULED",
+    });
+  });
+  it("refuses an image post with a link instead of silently dropping the URL", async () => {
+    queue(...before(), json(200, { id: "51" }), json(200, { id: "11_42" }));
+    const j = job();
+    j.media = [img()];
+    j.variant.url = "https://example.com";
+    await expect(adapter().publish!(j)).rejects.toBeInstanceOf(InvalidContentError);
   });
   it("hands over using integer seconds and refuses a time inside ten minutes", async () => {
     queue(...before(), json(200, { id: "11_42" }));
@@ -121,8 +144,17 @@ describe("Facebook Pages", () => {
     queue(...before(), json(200, state));
     expect(await adapter().lookup!(handedOver())).toBeNull();
   });
-  it("reports explicitly deleted objects as gone but permission/not-found errors as unknown", async () => {
-    queue(...before(), json(200, { id: "11_42", is_deleted: true }));
+  it("reports an exact Graph 404 as gone but ambiguous permission/not-found as unknown", async () => {
+    queue(
+      ...before(),
+      json(404, {
+        error: {
+          message: "Unsupported get request: object not found",
+          type: "GraphMethodException",
+          code: 100,
+        },
+      }),
+    );
     expect(await adapter().lookup!(handedOver())).toEqual({ published: false, gone: true });
     queue(...before(), json(400, { error: { code: 100, error_subcode: 33 } }));
     expect(await adapter().lookup!(handedOver())).toBeNull();
@@ -153,8 +185,19 @@ describe("Facebook Pages", () => {
     expect(requestUrlMock.calls.filter((r) => r.method === "POST")).toHaveLength(0);
   });
   it("returns a confirmed removed hand-over to the local scheduler", async () => {
-    queue(...before(), json(200, { id: "11_42", is_deleted: true }));
-    await expect(adapter().update!(handedOver(), { content: true, time: false })).rejects.toBeInstanceOf(RemoteRemovedError);
+    queue(
+      ...before(),
+      json(404, {
+        error: {
+          message: "Unsupported get request: object not found",
+          type: "GraphMethodException",
+          code: 100,
+        },
+      }),
+    );
+    await expect(
+      adapter().update!(handedOver(), { content: true, time: false }),
+    ).rejects.toBeInstanceOf(RemoteRemovedError);
   });
   it("cancels a confirmed future post and requires success acknowledgement", async () => {
     queue(...before(), json(200, scheduled), json(200, { success: true }));
@@ -218,5 +261,23 @@ describe("Facebook Pages", () => {
         { ...job().channel, kind: "profile" },
       ),
     ).toEqual(expect.arrayContaining([expect.objectContaining({ level: "error" })]));
+    expect(
+      platformDef("facebook").validate?.(
+        {
+          variant: { ...facebookJob().variant, url: "https://example.com" },
+          body: "Hi",
+          media: [img()],
+        },
+        job().channel,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "error",
+          field: "url",
+          message: expect.stringContaining("cannot also include a link"),
+        }),
+      ]),
+    );
   });
 });

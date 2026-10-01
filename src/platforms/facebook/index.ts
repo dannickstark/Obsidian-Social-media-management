@@ -4,19 +4,30 @@ export const def: PlatformDef = {
   id: "facebook",
   dialect: "plain",
   preview: "feed",
-  validate: (_input, channel) =>
-    channel &&
+  validate: (input, channel) => [
+    ...(channel &&
     channel.method !== "assisted" &&
     (channel.kind !== "page" || !/^\d+$/.test(channel.handle ?? ""))
       ? [
           {
-            level: "error",
+            level: "error" as const,
             field: "channels",
             message:
               "Facebook API publishing needs a selected Page with a numeric Page id; use assisted publishing for profiles and groups.",
           },
         ]
-      : [],
+      : []),
+    ...(input.media.length && input.variant.url
+      ? [
+          {
+            level: "error" as const,
+            field: "url",
+            message:
+              "Facebook image posts cannot also include a link; remove the link or the images.",
+          },
+        ]
+      : []),
+  ],
   capabilities: {
     api: true,
     nativeSchedule: true,

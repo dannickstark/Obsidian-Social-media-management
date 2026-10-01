@@ -77,13 +77,14 @@ export class FacebookAdapter implements PlatformAdapter {
   async schedule(job: DeliveryJob): Promise<ScheduleResult> {
     this.scheduleTime(job);
     const page = await this.target(job);
-    const body = await this.content(page, job);
+    const body = await this.content(page, job, true);
     const at = this.scheduleTime(job); // Uploads and discovery may have consumed the provider's lead time.
     return this.posted(
       await this.write(page, `${page.id}/feed`, {
         ...body,
         published: false,
         scheduled_publish_time: at,
+        ...(job.media.length ? { unpublished_content_type: "SCHEDULED" } : {}),
       }),
       page,
     );
@@ -95,7 +96,8 @@ export class FacebookAdapter implements PlatformAdapter {
       const page = await this.target(job);
       const id = this.remoteId(job, page);
       const res = await this.read(page, id);
-      // Graph code 100/subcode 33 conflates deletion with lost access. It must never trigger a replacement.
+      // A Graph 404 is an explicit not-found response. Code 100/subcode 33 is ambiguous (including lost access).
+      if (res.status === 404) return { published: false, gone: true };
       return isOk(res) ? this.state(object(parseJson(res.text)), id) : null;
     } catch {
       return null;
@@ -106,18 +108,18 @@ export class FacebookAdapter implements PlatformAdapter {
     const page = await this.target(job);
     const id = this.remoteId(job, page);
     const res = await this.read(page, id);
-    const current = isOk(res) ? object(parseJson(res.text)) : null;
-    const state = this.state(current, id);
-    if (!state)
-      throw new NeedsUserError("Facebook: the post could not be checked; nothing was changed.");
     const scheduled = job.delivery.status === "handed_over";
-    if (state.gone) {
+    if (res.status === 404) {
       if (scheduled)
         throw new RemoteRemovedError(
           "Facebook: the scheduled post was removed from the Page. It will be posted from Obsidian at its time.",
         );
       throw new NeedsUserError("Facebook: this post is no longer on the Page.");
     }
+    const current = isOk(res) ? object(parseJson(res.text)) : null;
+    const state = this.state(current, id);
+    if (!state)
+      throw new NeedsUserError("Facebook: the post could not be checked; nothing was changed.");
     if (
       scheduled &&
       (state.published || state.scheduledAt === undefined || state.scheduledAt <= this.deps.now())
@@ -144,8 +146,8 @@ export class FacebookAdapter implements PlatformAdapter {
     const page = await this.target(job);
     const id = this.remoteId(job, page);
     const res = await this.read(page, id);
+    if (res.status === 404) return;
     const state = isOk(res) ? this.state(object(parseJson(res.text)), id) : null;
-    if (state?.gone) return;
     if (
       !state ||
       state.published ||
@@ -257,7 +259,6 @@ export class FacebookAdapter implements PlatformAdapter {
 
   private state(body: Record<string, unknown> | null, id: string): RemoteState | null {
     if (!body || body.id !== id) return null;
-    if (body.is_deleted === true) return { published: false, gone: true };
     if (body.is_published === true) return { published: true, remoteId: id, url: postUrl(id) };
     if (
       body.is_published === false &&
@@ -269,9 +270,17 @@ export class FacebookAdapter implements PlatformAdapter {
     return null;
   }
 
-  private async content(page: MetaPage, job: DeliveryJob): Promise<Record<string, unknown>> {
+  private async content(
+    page: MetaPage,
+    job: DeliveryJob,
+    scheduled = false,
+  ): Promise<Record<string, unknown>> {
     if (job.media.length > 10 || job.media.some((m) => m.kind !== "image"))
       throw new InvalidContentError("Facebook: attach up to ten images; video is not supported.");
+    if (job.media.length && job.variant.url)
+      throw new InvalidContentError(
+        "Facebook: image posts cannot also include a link. Remove the link or the images.",
+      );
     if (!job.text.trim() && !job.variant.url && !job.media.length)
       throw new InvalidContentError("Facebook: add text, a link, or an image.");
     const attached: { media_fbid: string }[] = [];
@@ -279,6 +288,7 @@ export class FacebookAdapter implements PlatformAdapter {
       const data = await readMedia((path) => this.deps.readBinary(path), m);
       const form = multipart([
         { name: "published", value: "false" },
+        ...(scheduled ? [{ name: "temporary", value: "true" }] : []),
         ...(m.alt ? [{ name: "alt_text_custom", value: m.alt }] : []),
         { name: "source", filename: fileName(m), contentType: m.mime ?? "image/png", data },
       ]);
