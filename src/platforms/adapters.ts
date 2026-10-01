@@ -1,6 +1,8 @@
 import { BlueskyAdapter } from "./bluesky/api";
 import { DiscordAdapter } from "./discord/api";
 import { FacebookAdapter } from "./facebook/api";
+import { InstagramAdapter } from "./instagram/api";
+import type { InstagramMediaHost } from "./instagram/media";
 import type { HttpFn } from "./http";
 import { MastodonAdapter } from "./mastodon/api";
 import { MetaClient } from "./meta/client";
@@ -24,6 +26,8 @@ export interface AdapterDeps {
   /** Waits between polls (Mastodon media processing). */
   sleep(ms: number): Promise<void>;
   timeoutMs?: number;
+  /** Optional provider-reachable image host; defaults to an explicit assisted-only refusal. */
+  instagramMediaHost?: InstagramMediaHost;
   /** Resolves an image embedded in a body (`![[cover.png]]`) to a vault file; null when it isn't an image in the vault. */
   resolveEmbed?(target: string, fromPath: string): EmbedFile | null;
   /** The link card for a URL (Bluesky's external embed); null when there is none. */
@@ -39,6 +43,7 @@ export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
     new MastodonAdapter(deps),
     new WordPressAdapter(deps),
     new FacebookAdapter(deps),
+    new InstagramAdapter(deps, deps.instagramMediaHost),
   ];
 }
 

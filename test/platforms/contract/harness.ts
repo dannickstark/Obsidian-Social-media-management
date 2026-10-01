@@ -52,6 +52,9 @@ export function contractDeps(): AdapterDeps {
     sleep: async () => undefined,
     timeoutMs: CONTRACT_TIMEOUT_MS,
     resolveEmbed: () => null,
+    instagramMediaHost: {
+      create: async (file) => ({ url: `https://cdn.example.net/${encodeURIComponent(file.name)}` }),
+    },
   };
 }
 

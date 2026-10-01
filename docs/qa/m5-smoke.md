@@ -33,6 +33,12 @@ Run on test accounts before each release with a production build in a test vault
 - [ ] Text, link-only, and up to ten image posts publish to the selected Page; profiles and groups stay on assisted publishing.
 - [ ] Native scheduling, time/content updates, startup lookup, and cancellation affect only confirmed Page posts. An unanswered create stays **Check needed**. **(QA)** verify the scheduled post in Meta.
 
+## Instagram
+
+- [ ] Discovery lists only linked professional accounts after `instagram_content_publish` and the Page `CREATE_CONTENT` task are confirmed. **(QA)** verify with a Meta test app.
+- [ ] Image/carousel API publishing stays unavailable until a secure public image host that Meta can fetch is configured; the default host gives a clear assisted-publishing refusal and never sends vault paths or Meta tokens to a media URL.
+- [ ] With a reviewed host configured, one image and an ordered carousel publish after container processing; expired host URLs, unsupported video, and unknown publish outcomes are handled visibly. **(QA)** verify from a provider-reachable test host.
+
 ## Mastodon
 
 - [ ] Read/write token and `@you@instance` handle connect successfully.
