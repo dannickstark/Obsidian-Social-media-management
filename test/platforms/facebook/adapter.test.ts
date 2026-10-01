@@ -5,7 +5,7 @@ import { effectiveMethod, platformDef } from "../../../src/platforms/registry";
 import { CONTRACT_NOW, contractDeps, expectDigestReads, trackedJob } from "../contract/harness";
 import { img } from "../fixtures";
 import { call, formParts, json, netError, queue, sentJson } from "../http";
-import { InvalidContentError, RemoteRemovedError } from "../../../src/platforms/errors";
+import { InvalidContentError } from "../../../src/platforms/errors";
 import {
   before,
   facebookJob,
@@ -144,18 +144,19 @@ describe("Facebook Pages", () => {
     queue(...before(), json(200, state));
     expect(await adapter().lookup!(handedOver())).toBeNull();
   });
-  it("reports an exact Graph 404 as gone but ambiguous permission/not-found as unknown", async () => {
+  it("keeps ambiguous code 100 missing-object responses unknown, including HTTP 404", async () => {
     queue(
       ...before(),
       json(404, {
         error: {
-          message: "Unsupported get request: object not found",
+          message:
+            "Unsupported get request. Object with ID '11_42' does not exist, cannot be loaded due to missing permissions, or does not support this operation.",
           type: "GraphMethodException",
           code: 100,
         },
       }),
     );
-    expect(await adapter().lookup!(handedOver())).toEqual({ published: false, gone: true });
+    expect(await adapter().lookup!(handedOver())).toBeNull();
     queue(...before(), json(400, { error: { code: 100, error_subcode: 33 } }));
     expect(await adapter().lookup!(handedOver())).toBeNull();
   });
@@ -184,12 +185,13 @@ describe("Facebook Pages", () => {
     ).rejects.toMatchObject({ kind: "needs_user" });
     expect(requestUrlMock.calls.filter((r) => r.method === "POST")).toHaveLength(0);
   });
-  it("returns a confirmed removed hand-over to the local scheduler", async () => {
+  it("does not return an ambiguous missing-object hand-over to the local scheduler", async () => {
     queue(
       ...before(),
       json(404, {
         error: {
-          message: "Unsupported get request: object not found",
+          message:
+            "Unsupported get request. Object with ID '11_42' does not exist, cannot be loaded due to missing permissions, or does not support this operation.",
           type: "GraphMethodException",
           code: 100,
         },
@@ -197,7 +199,24 @@ describe("Facebook Pages", () => {
     );
     await expect(
       adapter().update!(handedOver(), { content: true, time: false }),
-    ).rejects.toBeInstanceOf(RemoteRemovedError);
+    ).rejects.toMatchObject({
+      kind: "needs_user",
+    });
+  });
+  it("does not treat an ambiguous missing-object response as a confirmed cancellation", async () => {
+    queue(
+      ...before(),
+      json(404, {
+        error: {
+          message:
+            "Unsupported get request. Object with ID '11_42' does not exist, cannot be loaded due to missing permissions, or does not support this operation.",
+          type: "GraphMethodException",
+          code: 100,
+        },
+      }),
+    );
+    await expect(adapter().cancel!(handedOver())).rejects.toMatchObject({ kind: "needs_user" });
+    expect(requestUrlMock.calls.some((r) => r.method === "DELETE")).toBe(false);
   });
   it("cancels a confirmed future post and requires success acknowledgement", async () => {
     queue(...before(), json(200, scheduled), json(200, { success: true }));

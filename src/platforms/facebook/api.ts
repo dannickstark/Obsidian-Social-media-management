@@ -4,7 +4,6 @@ import type { AdapterDeps } from "../adapters";
 import {
   InvalidContentError,
   NeedsUserError,
-  RemoteRemovedError,
   TransientError,
   UnknownOutcomeError,
 } from "../errors";
@@ -96,8 +95,7 @@ export class FacebookAdapter implements PlatformAdapter {
       const page = await this.target(job);
       const id = this.remoteId(job, page);
       const res = await this.read(page, id);
-      // A Graph 404 is an explicit not-found response. Code 100/subcode 33 is ambiguous (including lost access).
-      if (res.status === 404) return { published: false, gone: true };
+      // Graph code 100 missing-object responses can also mean lost access or an unsupported operation.
       return isOk(res) ? this.state(object(parseJson(res.text)), id) : null;
     } catch {
       return null;
@@ -109,13 +107,6 @@ export class FacebookAdapter implements PlatformAdapter {
     const id = this.remoteId(job, page);
     const res = await this.read(page, id);
     const scheduled = job.delivery.status === "handed_over";
-    if (res.status === 404) {
-      if (scheduled)
-        throw new RemoteRemovedError(
-          "Facebook: the scheduled post was removed from the Page. It will be posted from Obsidian at its time.",
-        );
-      throw new NeedsUserError("Facebook: this post is no longer on the Page.");
-    }
     const current = isOk(res) ? object(parseJson(res.text)) : null;
     const state = this.state(current, id);
     if (!state)
@@ -146,7 +137,6 @@ export class FacebookAdapter implements PlatformAdapter {
     const page = await this.target(job);
     const id = this.remoteId(job, page);
     const res = await this.read(page, id);
-    if (res.status === 404) return;
     const state = isOk(res) ? this.state(object(parseJson(res.text)), id) : null;
     if (
       !state ||
