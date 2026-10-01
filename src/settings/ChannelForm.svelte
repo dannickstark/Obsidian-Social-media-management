@@ -52,6 +52,7 @@
     telegram: "Chat id (@name or -100…)",
     mastodon: "Handle (@you@your.instance)",
     bluesky: "Handle (you.bsky.social)",
+    x: "X username (without @)",
     facebook: "Page id",
   };
   const SERVER_LABEL: Partial<Record<Platform, string>> = { mastodon: "Server (optional)", bluesky: "PDS (optional)", wordpress: "Site address (https://…)" };
@@ -60,6 +61,7 @@
     discord: "The channel's webhook URL (Server settings → Integrations → Webhooks → Copy Webhook URL).",
     mastodon: "An access token (Preferences → Development → New application, scopes read and write).",
     bluesky: "An app password (Settings → Privacy and security → App passwords), not your account password.",
+    x: "OAuth 2 user access token with tweet.write and media.write. OAuth app approval and API tier access are not verified by this plugin.",
     wordpress: "An application password (Users → Profile → Application passwords).",
     facebook: "A user access token with pages_show_list, pages_read_engagement and pages_manage_posts. Page access tokens stay in memory and are never saved to settings.",
   };
@@ -230,6 +232,9 @@
   {/if}
   {#if platform === "instagram"}
     <p class="osmm-progress" role="status">Instagram API publishing is unavailable until a secure public image host that Meta can fetch is configured. Use assisted publishing to add images in Instagram.</p>
+  {/if}
+  {#if platform === "x"}
+    <p class="osmm-progress" role="status">X API publishing depends on your app's current API tier. If access is denied, this channel remains available in assisted mode.</p>
   {/if}
   {#if SERVER_LABEL[platform]}
     <label>{SERVER_LABEL[platform]}<input type="url" placeholder="https://" bind:value={server} /></label>

@@ -83,6 +83,7 @@ On the publisher device, open **Settings → Social Planner → Channels**, edit
 - **Discord:** the channel's webhook URL (Server settings → Integrations → Webhooks). Optionally set a name and avatar to post as.
 - **Mastodon:** an access token with read and write scopes. Your `@you@your.instance` handle tells the plugin which server to use.
 - **Bluesky:** an app password and your handle.
+- **X:** an OAuth 2 user access token with `tweet.write` and `media.write`; API access depends on your app's current tier and approval.
 - **WordPress:** an HTTPS site address, your user name and an application password.
 
 Click **Test connection**. Scheduled posts on these channels now go out by themselves while the publisher device runs Obsidian.
@@ -94,7 +95,7 @@ For Mastodon and WordPress, choose **API with native scheduling** instead: a sch
 - **The post's time passed while Obsidian was closed.** It is not posted late behind your back: it waits in the **Overdue** tray with **Post now**, **Reschedule** and **Skip**. (Settings → Publishing → **Post late items automatically** lets short delays go out anyway; it is off by default.)
 - **A link is refused.** The link must be the post's page on that platform, starting with `https://`.
 - **Needs attention.** Failed deliveries and ones that need a check are listed in the queue sidebar with the next step to take.
-- **Check needed after a dropped connection.** The post may or may not have gone out, so it is not sent again automatically. Where the platform can tell (Mastodon, Bluesky, WordPress), the plugin asks it and settles the post; otherwise look on the platform and mark it as published or not.
+- **Check needed after a dropped connection.** The post may or may not have gone out, so it is not sent again automatically. Where the platform can tell (Mastodon, Bluesky, WordPress, and sometimes X from the account timeline), the plugin asks it and settles the post; otherwise look on the platform and mark it as published or not.
 - **Not handed over.** The platform refused the hand-over (a wrong token or a time too close). The post stays scheduled and goes out from Obsidian at its time, as long as the publisher device is on.
 - **Out of sync.** You changed a post after it was handed over. Nothing is sent until you click **Push update**.
 - **Wrong day?** Drag the post in the planner, or right click it (long press on a phone) and pick **Reschedule…**. Every move can be undone from the notice.

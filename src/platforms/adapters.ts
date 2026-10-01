@@ -10,6 +10,7 @@ import type { LinkCard } from "./og";
 import { TelegramAdapter } from "./telegram/api";
 import type { PlatformAdapter } from "./types";
 import { WordPressAdapter } from "./wordpress/api";
+import { XAdapter } from "./x/api";
 
 /** A file embedded in a note's body, resolved in the vault (WordPress uploads it). */
 export interface EmbedFile {
@@ -43,6 +44,7 @@ export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
     new MastodonAdapter(deps),
     new WordPressAdapter(deps),
     new FacebookAdapter(deps),
+    new XAdapter(deps),
   ];
   if (deps.instagramMediaHost) adapters.push(new InstagramAdapter(deps, deps.instagramMediaHost));
   return adapters;

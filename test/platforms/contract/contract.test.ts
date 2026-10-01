@@ -18,6 +18,7 @@ const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> =
   instagram: "unknown",
   mastodon: "transient",
   bluesky: "transient",
+  x: "unknown",
   wordpress: "transient",
 };
 

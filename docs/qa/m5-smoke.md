@@ -54,6 +54,14 @@ Run on test accounts before each release with a production build in a test vault
 - [ ] **(QA)** a self-hosted PDS works through `server`; an interrupted post is found by its persisted TID.
 - [ ] **(QA)** Bluesky's 300-grapheme count agrees with the composer for a long URL.
 
+## X
+
+- [ ] OAuth user token connects with `tweet.write` and `media.write`; **Test connection** shows the authenticated account.
+- [ ] Weighted text counting treats URLs as 23 characters; image posts preserve alt text.
+- [ ] Thread replies are ordered, and a resumed send finds its own recent thread parts before continuing.
+- [ ] **(QA)** API-tier 403 errors explain that the account remains usable in assisted mode; verify current X app approval separately.
+- [ ] An unanswered create stays **Check needed**; confirm the post manually if the account timeline cannot identify the attempt.
+
 ## WordPress
 
 - [ ] HTTPS site, user name and application password connect; HTTP is refused.
