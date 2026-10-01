@@ -24,6 +24,7 @@ export async function startLoopbackProbe({ state, timeoutMs = 30_000 }) {
 
   let finished = false;
   let timer;
+  const sockets = new Set();
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -56,10 +57,20 @@ export async function startLoopbackProbe({ state, timeoutMs = 30_000 }) {
     clearTimeout(timer);
     const code = url.searchParams.get('code');
     res.on('finish', () => {
-      server.close(() => resolveResult({ code }));
+      stopServer();
+      resolveResult({ code });
     });
     res.writeHead(200).end('Callback received. You may close this tab.');
   });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  const stopServer = () => {
+    server.close();
+    for (const socket of sockets) socket.destroy();
+  };
 
   try {
     await new Promise((resolve, reject) => {
@@ -78,13 +89,13 @@ export async function startLoopbackProbe({ state, timeoutMs = 30_000 }) {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
-    await new Promise((resolve) => server.close(resolve));
+    stopServer();
     rejectResult(new Error('OAuth probe cancelled'));
   };
-  timer = setTimeout(async () => {
+  timer = setTimeout(() => {
     if (finished) return;
     finished = true;
-    await new Promise((resolve) => server.close(resolve));
+    stopServer();
     rejectResult(new Error('OAuth probe timed out'));
   }, timeoutMs);
 

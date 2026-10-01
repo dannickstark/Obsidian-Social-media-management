@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { request } from 'node:http';
+import { Socket } from 'node:net';
 import { startLoopbackProbe } from '../../scripts/oauth-probe.mjs';
 
 type Probe = Awaited<ReturnType<typeof startLoopbackProbe>>;
@@ -64,5 +65,42 @@ describe('loopback OAuth probe', () => {
     openProbes.push(probe);
     await expect(probe.result).rejects.toThrow('OAuth probe timed out');
     await expect(get(`${probe.redirectUri}?state=expected-state&code=late`)).rejects.toThrow();
+  });
+
+  it('settles at timeout when a client holds incomplete headers open', async () => {
+    const probe = await startLoopbackProbe({ state: 'expected-state', timeoutMs: 50 });
+    openProbes.push(probe);
+    const target = new URL(probe.redirectUri);
+    const socket = new Socket();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('error', reject);
+        socket.connect(Number(target.port), '127.0.0.1', resolve);
+      });
+      socket.write(`GET /callback HTTP/1.1\r\nHost: ${target.host}\r\n`);
+      let guard: ReturnType<typeof setTimeout>;
+      try {
+        await expect(Promise.race([
+          probe.result,
+          new Promise<never>((_, reject) => {
+            guard = setTimeout(() => reject(new Error('deadline exceeded')), 300);
+          }),
+        ])).rejects.toThrow('OAuth probe timed out');
+      } finally {
+        clearTimeout(guard!);
+      }
+      if (!socket.destroyed) {
+        await new Promise<void>((resolve, reject) => {
+          const guard = setTimeout(() => reject(new Error('held connection stayed open')), 300);
+          socket.once('close', () => {
+            clearTimeout(guard);
+            resolve();
+          });
+        });
+      }
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      socket.destroy();
+    }
   });
 });
