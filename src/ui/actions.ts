@@ -23,6 +23,7 @@ import { frozenForMove, statusEditable, uniqueVariants } from "../planner/list";
 import { planReschedule, type RescheduleTarget } from "../planner/reschedule";
 import { STATUS_LABEL } from "../planner/status";
 import { planTemplate, planTemplateMove, templateMovable, type TemplateProposal } from "../planner/templates";
+import { outOfSync, syncInfo } from "../publish/sync";
 import type { OsmmSettings } from "../settings/settings";
 import type { OsmmContext } from "./context";
 import { confirmDialog, pickDateTime, SvelteModal } from "./dialogs";
@@ -121,6 +122,7 @@ export class PlannerActions {
     if (channel) parts.push(channel.name);
     parts.push(row.at === undefined ? "unscheduled" : `${formatShortDate(row.at)} ${formatTime(row.at)}`);
     parts.push(STATUS_LABEL[row.status]);
+    if (row.channelId && outOfSync(row.variant, row.channelId)) parts.push("out of sync with the platform");
     return `${parts.join(" · ")} — ${row.variant.displayTitle}`;
   }
 
@@ -276,6 +278,14 @@ export class PlannerActions {
     const postableIds = postable.map((r) => r.channelId!);
     menu.addItem((i) => i.setTitle("Open note").setIcon("file-text").onClick(() => this.openNote(v.path)));
     menu.addItem((i) => i.setTitle("Compose").setIcon("pencil-line").onClick(() => void this.context?.composer.openComposer(v.path)));
+    const sync = row.channelId && !held ? syncInfo(v, row.channelId) : null;
+    if (sync) {
+      const channelId = sync.channelId;
+      const label = PLATFORM_META[v.platform].label;
+      if (sync.state !== "in_sync") menu.addItem((i) => i.setTitle("Push update").setIcon("upload").onClick(() => void this.context?.publish.pushUpdate(v.path, channelId)));
+      if (sync.time) menu.addItem((i) => i.setTitle("Revert time").setIcon("undo-2").onClick(() => void this.context?.publish.revertTime(v.path, channelId)));
+      menu.addItem((i) => i.setTitle(`Unschedule on ${label}`).setIcon("calendar-x").onClick(() => void this.context?.publish.unscheduleRemote(v.path, channelId)));
+    }
     if (held) {
       menu.addItem((i) => i.setTitle("Review…").setIcon("eye").onClick(() => void this.context?.composer.openComposer(v.path)));
     } else if (postable.length) {

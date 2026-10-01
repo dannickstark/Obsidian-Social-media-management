@@ -4,6 +4,7 @@
   import { PLATFORM_META } from "../model/platforms";
   import { campaignTable } from "../planner/campaignTable";
   import { VARIANT_STATUS_LABEL } from "../planner/status";
+  import { outOfSync } from "../publish/sync";
   import ChannelAvatar from "../ui/ChannelAvatar.svelte";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
@@ -42,7 +43,7 @@
           <td>{r.variant.mode === "assisted" ? "Assisted" : "Auto-post"}</td>
           <td>{r.when !== undefined ? `${formatShortDate(r.when)} ${formatTime(r.when)}` : "—"}</td>
           <td class="osmm-progress">{r.chars}</td>
-          <td><span class="osmm-pill-status">{VARIANT_STATUS_LABEL[r.status]}</span></td>
+          <td><span class="osmm-pill-status">{VARIANT_STATUS_LABEL[r.status]}</span>{#if outOfSync(r.variant)}<span class="osmm-pill-sync">Out of sync</span>{/if}</td>
           <td>
             <button type="button" onclick={() => actions.openNote(r.variant.path)}>Open</button>
             <button type="button" aria-label={`Compose ${PLATFORM_META[r.variant.platform].label} variant`} onclick={() => void composer.openComposer(r.variant.path)}>Compose</button>

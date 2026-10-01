@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { PostRow } from "../index/queries";
   import { chipStyle } from "../planner/status";
+  import { outOfSync } from "../publish/sync";
+  import { icon } from "../ui/icon";
   import { longpress } from "../ui/longpress";
   import PlatformBadge from "../ui/PlatformBadge.svelte";
   import { useOsmm } from "../ui/context";
@@ -32,5 +34,6 @@
   <PlatformBadge platform={row.variant.platform} />
   {#if showTime && row.at !== undefined}<span class="osmm-chip-time">{formatTime(row.at)}</span>{/if}
   <span class="osmm-chip-title">{row.variant.displayTitle}</span>
+  {#if row.channelId && outOfSync(row.variant, row.channelId)}<span class="osmm-chip-sync" aria-hidden="true" use:icon={"refresh-cw-off"}></span>{/if}
   {#if style === "published"}<span aria-hidden="true">✓</span>{/if}
 </button>

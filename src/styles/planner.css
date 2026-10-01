@@ -63,6 +63,9 @@
 .osmm-variants-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--osmm-border); }
 .osmm-lenbar { height: 3px; background: var(--osmm-border); border-radius: 2px; }
 .osmm-pill-status { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--osmm-hover); font-size: var(--font-ui-smaller); }
+.osmm-pill-sync { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; border: 1px solid var(--text-warning); color: var(--text-warning); font-size: var(--font-ui-smaller); }
+.osmm-chip-sync { display: inline-flex; color: var(--text-warning); }
+.osmm-chip-sync svg { width: 12px; height: 12px; }
 .osmm-timeline { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--osmm-border); }
 .osmm-link { box-shadow: none; background: transparent; padding: 0; height: auto; color: var(--text-accent); text-align: left; cursor: pointer; }
 .osmm-form { display: flex; flex-direction: column; gap: 10px; }

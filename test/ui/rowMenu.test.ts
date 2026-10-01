@@ -7,6 +7,8 @@ import Chip from "../../src/views/Chip.svelte";
 import ListView from "../../src/views/ListView.svelte";
 import { indexed } from "../helpers";
 import { makeCtx } from "./ctx";
+import { formatDateTime, HOUR } from "../../src/model/dates";
+import { TEST_NOW } from "./ctx";
 
 const BS = "Social/Event X/Event X – Bluesky.md";
 const titles = () => Menu.last!.items.map((i) => i.title);
@@ -24,6 +26,21 @@ afterEach(() => {
 });
 
 describe("row menu", () => {
+  it("offers Push update, Revert time and Unschedule for an out-of-sync handed-over post, and labels its chip (#66)", async () => {
+    const MA = "Social/Posts/Ma.md";
+    const AT = TEST_NOW + 2 * HOUR;
+    const { ctx } = await makeCtx({
+      seed: true,
+      notes: [{ path: MA, frontmatter: { type: "social-post", platform: "mastodon", channels: ["ma/you"], status: "scheduled", scheduled_at: formatDateTime(AT), deliveries: { "ma/you": { status: "handed_over", at: formatDateTime(AT + HOUR), remote_at: formatDateTime(AT), remote_id: "3221", digest: "old" } } }, body: "Hi" }],
+    });
+    const row = ctx.actions.rowByKey(`${MA}#ma/you`)!;
+    ctx.actions.rowMenu(row, { x: 0, y: 0 });
+    expect(titles().slice(0, 5)).toEqual(["Open note", "Compose", "Push update", "Revert time", "Unschedule on Mastodon"]);
+    const { container } = render(Chip, { props: { row }, context: osmmContext(ctx) });
+    expect(container.querySelector(".osmm-chip-sync")).not.toBeNull();
+    expect(screen.getByRole("button").getAttribute("aria-label")).toContain("out of sync with the platform");
+  });
+
   it("offers every move for a scheduled post", async () => {
     const { ctx } = await makeCtx({ seed: true });
     ctx.actions.rowMenu(ctx.actions.rowByKey(`${BS}#bs/you`)!, { x: 0, y: 0 });

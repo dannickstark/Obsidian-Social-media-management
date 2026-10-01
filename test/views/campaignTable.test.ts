@@ -6,6 +6,21 @@ import { makeCtx } from "../ui/ctx";
 import { indexed } from "../helpers";
 
 describe("CampaignTable", () => {
+  it("marks a variant with an out-of-sync handed-over channel (#66)", async () => {
+    const { ctx } = await makeCtx({
+      seed: true,
+      notes: [
+        {
+          path: "Social/Event X/Event X – Mastodon.md",
+          frontmatter: { type: "social-post", campaign: "[[Event X]]", platform: "mastodon", channels: ["ma/you"], status: "scheduled", scheduled_at: "2026-10-10T18:00:00+02:00", deliveries: { "ma/you": { status: "handed_over", at: "2026-10-10T19:00:00+02:00", remote_at: "2026-10-10T18:00:00+02:00", remote_id: "3221", digest: "old" } } },
+          body: "Hi",
+        },
+      ],
+    });
+    render(CampaignTable, { props: { campaignPath: "Social/Event X/Event X.md" }, context: osmmContext(ctx) });
+    expect(screen.getByText("Out of sync")).toBeTruthy();
+  });
+
   it("renders variants and creates a missing one with all channels of that platform", async () => {
     const { app, ctx, index } = await makeCtx({ seed: true });
     render(CampaignTable, { props: { campaignPath: "Social/Event X/Event X.md" }, context: osmmContext(ctx) });

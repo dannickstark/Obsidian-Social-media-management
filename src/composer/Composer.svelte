@@ -11,6 +11,7 @@
   import MediaPanel from "./MediaPanel.svelte";
   import PostAs from "./PostAs.svelte";
   import SchedulePanel from "./SchedulePanel.svelte";
+  import SyncPanel from "./SyncPanel.svelte";
   import type { ComposerSession, SessionBody } from "./session";
 
   let { session, openVariant }: { session: ComposerSession; openVariant: (path: string) => void } = $props();
@@ -103,6 +104,7 @@
           <PostAs {variant} />
           <Checks {variant} {issues} counters={counterList} />
           <SchedulePanel {variant} {issues} />
+          <SyncPanel {variant} />
           <MediaPanel {variant} media={content.media} />
           <ActionsBar {variant} {issues} />
         </aside>
