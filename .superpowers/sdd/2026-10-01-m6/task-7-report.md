@@ -5,19 +5,20 @@ Status: DONE_WITH_CONCERNS
 ## Delivered
 
 - Added a LinkedIn adapter for member posts and approved organization posts. Text posts use LinkedIn Posts API; image posts upload image assets first and support one image or an organic multi-image post with up to nine images. Image uploads stay on LinkedIn's `www.linkedin.com/dms-uploads` host, and image alt text is retained.
-- Added typed member and organization account discovery. Organization choices are limited to approved publishing roles and report `w_organization_social` separately from product access. Organization publish is refused unless Community Management access, required scope, and an approved member role are all confirmed.
+- Added typed member and organization account discovery. Organization choices are limited to approved publishing roles, and discovery follows the documented ACL `next` link with same-origin/path validation. Organization publish is refused unless Community Management access, required scope, and an approved member role are all confirmed.
+- Every publish now rediscovers the selected identity and verifies the publishing scope metadata associated with that exact current token; a changed/replaced token without a matching grant record cannot publish. `/v2/userinfo` discovery explicitly requires the separate Sign In with LinkedIn product plus confirmed `openid` and `profile` scopes; these are distinct from Share on LinkedIn's `w_member_social`. The settings form states this prerequisite.
+- Image uploads retain the strict HTTPS `www.linkedin.com/dms-uploads` host check and now send `Authorization: Bearer <current token>` on the upload PUT, with an explicit header assertion.
 - Added `apiAvailable` runtime gating so unverified LinkedIn channels resolve to assisted mode. The settings form can discover/select accounts, test a connection, and explain the PKCE and product-access limitations. A changed token clears the previous LinkedIn selection.
 - Added LinkedIn to the shared adapter contract suite and the release QA smoke checklist.
 
-No OAuth authorization flow or token health work was added. LinkedIn native PKCE and product access remain unverified under ADR 0003; API publishing is disabled by default. Discovery uses a user-supplied device token, and only explicitly supplied scope/access confirmations can unlock API use.
+No OAuth authorization flow or token health work was added. LinkedIn native PKCE and product access remain unverified under ADR 0003; API publishing is disabled by default. The host currently provides no production LinkedIn token-grant verifier, so account discovery/API sends remain assisted-only unless the exact token's scopes and product confirmation are supplied through the credential-bound adapter boundary. No live LinkedIn app, scope grant, provider callback, or publishing request was exercised.
 
 ## TDD and verification
 
 - Wrote account discovery and adapter tests first. The initial Node-mode run failed because the LinkedIn adapter/account modules did not yet exist. The multi-image test was also run red against the initial one-image implementation, then passed after adding the Posts API multi-image path.
-- Focused LinkedIn adapter, accounts, and settings tests passed under Node 24: 3 files, 34 tests.
-- LinkedIn adapter contract, platform registry, and M5 QA documentation tests passed: 3 files, 150 tests passed, 11 skipped.
+- Focused LinkedIn account, adapter, settings, and adapter-contract tests passed under Node 24: 4 files, 168 tests passed, 9 skipped.
 - `npm run lint` passed. `npm run typecheck` passed with 0 errors and 1 existing Svelte warning. `git diff --check` passed.
-- The full suite under Node 24 with loopback access passed 1,909 tests and skipped 12; one existing X-path test failed in `test/publish/overdueTray.test.ts` because the index did not reach its expected state within 2 seconds. The suite's only failure was outside LinkedIn files and no linked-in-specific or adapter-contract test failed.
+- Full suite under Node 24 with loopback access: 1,917 passed, 10 skipped, 1 failed. The sole failure is the unrelated X-path test `test/publish/overdueTray.test.ts` → “flushes an open editor before an API delivery, so it sends the exact text on screen”; it times out waiting for the index to reach its expected state within 2 seconds. Reproduced in an isolated run (same timeout); the test was not modified.
 - The system `npm` selects Node 20.18, which cannot load the installed ESM dependency used by jsdom; Node 24 was used for Vitest runs. Without loopback access, OAuth and local-server tests also fail with `EPERM` when binding `127.0.0.1`.
 
 ## Provider references and limits

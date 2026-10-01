@@ -88,11 +88,11 @@ describe("ChannelForm", () => {
 
   it("discovers a LinkedIn profile and keeps it assisted while PKCE and product access are unverified", async () => {
     const c = await makeCtx();
-    for (const a of createAdapters({ ...contractDeps(), linkedInMemberAccessVerified: false, linkedInCommunityManagementAccessVerified: false, linkedInGrantedScopes: undefined })) c.adapters.register(a);
+    for (const a of createAdapters({ ...contractDeps(), linkedInMemberAccessVerified: false, linkedInCommunityManagementAccessVerified: false, linkedInTokenAccess: () => ({ grantedScopes: ["openid", "profile"], signInWithLinkedInProductVerified: true }) })) c.adapters.register(a);
     c.app.secretStorage.setSecret("li-token", "LINKEDIN-TOKEN");
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
     expect(methods()).toEqual(["assisted"]);
-    expect(screen.getByText(/native PKCE and product access are unverified/i)).toBeTruthy();
+    expect(screen.getByText(/Sign In with LinkedIn product plus openid\/profile scopes/i)).toBeTruthy();
     await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Ada" } });
     await SecretComponent.last!.change("li-token");
     expect(requestUrlMock.calls).toHaveLength(0);

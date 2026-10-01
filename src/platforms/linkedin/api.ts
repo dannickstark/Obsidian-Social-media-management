@@ -51,9 +51,12 @@ export class LinkedInAdapter implements PlatformAdapter {
 
   async findAccounts(secret: string | null): Promise<LinkedInAccountChoice[]> {
     if (!secret?.trim()) throw new NeedsUserError("LinkedIn: add an access token on this device, or use assisted publishing.");
+    const access = this.deps.linkedInTokenAccess?.(secret);
+    if (!access) throw new NeedsUserError("LinkedIn: access and granted scopes are not verified for this exact token. Reconnect or use assisted publishing.");
     return listLinkedInAccounts({
       accessToken: secret,
-      ...(this.deps.linkedInGrantedScopes ? { grantedScopes: this.deps.linkedInGrantedScopes } : {}),
+      grantedScopes: access.grantedScopes,
+      signInWithLinkedInProductVerified: access.signInWithLinkedInProductVerified,
       communityManagementAccessVerified: this.deps.linkedInCommunityManagementAccessVerified === true,
     }, this.deps);
   }
@@ -78,12 +81,14 @@ export class LinkedInAdapter implements PlatformAdapter {
       throw new NeedsUserError(`LinkedIn: API publishing is disabled until ${permission} and app access are verified. Use assisted publishing.`);
     }
     if (!job.secret?.trim()) throw new NeedsUserError("LinkedIn: add an access token on this device, or use assisted publishing.");
-    if (target.kind === "page") {
-      const accounts = await this.findAccounts(job.secret);
-      const approved = accounts.some((account) => account.id === target.id && account.kind === "page" && account.canPublish);
-      if (!approved)
-        throw new NeedsUserError("LinkedIn: this organization is not confirmed as available for publishing by this member. Check its Community Management role or use assisted publishing.");
-    }
+    const accounts = await this.findAccounts(job.secret);
+    const account = accounts.find((item) => item.id === target.id && item.kind === target.kind);
+    if (!account)
+      throw new NeedsUserError("LinkedIn: the selected account does not match the member authenticated by this token or an available organization. Rediscover accounts or use assisted publishing.");
+    if (!account.canPublish)
+      throw new NeedsUserError(`LinkedIn: ${account.requiredPermission} and required product access are not verified for this token. Use assisted publishing.`);
+    if (target.kind === "page" && account.kind !== "page")
+      throw new NeedsUserError("LinkedIn: this organization is not confirmed as available for publishing by this member. Check its Community Management role or use assisted publishing.");
     if (job.text.trim().length === 0) throw new InvalidContentError("LinkedIn: post text is required.");
     if (job.media.length > MAX_IMAGES) throw new InvalidContentError(`LinkedIn: attach at most ${MAX_IMAGES} images.`);
     if (job.media.some((media) => media.kind !== "image" || (media.bytes !== undefined && media.bytes > IMAGE_MAX_BYTES)))
@@ -160,7 +165,7 @@ export class LinkedInAdapter implements PlatformAdapter {
     await api.prepare({
       url: parsedUrl.toString(),
       method: "PUT",
-      headers: { "Content-Type": media.mime ?? "application/octet-stream" },
+      headers: { Authorization: `Bearer ${job.secret}`, "Content-Type": media.mime ?? "application/octet-stream" },
       body: bytes,
       timeoutMs: UPLOAD_TIMEOUT_MS,
     });

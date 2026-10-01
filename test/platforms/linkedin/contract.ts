@@ -16,7 +16,7 @@ export const linkedinJob = (): DeliveryJob => ({
 export const linkedinCase: ContractCase = {
   platform: "linkedin",
   job: linkedinJob,
-  before: [],
+  before: [json(200, { sub: "abc123", name: "Ada Lovelace" })],
   success: {
     post: [json(201, {}, { "x-restli-id": LINKEDIN_POST_ID })],
     expect: { remoteId: LINKEDIN_POST_ID, url: `https://www.linkedin.com/feed/update/${LINKEDIN_POST_ID}` },

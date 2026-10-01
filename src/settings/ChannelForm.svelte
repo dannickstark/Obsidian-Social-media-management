@@ -270,7 +270,7 @@
     {/if}
   {/if}
   {#if platform === "linkedin"}
-    <p class="osmm-progress" role="status">LinkedIn native PKCE and product access are unverified. Add a user access token to discover your profile; company-page publishing also requires Community Management access. Assisted publishing remains available.</p>
+    <p class="osmm-progress" role="status">LinkedIn native PKCE and product access are unverified. Account discovery requires the separate Sign In with LinkedIn product plus openid/profile scopes; Share on LinkedIn requires w_member_social separately. Company-page publishing also requires Community Management access. Assisted publishing remains available.</p>
     <div class="osmm-row">
       <button type="button" disabled={!secretId || findingLinkedInAccounts} onclick={() => void findLinkedInAccounts()}>Find LinkedIn accounts</button>
       {#if linkedInNote}<span class="osmm-progress" role="status">{linkedInNote}</span>{/if}

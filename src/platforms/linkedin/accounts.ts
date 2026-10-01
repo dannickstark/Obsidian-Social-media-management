@@ -8,6 +8,8 @@ export interface LinkedInTokens {
   accessToken: string;
   /** Scopes confirmed by the credential issuer. LinkedIn does not expose these through userinfo. */
   grantedScopes?: readonly string[];
+  /** The separate Sign In with LinkedIn product must be enabled for /v2/userinfo. */
+  signInWithLinkedInProductVerified?: boolean;
   /** Community Management product access must be confirmed separately for this app. */
   communityManagementAccessVerified?: boolean;
 }
@@ -43,6 +45,8 @@ export async function listLinkedInAccounts(
 ): Promise<LinkedInAccountChoice[]> {
   const token = tokens.accessToken.trim();
   if (!token) throw new NeedsUserError("LinkedIn: add an access token on this device, or use assisted publishing.");
+  if (tokens.signInWithLinkedInProductVerified !== true || !tokens.grantedScopes?.includes("openid") || !tokens.grantedScopes.includes("profile"))
+    throw new NeedsUserError("LinkedIn account discovery requires the separate Sign In with LinkedIn product and confirmed openid and profile scopes. Share on LinkedIn uses w_member_social separately; use assisted publishing until discovery access is verified.");
   const api = new ApiClient({
     platform: "linkedin",
     http: options.http ?? obsidianHttp,
@@ -70,34 +74,63 @@ export async function listLinkedInAccounts(
   }];
 
   if (tokens.grantedScopes?.includes("r_organization_admin")) {
-    const orgs = await api.prepare({
-      url: `${LINKEDIN_API}/rest/organizationAcls?q=roleAssignee&state=APPROVED&projection=(elements*(organization,organizationTarget,role,state,organization~(id,name,localizedName)))`,
-      method: "GET",
-      headers: linkedInHeaders(token),
-    });
-    const data = object(parseJson(orgs.text));
-    if (!Array.isArray(data?.elements)) throw new NeedsUserError("LinkedIn: organization list was unreadable; try discovery again.");
-    for (const rowValue of data.elements) {
-      const row = object(rowValue);
-      if (row?.state !== "APPROVED" || !["ADMINISTRATOR", "DIRECT_SPONSORED_CONTENT_POSTER", "CONTENT_ADMIN"].includes(String(row.role))) continue;
-      const organization = object(row?.["organization~"]);
-      const urn = row.organization ?? row.organizationTarget;
-      const id = organization?.id ?? (typeof urn === "string" ? /^urn:li:organization:(\d+)$/.exec(urn)?.[1] : undefined);
-      const orgName = organization?.localizedName ?? organization?.name;
-      if (!((typeof id === "number" && Number.isSafeInteger(id)) || (typeof id === "string" && /^\d+$/.test(id))) || typeof orgName !== "string")
-        throw new NeedsUserError("LinkedIn: an organization entry was unreadable; try discovery again.");
-      const hasScope = tokens.grantedScopes.includes("w_organization_social");
-      const productVerified = tokens.communityManagementAccessVerified === true;
-      const choiceId = `urn:li:organization:${id}`;
-      if (accounts.some((account) => account.id === choiceId)) continue;
-      accounts.push({
-        id: choiceId,
-        kind: "page",
-        name: orgName,
-        requiredPermission: "w_organization_social",
-        permissionStatus: !hasScope ? "missing" : productVerified ? "granted" : "unverified",
-        canPublish: hasScope && productVerified,
+    const base = `${LINKEDIN_API}/rest/organizationAcls?q=roleAssignee&state=APPROVED&count=100&projection=(elements*(organization,organizationTarget,role,state,organization~(id,name,localizedName)))`;
+    let start = 0;
+    let total: number | undefined;
+    let pages = 0;
+    while (total === undefined || start < total) {
+      if (pages++ >= 100) throw new NeedsUserError("LinkedIn: organization list exceeded the safe discovery limit; try assisted publishing.");
+      const orgs = await api.prepare({
+        url: `${base}&start=${start}`,
+        method: "GET",
+        headers: linkedInHeaders(token),
       });
+      const data = object(parseJson(orgs.text));
+      if (!Array.isArray(data?.elements)) throw new NeedsUserError("LinkedIn: organization list was unreadable; try discovery again.");
+      const paging = object(data.paging);
+      const pageStart = typeof paging?.start === "number" ? paging.start : start;
+      const pageCount = typeof paging?.count === "number" ? paging.count : 100;
+      total = typeof paging?.total === "number" ? paging.total : undefined;
+      if (!Number.isSafeInteger(pageStart) || !Number.isSafeInteger(pageCount) || pageCount < 1 || (total !== undefined && (!Number.isSafeInteger(total) || total < 0)))
+        throw new NeedsUserError("LinkedIn: organization paging response was unreadable; try discovery again.");
+      for (const rowValue of data.elements) {
+        const row = object(rowValue);
+        if (row?.state !== "APPROVED" || !["ADMINISTRATOR", "DIRECT_SPONSORED_CONTENT_POSTER", "CONTENT_ADMIN"].includes(String(row.role))) continue;
+        const organization = object(row?.["organization~"]);
+        const urn = row.organization ?? row.organizationTarget;
+        const id = organization?.id ?? (typeof urn === "string" ? /^urn:li:organization:(\d+)$/.exec(urn)?.[1] : undefined);
+        const orgName = organization?.localizedName ?? organization?.name;
+        if (!((typeof id === "number" && Number.isSafeInteger(id)) || (typeof id === "string" && /^\d+$/.test(id))) || typeof orgName !== "string")
+          throw new NeedsUserError("LinkedIn: an organization entry was unreadable; try discovery again.");
+        const hasScope = tokens.grantedScopes.includes("w_organization_social");
+        const productVerified = tokens.communityManagementAccessVerified === true;
+        const choiceId = `urn:li:organization:${id}`;
+        if (accounts.some((account) => account.id === choiceId)) continue;
+        accounts.push({
+          id: choiceId,
+          kind: "page",
+          name: orgName,
+          requiredPermission: "w_organization_social",
+          permissionStatus: !hasScope ? "missing" : productVerified ? "granted" : "unverified",
+          canPublish: hasScope && productVerified,
+        });
+      }
+      const links = Array.isArray(paging?.links) ? paging.links.map(object).filter((link): link is Record<string, unknown> => link !== null) : [];
+      const nextLink = links.find((link) => link.rel === "next");
+      if (nextLink) {
+        if (typeof nextLink.href !== "string") throw new NeedsUserError("LinkedIn: organization paging link was unreadable; try discovery again.");
+        let nextUrl: URL;
+        try { nextUrl = new URL(nextLink.href, `${LINKEDIN_API}/`); } catch { throw new NeedsUserError("LinkedIn: organization paging link was unreadable; try discovery again."); }
+        const nextStart = Number(nextUrl.searchParams.get("start"));
+        if (nextUrl.origin !== LINKEDIN_API || nextUrl.pathname !== "/rest/organizationAcls" || !Number.isSafeInteger(nextStart) || nextStart <= start)
+          throw new NeedsUserError("LinkedIn: organization paging link was unexpected; try discovery again.");
+        start = nextStart;
+        continue;
+      }
+      if (total === undefined || start + data.elements.length >= total) break;
+      const next = pageStart + pageCount;
+      if (next <= start) throw new NeedsUserError("LinkedIn: organization paging did not advance; try discovery again.");
+      start = next;
     }
   }
   return accounts;

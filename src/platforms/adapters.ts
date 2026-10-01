@@ -40,8 +40,11 @@ export interface AdapterDeps {
   linkedInMemberAccessVerified?: boolean;
   /** Set only after Community Management product access and w_organization_social have been verified. */
   linkedInCommunityManagementAccessVerified?: boolean;
-  /** Explicitly confirmed scopes for the manually supplied LinkedIn token, when known. */
-  linkedInGrantedScopes?: readonly string[];
+  /** Credential-bound LinkedIn grant metadata; null means this exact token has not been verified. */
+  linkedInTokenAccess?: (token: string) => {
+    grantedScopes: readonly string[];
+    signInWithLinkedInProductVerified: boolean;
+  } | null;
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
