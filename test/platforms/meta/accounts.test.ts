@@ -29,18 +29,35 @@ describe("Meta account discovery", () => {
           { id: "12", name: "Another Page", access_token: "PAGE-TOKEN-12", tasks: ["ANALYZE"] },
         ],
       }),
+      json(200, {
+        data: [{ permission: "instagram_content_publish", status: "granted" }],
+      }),
+      json(200, { id: "31", username: "studio", account_type: "MEDIA_CREATOR" }),
     );
-    expect(await client().listPages(tokens)).toEqual([
+    const pages = await client().listPages(tokens);
+    expect(pages).toEqual([
       {
         id: "11",
         name: "A Page",
         accessToken: "PAGE-TOKEN-11",
         tasks: ["CREATE_CONTENT"],
         instagramBusinessAccountId: "31",
+        instagramContentPublishPermission: "granted",
       },
-      { id: "12", name: "Another Page", accessToken: "PAGE-TOKEN-12", tasks: ["ANALYZE"] },
+      {
+        id: "12",
+        name: "Another Page",
+        accessToken: "PAGE-TOKEN-12",
+        tasks: ["ANALYZE"],
+        instagramContentPublishPermission: "granted",
+      },
     ]);
     expect(call(0).url).toContain("/me/accounts?");
+    expect(call(2).url).toContain("/me/permissions?");
+    expect(call(2).headers?.Authorization).toBe(`Bearer ${tokens.accessToken}`);
+    expect(await client().listInstagramBusinesses(pages[0]!)).toMatchObject([
+      { id: "31", accountType: "MEDIA_CREATOR", capabilities: { imagePublish: true } },
+    ]);
   });
 
   it("rejects a non-Page row rather than treating it as a Page", async () => {
@@ -72,6 +89,7 @@ describe("Meta account discovery", () => {
       accessToken: "PAGE-TOKEN-11",
       tasks: ["CREATE_CONTENT"],
       instagramBusinessAccountId: "31",
+      instagramContentPublishPermission: "granted" as const,
     };
     queue(json(200, { id: "31", username: "studio", account_type: "BUSINESS" }));
     expect(await client().listInstagramBusinesses(page)).toEqual([
@@ -88,6 +106,54 @@ describe("Meta account discovery", () => {
     expect(call(0).headers?.Authorization).toBe("Bearer PAGE-TOKEN-11");
   });
 
+  it("records a declined publish grant and refuses to advertise image publishing", async () => {
+    queue(
+      json(200, {
+        data: [
+          {
+            id: "11",
+            name: "A",
+            access_token: "PAGE-TOKEN-11",
+            tasks: ["CREATE_CONTENT"],
+            instagram_business_account: { id: "31" },
+          },
+        ],
+      }),
+      json(200, { data: [{ permission: "instagram_content_publish", status: "declined" }] }),
+      json(200, { id: "31", username: "studio", account_type: "BUSINESS" }),
+    );
+    const [page] = await client().listPages(tokens);
+    expect(page?.instagramContentPublishPermission).toBe("declined");
+    await expect(client().listInstagramBusinesses(page!)).rejects.toMatchObject({
+      kind: "needs_user",
+      message: expect.stringContaining("instagram_content_publish"),
+    });
+  });
+
+  it("treats an absent publish grant as missing and refuses image publishing", async () => {
+    queue(
+      json(200, {
+        data: [
+          {
+            id: "11",
+            name: "A",
+            access_token: "PAGE-TOKEN-11",
+            tasks: ["CREATE_CONTENT"],
+            instagram_business_account: { id: "31" },
+          },
+        ],
+      }),
+      json(200, { data: [{ permission: "instagram_basic", status: "granted" }] }),
+      json(200, { id: "31", username: "studio", account_type: "MEDIA_CREATOR" }),
+    );
+    const [page] = await client().listPages(tokens);
+    expect(page?.instagramContentPublishPermission).toBe("missing");
+    await expect(client().listInstagramBusinesses(page!)).rejects.toMatchObject({
+      kind: "needs_user",
+      message: expect.stringContaining("instagram_content_publish"),
+    });
+  });
+
   it("omits unconnected, personal, and Pages without CREATE_CONTENT", async () => {
     expect(
       await client().listInstagramBusinesses({
@@ -95,6 +161,7 @@ describe("Meta account discovery", () => {
         name: "A",
         accessToken: "P",
         tasks: ["CREATE_CONTENT"],
+        instagramContentPublishPermission: "granted",
       }),
     ).toEqual([]);
     expect(
@@ -104,6 +171,7 @@ describe("Meta account discovery", () => {
         accessToken: "P",
         tasks: ["ANALYZE"],
         instagramBusinessAccountId: "31",
+        instagramContentPublishPermission: "granted",
       }),
     ).toEqual([]);
     queue(json(200, { id: "31", username: "personal", account_type: "PERSONAL" }));
@@ -114,6 +182,7 @@ describe("Meta account discovery", () => {
         accessToken: "P",
         tasks: ["CREATE_CONTENT"],
         instagramBusinessAccountId: "31",
+        instagramContentPublishPermission: "granted",
       }),
     ).toEqual([]);
   });

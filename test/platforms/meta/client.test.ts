@@ -71,6 +71,32 @@ describe("MetaClient", () => {
     });
   });
 
+  it.each([4, 17, 32, 341, 613, 80004])(
+    "treats Graph throttle code %i as transient",
+    async (code) => {
+      queue(
+        json(400, { error: { code, message: "request limit reached" } }, { "Retry-After": "5" }),
+      );
+      await expect(client().get("me/accounts", TOKEN)).rejects.toMatchObject({
+        kind: "transient",
+        retryAfterMs: 5000,
+      });
+    },
+  );
+
+  it("describes code 2500 as an unknown Graph path rather than missing permission", async () => {
+    queue(json(400, { error: { code: 2500, message: "Unknown path components: /me" } }));
+    const error: Error = await client()
+      .get("me", TOKEN)
+      .then(
+        () => new Error("request unexpectedly succeeded"),
+        (e: unknown) => e as Error,
+      );
+    expect(error).toBeInstanceOf(NeedsUserError);
+    expect(error.message).toMatch(/path|endpoint/i);
+    expect(error.message).not.toMatch(/permission/i);
+  });
+
   it("redacts raw and URL-encoded tokens from provider diagnostics", async () => {
     queue(
       json(400, { error: { code: 999, message: `Bad ${TOKEN} or ${encodeURIComponent(TOKEN)}` } }),

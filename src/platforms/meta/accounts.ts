@@ -7,7 +7,10 @@ export interface MetaPage {
   accessToken: string;
   tasks: string[];
   instagramBusinessAccountId?: string;
+  instagramContentPublishPermission: MetaPermissionStatus;
 }
+
+export type MetaPermissionStatus = "granted" | "declined" | "expired" | "missing";
 
 export interface InstagramBusiness {
   id: string;
@@ -36,7 +39,7 @@ export async function discoverPages(
   const rows = await client.list("me/accounts", tokens.accessToken, {
     fields: "id,name,access_token,tasks,instagram_business_account",
   });
-  return rows.map((row) => {
+  const pages = rows.map((row) => {
     const page = object(row);
     if (
       !page ||
@@ -67,9 +70,31 @@ export async function discoverPages(
       ...(linked ? { instagramBusinessAccountId: linked.id as string } : {}),
     };
   });
+  let publishPermission: MetaPermissionStatus = "missing";
+  if (pages.some((page) => page.instagramBusinessAccountId)) {
+    const permissionRows = await client.list("me/permissions", tokens.accessToken, {
+      fields: "permission,status",
+    });
+    const matches = permissionRows
+      .map(object)
+      .filter((row) => row?.permission === "instagram_content_publish");
+    if (matches.length > 1)
+      throw new NeedsUserError(
+        "Meta: Instagram publishing permissions were inconsistent; try account discovery again.",
+      );
+    const status = matches[0]?.status;
+    if (status !== undefined) {
+      if (status !== "granted" && status !== "declined" && status !== "expired")
+        throw new NeedsUserError(
+          "Meta: Instagram publishing permission status was unreadable; try account discovery again.",
+        );
+      publishPermission = status;
+    }
+  }
+  return pages.map((page) => ({ ...page, instagramContentPublishPermission: publishPermission }));
 }
 
-/** Account type and Page task establish eligibility; they do not prove an app permission grant or OAuth connection. */
+/** A linked professional account needs both the Page content task and a verified user-token publish grant. */
 export async function discoverInstagramBusinesses(
   client: MetaClient,
   page: MetaPage,
@@ -91,6 +116,10 @@ export async function discoverInstagramBusinesses(
     );
   }
   if (account.account_type !== "BUSINESS" && account.account_type !== "MEDIA_CREATOR") return [];
+  if (page.instagramContentPublishPermission !== "granted")
+    throw new NeedsUserError(
+      "Meta: instagram_content_publish is not granted for this account; grant it in Meta and provide a token with that permission.",
+    );
   return [
     {
       id: account.id,

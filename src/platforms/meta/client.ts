@@ -33,16 +33,24 @@ function redact(message: string, token: string): string {
 function metaFailure(res: HttpResponse, token: string): ApiFailure {
   const error = object(object(parseJson(res.text))?.error);
   const code = error?.code;
+  if (code === 4 || code === 17 || code === 32 || code === 341 || code === 613 || code === 80004)
+    return { kind: "transient", message: "Graph request limit reached; try again later" };
   if (code === 190)
     return {
       kind: "needs_user",
       message: "the access token expired or is invalid; provide a new token",
     };
-  if (code === 10 || code === 200 || code === 2500)
+  if (code === 10 || code === 200)
     return {
       kind: "needs_user",
       message:
         "required Page or Instagram permission is missing; grant it in Meta and provide a token with that permission",
+    };
+  if (code === 2500)
+    return {
+      kind: "needs_user",
+      message:
+        "the Graph path or account endpoint was not found; check the requested account and try again",
     };
   const raw =
     typeof error?.message === "string" ? error.message : "the server answered with an error";
