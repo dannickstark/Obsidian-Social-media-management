@@ -37,6 +37,7 @@ export function canTransition(from: DeliveryStatus, to: DeliveryStatus): boolean
  * unschedule, draft, ready) keeps it, so a later send checks the parts an earlier one posted instead of posting again.
  */
 const CLEARS_SEND_KEY = new Set<DeliveryStatus>(["published"]);
+const CLEARS_ADAPTER_STATE = new Set<DeliveryStatus>(["draft", "ready", "scheduled", "published", "skipped"]);
 
 export function transition(
   d: Delivery,
@@ -54,6 +55,7 @@ export function transition(
     if (!("sendAt" in patch)) delete next.sendAt;
     if (!("sendKey" in patch)) delete next.sendKey;
   }
+  if (CLEARS_ADAPTER_STATE.has(to) && !("adapterState" in patch)) delete next.adapterState;
   return next;
 }
 

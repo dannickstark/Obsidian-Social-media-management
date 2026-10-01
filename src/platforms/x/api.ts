@@ -4,7 +4,7 @@ import { cyrb53 } from "../../util/hash";
 import type { AdapterDeps } from "../adapters";
 import { InvalidContentError, NeedsUserError, PublishError, TransientError, UnknownOutcomeError } from "../errors";
 import { fileName, readMedia } from "../files";
-import { ApiClient, header, parseJson, UPLOAD_TIMEOUT_MS, type ApiFailure, type HttpResponse } from "../http";
+import { ApiClient, header, isOk, parseJson, UPLOAD_TIMEOUT_MS, type ApiFailure, type HttpResponse } from "../http";
 import { multipart } from "../multipart";
 import type { DeliveryJob, MediaInfo, PlatformAdapter, PublishResult, RemoteState, VerifyResult } from "../types";
 
@@ -21,8 +21,22 @@ export function xWeightedLength(text: string): number {
 }
 
 interface Account { id: string; username: string; name: string }
-interface Tweet { id: string; text: string }
+interface Tweet {
+  id: string;
+  text: string;
+  author_id?: string;
+  referenced_tweets?: Array<{ type: string; id: string }>;
+  entities?: { urls?: Array<{ url?: string; expanded_url?: string; unwound_url?: string }> };
+  attachments?: { media_keys?: string[] };
+}
+interface XMedia { media_key: string; alt_text?: string | null }
+interface XThreadCheckpoint { version: 1; accountId: string; sendKey: string; fingerprint: string; partIds: string[]; nextPart: number }
 type Who = Pick<DeliveryJob, "channel" | "secret">;
+
+async function sha256(bytes: BufferSource): Promise<string> {
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 function failure(res: HttpResponse, now: () => number): ApiFailure {
   const body = parseJson(res.text) as { title?: unknown; detail?: unknown; type?: unknown; errors?: unknown } | null;
@@ -84,25 +98,39 @@ export class XAdapter implements PlatformAdapter {
     this.validateMedia(job.media);
     const account = await this.account(job);
     const resume = job.resume === true || (job.delivery.attempts ?? 1) > 1;
-    if (resume) throw new NeedsUserError("X: a timeline text/media match cannot be bound to the persisted send key, so automatic recovery and reply attachment are disabled. Check X and reconcile this delivery manually.");
     let parent: Tweet | undefined;
     let root: Tweet | undefined;
-    for (let i = 0; i < job.items.length; i++) {
+    let partIds: string[] = [];
+    let startPart = 0;
+    if (resume) {
+      const checkpoint = this.readCheckpoint(job, account);
+      const fingerprint = await this.threadFingerprint(job);
+      if (checkpoint.fingerprint !== fingerprint) throw new NeedsUserError("X: the current content does not match the saved X thread checkpoint. Check X and reconcile this delivery manually.");
+      const confirmed = await this.readConfirmedParts(job, account, checkpoint);
+      partIds = checkpoint.partIds;
+      root = confirmed[0];
+      parent = confirmed.at(-1);
+      startPart = partIds.length;
+    }
+    for (let i = startPart; i < job.items.length; i++) {
       const text = job.items[i] ?? "";
       try {
         if (!root && i === 0) {
           const mediaIds = await this.uploadAll(job);
           root = await this.post(job, { text, ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}) }, 0);
           parent = root;
+          partIds.push(root.id);
         } else {
           if (!parent || !root) throw new UnknownOutcomeError("X: the earlier thread part could not be confirmed; check X before posting more.");
           parent = await this.post(job, { text, reply: { in_reply_to_tweet_id: parent.id } }, i);
+          partIds.push(parent.id);
         }
       } catch (e) {
         if (i > 0) {
-          if (e instanceof PublishError && e.kind === "transient") throw new TransientError(`X: part ${i + 1} of ${job.items.length} is not posted yet; earlier parts are live and a retry will check them first: ${e.message}`, e.retryAfterMs);
-          if (e instanceof NeedsUserError) throw new NeedsUserError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`);
-          if (e instanceof InvalidContentError) throw new InvalidContentError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`);
+          const adapterState = await this.makeCheckpoint(job, account, partIds);
+          if (e instanceof PublishError && e.kind === "transient") throw new TransientError(`X: part ${i + 1} is not posted yet; earlier parts are live and a retry will validate their saved remote IDs first: ${e.message}`, e.retryAfterMs, adapterState);
+          if (e instanceof NeedsUserError) throw new NeedsUserError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`, adapterState);
+          if (e instanceof InvalidContentError) throw new InvalidContentError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`, adapterState);
           if (e instanceof UnknownOutcomeError) throw new UnknownOutcomeError(`X: the outcome of part ${i + 1} is unknown; earlier parts are live and the thread is not marked published. ${e.message}`);
           throw e;
         }
@@ -150,6 +178,89 @@ export class XAdapter implements PlatformAdapter {
   private validateMedia(media: MediaInfo[]): void {
     if (media.length > 4) throw new InvalidContentError(`X allows at most 4 images; this post has ${media.length} media files.`);
     if (media.some((item) => item.kind !== "image")) throw new InvalidContentError("X API publishing supports image files only.");
+  }
+
+  private readCheckpoint(job: DeliveryJob, account: Account): XThreadCheckpoint {
+    let value: unknown;
+    try { value = JSON.parse(job.delivery.adapterState ?? ""); } catch { value = null; }
+    const checkpoint = value as Partial<XThreadCheckpoint> | null;
+    if (
+      !checkpoint || checkpoint.version !== 1 || checkpoint.accountId !== account.id ||
+      checkpoint.sendKey !== job.delivery.sendKey || typeof checkpoint.fingerprint !== "string" ||
+      !Array.isArray(checkpoint.partIds) || checkpoint.partIds.length < 1 ||
+      checkpoint.partIds.length >= job.items.length ||
+      checkpoint.nextPart !== checkpoint.partIds.length ||
+      !checkpoint.partIds.every((id) => typeof id === "string" && /^\d+$/.test(id))
+    ) throw new NeedsUserError("X: no valid confirmed-part checkpoint is saved for this send. Check X and reconcile this delivery manually.");
+    return checkpoint as XThreadCheckpoint;
+  }
+
+  private async threadFingerprint(job: DeliveryJob): Promise<string> {
+    const media = await Promise.all(job.media.map(async (item) => {
+      const bytes = await readMedia((path) => this.deps.readBinary(path), item);
+      return { target: item.target, kind: item.kind, mime: item.mime ?? "", alt: item.alt ?? "", bytes: await sha256(bytes) };
+    }));
+    return sha256(new TextEncoder().encode(JSON.stringify({ channel: job.channel.id, sendKey: job.delivery.sendKey, items: job.items, media })));
+  }
+
+  private async makeCheckpoint(job: DeliveryJob, account: Account, partIds: string[]): Promise<string | undefined> {
+    if (!job.delivery.sendKey || !partIds.length || partIds.length >= job.items.length) return undefined;
+    try {
+      const checkpoint: XThreadCheckpoint = {
+        version: 1,
+        accountId: account.id,
+        sendKey: job.delivery.sendKey,
+        fingerprint: await this.threadFingerprint(job),
+        partIds,
+        nextPart: partIds.length,
+      };
+      const value = JSON.stringify(checkpoint);
+      return value.length <= 8192 ? value : undefined;
+    } catch { return undefined; }
+  }
+
+  private async readConfirmedParts(job: DeliveryJob, account: Account, checkpoint: XThreadCheckpoint): Promise<Tweet[]> {
+    const api = this.api(job.secret);
+    const tweets: Tweet[] = [];
+    const query = new URLSearchParams({ "tweet.fields": "author_id,referenced_tweets,entities,attachments", expansions: "attachments.media_keys", "media.fields": "media_key,alt_text" });
+    for (let index = 0; index < checkpoint.partIds.length; index++) {
+      const id = checkpoint.partIds[index]!;
+      const response = await api.read({ url: `${X_API}/2/tweets/${encodeURIComponent(id)}?${query}`, method: "GET", headers: { Authorization: `Bearer ${job.secret}` } });
+      if (!isOk(response)) throw api.error(response, { phase: "prepare" });
+      const body = parseJson(response.text) as { data?: unknown; includes?: { media?: unknown } } | null;
+      const tweet = readTweet(body);
+      if (!tweet || tweet.id !== id || tweet.author_id !== account.id || this.normalizedText(tweet) !== (job.items[index] ?? "").normalize("NFC")) {
+        throw new NeedsUserError("X: a saved remote ID no longer matches the authenticated account and current thread content. Check X and reconcile this delivery manually.");
+      }
+      if (index > 0 && !tweet.referenced_tweets?.some((ref) => ref.type === "replied_to" && ref.id === tweets[index - 1]!.id)) {
+        throw new NeedsUserError("X: the saved remote IDs do not form the confirmed reply chain. Check X and reconcile this delivery manually.");
+      }
+      const includes = body?.includes?.media;
+      const media = Array.isArray(includes) ? includes.filter((candidate): candidate is XMedia => !!candidate && typeof candidate === "object" && typeof (candidate as XMedia).media_key === "string") : [];
+      const expected = index === 0 ? job.media : [];
+      if (!this.mediaMatches(tweet, media, expected)) throw new NeedsUserError("X: media on a saved thread part no longer matches this post. Check X and reconcile this delivery manually.");
+      tweets.push(tweet);
+    }
+    return tweets;
+  }
+
+  private normalizedText(tweet: Tweet): string {
+    let text = tweet.text.normalize("NFC");
+    for (const url of tweet.entities?.urls ?? []) {
+      if (!url.url) continue;
+      const expanded = url.unwound_url ?? url.expanded_url;
+      if (expanded) text = text.split(url.url).join(expanded);
+    }
+    return text;
+  }
+
+  private mediaMatches(tweet: Tweet, included: XMedia[], expected: MediaInfo[]): boolean {
+    const keys = tweet.attachments?.media_keys ?? [];
+    if (keys.length !== expected.length) return false;
+    return expected.every((item, index) => {
+      const media = included.find((candidate) => candidate.media_key === keys[index]);
+      return !!media && (!item.alt || media.alt_text === item.alt);
+    });
   }
 
   private async post(job: DeliveryJob, payload: Record<string, unknown>, part: number): Promise<Tweet> {

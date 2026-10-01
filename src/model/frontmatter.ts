@@ -147,6 +147,8 @@ function parseDeliveries(raw: unknown, channels: string[], issues: Issue[], inva
     // YAML reads an all-digit digest as a number; it is still the same digest.
     const digest = typeof value.digest === "string" || typeof value.digest === "number" ? String(value.digest).trim() : "";
     if (digest) d.digest = digest;
+    if (typeof value.adapter_state === "string" && value.adapter_state.length <= 8192) d.adapterState = value.adapter_state;
+    else if (typeof value.adapter_state === "string") issues.push({ level: "warning", field: `${field}.adapter_state`, message: "adapter state exceeds the 8192 character limit" });
     if (!channels.includes(id)) {
       issues.push({ level: "warning", field, message: `Delivery for ${id}, which is not in channels` });
     }
@@ -282,6 +284,7 @@ export function serializeDelivery(d: Delivery): Record<string, unknown> {
   if (d.digest) out.digest = d.digest;
   if (d.sendAt !== undefined) out.send_at = formatDateTime(d.sendAt);
   if (d.sendKey) out.send_key = d.sendKey;
+  if (d.adapterState) out.adapter_state = d.adapterState;
   return out;
 }
 

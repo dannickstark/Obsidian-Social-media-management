@@ -51,6 +51,8 @@ export interface Delivery {
    * same rules. Bluesky derives the record key of every thread part from it (`tidParts`).
    */
   sendKey?: string;
+  /** Opaque, bounded adapter checkpoint for safe continuation of a known partial remote send. */
+  adapterState?: string;
 }
 
 export interface Campaign {

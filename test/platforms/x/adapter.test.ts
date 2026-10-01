@@ -97,15 +97,90 @@ describe("XAdapter", () => {
   it("refuses to attach a reply to a heuristic timeline match on resume", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "publishing", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW - 60_000, sendKey: "send-key-x-1" } };
     queue(json(200, X_USER));
-    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("cannot be bound to the persisted send key") });
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("no valid confirmed-part checkpoint") });
     expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
   });
 
-  it("propagates a later thread part 400 as an invalid-content error with partial context", async () => {
+  it("propagates a later thread part 400 with confirmed part IDs as a resumable invalid-content error", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"] };
     const adapter = make();
     queue(json(200, X_USER), json(201, { data: { id: X_ID, text: "First", created_at: new Date(CONTRACT_NOW).toISOString() } }), json(400, { title: "Invalid Request", detail: "temporarily rejected" }));
-    await expect(adapter.publish(job(thread))).rejects.toMatchObject({ kind: "invalid_content", message: expect.stringContaining("part 2 could not be posted; earlier parts are live") });
+    await expect(adapter.publish(job(thread))).rejects.toMatchObject({
+      kind: "invalid_content",
+      message: expect.stringContaining("part 2 could not be posted; earlier parts are live"),
+      adapterState: expect.any(String),
+    });
+  });
+
+  it("resumes from persisted remote IDs only after validating the exact confirmed thread chain", async () => {
+    const secondId = "2000000000000000000";
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond\n\nThird", items: ["First", "Second", "Third"] };
+    const initial = make();
+    queue(
+      json(200, X_USER),
+      json(201, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(201, { data: { id: secondId, text: "Second", author_id: "42", referenced_tweets: [{ type: "replied_to", id: X_ID }] } }),
+      json(400, { title: "Invalid Request", detail: "temporarily rejected" }),
+    );
+    let state: string | undefined;
+    try { await initial.publish(job(thread)); } catch (e) { state = (e as { adapterState?: string }).adapterState; }
+    expect(JSON.parse(state ?? "{}").partIds).toEqual([X_ID, secondId]);
+
+    const retry = make();
+    const retryStart = requestUrlMock.calls.length;
+    queue(
+      json(200, X_USER),
+      json(200, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(200, { data: { id: secondId, text: "Second", author_id: "42", referenced_tweets: [{ type: "replied_to", id: X_ID }] } }),
+      json(201, { data: { id: "3000000000000000000", text: "Third" } }),
+    );
+    const result = await retry.publish(job({ ...thread, delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: state } }));
+    expect(result.remoteId).toBe(X_ID);
+    expect(call(retryStart + 1).url).toContain(`/2/tweets/${X_ID}?`);
+    expect(call(retryStart + 2).url).toContain(`/2/tweets/${secondId}?`);
+    expect(call(retryStart + 3).url).toBe("https://api.x.com/2/tweets");
+    expect(sentJson(retryStart + 3)).toEqual({ text: "Third", reply: { in_reply_to_tweet_id: secondId } });
+  });
+
+  it("refuses a persisted thread checkpoint when the post text has changed", async () => {
+    const checkpoint = JSON.stringify({ version: 1, accountId: "42", sendKey: "send-key-x-1", fingerprint: "old", partIds: [X_ID], nextPart: 1 });
+    const thread = { text: "Edited\n\nSecond", items: ["Edited", "Second"], delivery: { status: "failed" as const, at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: checkpoint } };
+    queue(json(200, X_USER));
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("does not match the saved X thread checkpoint") });
+    expect(requestUrlMock.calls.filter((entry) => entry.url.includes("/2/tweets/") || entry.url.endsWith("/2/tweets"))).toHaveLength(0);
+  });
+
+  it("refuses a persisted thread checkpoint bound to a different authenticated account", async () => {
+    const checkpoint = JSON.stringify({ version: 1, accountId: "99", sendKey: "send-key-x-1", fingerprint: "unused", partIds: [X_ID], nextPart: 1 });
+    const thread = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "failed" as const, at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: checkpoint } };
+    queue(json(200, X_USER));
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("no valid confirmed-part checkpoint") });
+    expect(requestUrlMock.calls).toHaveLength(1);
+  });
+
+  it("refuses to resume when the confirmed root's remote media no longer matches", async () => {
+    const media = img("cover.png", 800, 600, { alt: "Expected cover" });
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], media: [media] };
+    const initial = make();
+    queue(
+      json(200, X_USER),
+      json(201, { data: { id: "media-1" } }),
+      json(200, { data: { associated_metadata: { id: "media-1" } } }),
+      json(201, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(400, { title: "Invalid Request", detail: "temporarily rejected" }),
+    );
+    let state: string | undefined;
+    try { await initial.publish(job(thread)); } catch (e) { state = (e as { adapterState?: string }).adapterState; }
+    expect(state).toEqual(expect.any(String));
+
+    const retry = make();
+    const retryStart = requestUrlMock.calls.length;
+    queue(json(200, X_USER), json(200, {
+      data: { id: X_ID, text: "First", author_id: "42", attachments: { media_keys: ["3_abc"] } },
+      includes: { media: [{ media_key: "3_abc", alt_text: "Different cover" }] },
+    }));
+    await expect(retry.publish(job({ ...thread, delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: state } }))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("media on a saved thread part") });
+    expect(requestUrlMock.calls.slice(retryStart).filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
   });
 
   it("propagates reply authorization failures after earlier parts went live", async () => {
@@ -117,7 +192,7 @@ describe("XAdapter", () => {
   it("does not resume a failed partial thread from an unbound timeline match", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } };
     queue(json(200, X_USER));
-    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("cannot be bound to the persisted send key") });
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("no valid confirmed-part checkpoint") });
     expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
   });
 

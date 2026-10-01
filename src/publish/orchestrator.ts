@@ -243,7 +243,7 @@ export class PublishOrchestrator {
         p.file,
         p.channelId,
         (d) => {
-          const next = transition(d, "published", { url: res.url, remoteId: res.remoteId, at });
+          const next = transition(d, "published", { url: res.url, remoteId: res.remoteId, at, adapterState: undefined });
           delete next.error;
           if (note) next.error = note;
           return next;
@@ -270,7 +270,7 @@ export class PublishOrchestrator {
         : tooLate && err.kind === "transient"
           ? `${message} (the platform asked to wait ${Math.max(1, Math.round(err.retryAfterMs! / MINUTE))} min, past the posting window; not retried)`
           : message;
-      const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "failed", { error: stored }));
+      const settled = await this.settle(p.file, p.channelId, (d) => transition(d, "failed", { error: stored, ...(err.adapterState ? { adapterState: err.adapterState } : {}) }));
       void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: retry && settled === true ? "retry" : "failed", error: message });
       // The state changed while the request was out (check_needed from a reconcile, a user decision): never retry over it.
       if (settled !== true) return { done: true, result: changedUnderneath(settled) };
@@ -282,7 +282,7 @@ export class PublishOrchestrator {
 
   /** Ruling P4: park on check_needed and try lookup() once; never retried automatically. */
   private async checkNeeded(p: Prepared, job: DeliveryJob, message: string): Promise<Attempt> {
-    const parked = await this.settle(p.file, p.channelId, (d) => transition(d, "check_needed", { error: message }));
+    const parked = await this.settle(p.file, p.channelId, (d) => transition(d, "check_needed", { error: message, adapterState: undefined }));
     if (parked !== true) {
       void this.deps.log.append({ at: this.deps.now(), path: p.path, channelId: p.channelId, result: "check_needed", error: message });
       return { done: true, result: changedUnderneath(parked) };
