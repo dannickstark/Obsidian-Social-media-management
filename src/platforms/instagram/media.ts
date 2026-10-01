@@ -51,6 +51,15 @@ function decodePathLayer(path: string): string | undefined {
   }
 }
 
+function decodeAsciiEscapes(path: string): string {
+  // Decode ASCII escapes independently so one invalid UTF-8 byte cannot hide a later
+  // encoded path marker. Non-ASCII bytes stay escaped; they are irrelevant to local-path markers.
+  return path.replace(/%([0-9a-f]{2})/gi, (escape, hex: string) => {
+    const byte = Number.parseInt(hex, 16);
+    return byte < 0x80 ? String.fromCharCode(byte) : escape;
+  });
+}
+
 /** Reject local/private destinations and URLs that carry userinfo, query credentials, or fragments. */
 export function validateInstagramMediaUrl(raw: string): string {
   let url: URL;
@@ -65,11 +74,12 @@ export function validateInstagramMediaUrl(raw: string): string {
   // Inspect a separate copy for nested encodings. Only recognizable local/vault markers
   // are grounds for rejection; ordinary filename escapes (including encoded slashes,
   // spaces, and literal percent sequences) must not be normalized or rejected.
-  let inspectionPath = decodedPath ?? url.pathname;
+  let inspectionPath = url.pathname;
+  localPath ||= hasLocalMediaPath(inspectionPath);
   let inspectionComplete = false;
   for (let depth = 0; depth < 8 && !localPath; depth++) {
-    const next = decodePathLayer(inspectionPath);
-    if (next === undefined || next === inspectionPath) {
+    const next = decodeAsciiEscapes(inspectionPath);
+    if (next === inspectionPath) {
       inspectionComplete = true;
       break;
     }

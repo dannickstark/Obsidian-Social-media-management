@@ -24,6 +24,8 @@ describe("Instagram media hosting", () => {
     "https://images.example/Users/alice/Vault/cover.png",
     "https://images.example/%2555sers/alice/Vault/cover.png",
     "https://images.example/%252FUsers%252Falice%252FVault%252Fcover.png",
+    "https://images.example/%FF/%252FUsers%252Falice%252FVault%252Fcover.png",
+    "https://images.example/%FF/Users/alice/Vault/cover.png",
     "https://images.example/%2543%253A%252FUsers%252Falice%252FVault%252Fcover.png",
     "https://images.example/%255cUsers%255calice%255cVault%255ccover.png",
     "https://images.example/Users/alice/Desktop/cover.png",
