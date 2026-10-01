@@ -416,6 +416,7 @@ export default class OsmmPlugin extends Plugin {
         return file && mime ? { path: file.path, name: file.name, mime } : null;
       },
       linkCard: (url) => this.linkCards.get(url),
+      linkedInTokenForChannel: (channel) => channel.secretId ? this.secrets.get(channel.secretId) : null,
     };
   }
 

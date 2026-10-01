@@ -44,9 +44,15 @@ export class LinkedInAdapter implements PlatformAdapter {
 
   apiAvailable(channel: Channel): boolean {
     if (channel.platform !== "linkedin") return false;
-    if (channel.kind === "profile") return this.canPublish("profile");
-    if (channel.kind === "page") return this.canPublish("page");
-    return false;
+    if (channel.kind !== "profile" && channel.kind !== "page") return false;
+    const token = this.deps.linkedInTokenForChannel?.(channel);
+    if (!token?.trim() || !this.canPublish(channel.kind)) return false;
+    const access = this.deps.linkedInTokenAccess?.(token);
+    if (!access || !access.signInWithLinkedInProductVerified) return false;
+    if (!access.grantedScopes.includes("openid") || !access.grantedScopes.includes("profile")) return false;
+    return channel.kind === "profile"
+      ? access.grantedScopes.includes("w_member_social")
+      : access.grantedScopes.includes("r_organization_admin") && access.grantedScopes.includes("w_organization_social");
   }
 
   async findAccounts(secret: string | null): Promise<LinkedInAccountChoice[]> {

@@ -17,7 +17,7 @@ function job(kind: "profile" | "page" = "profile"): DeliveryJob {
     text: "Hello LinkedIn", items: ["Hello LinkedIn"], body: "Hello LinkedIn", media: [], secret: token,
   };
 }
-function adapter(overrides: { member?: boolean; community?: boolean; token?: string; tokenScopes?: readonly string[] } = {}) {
+function adapter(overrides: { member?: boolean; community?: boolean; token?: string; tokenScopes?: readonly string[]; channelToken?: string | null } = {}) {
   const grantToken = overrides.token ?? token;
   return createAdapters({
     ...contractDeps(),
@@ -27,6 +27,7 @@ function adapter(overrides: { member?: boolean; community?: boolean; token?: str
       grantedScopes: overrides.tokenScopes ?? ["openid", "profile", "w_member_social", ...(overrides.community ? ["w_organization_social", "r_organization_admin"] : [])],
       signInWithLinkedInProductVerified: true,
     } : null,
+    ...(overrides.channelToken !== undefined ? { linkedInTokenForChannel: () => overrides.channelToken ?? null } : {}),
   }).find((a) => a.platform === "linkedin")!;
 }
 
@@ -45,6 +46,12 @@ describe("LinkedIn posts", () => {
     const gated = adapter({ member: false });
     expect(effectiveMethod("auto", job().channel, gated)).toBe("assisted");
     expect(effectiveMethod("auto", job("page").channel, gated)).toBe("assisted");
+  });
+
+  it("selects assisted delivery unless this channel resolves to a credential with confirmed LinkedIn grants", () => {
+    expect(effectiveMethod("auto", job().channel, adapter())).toBe("assisted");
+    expect(effectiveMethod("auto", job().channel, adapter({ channelToken: "REPLACED-TOKEN" }))).toBe("assisted");
+    expect(effectiveMethod("auto", job().channel, adapter({ channelToken: token }))).toBe("api");
   });
 
   it("publishes member text through Posts API with verified member access", async () => {

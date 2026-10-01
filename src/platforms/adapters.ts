@@ -3,6 +3,7 @@ import { DiscordAdapter } from "./discord/api";
 import { FacebookAdapter } from "./facebook/api";
 import { InstagramAdapter } from "./instagram/api";
 import { LinkedInAdapter } from "./linkedin/api";
+import type { Channel } from "../model/types";
 import type { InstagramMediaHost } from "./instagram/media";
 import type { HttpFn } from "./http";
 import { MastodonAdapter } from "./mastodon/api";
@@ -45,6 +46,8 @@ export interface AdapterDeps {
     grantedScopes: readonly string[];
     signInWithLinkedInProductVerified: boolean;
   } | null;
+  /** Resolves the current credential attached to a channel without exposing it to method-selection callers. */
+  linkedInTokenForChannel?: (channel: Channel) => string | null;
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
