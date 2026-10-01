@@ -68,6 +68,8 @@
   const facebookReady = $derived(platform !== "facebook" || (!!secretId && !!app.secretStorage.getSecret(secretId) && kind === "page" && /^\d+$/.test(handle) && handle === selectedFacebookPageId && secretId === selectedFacebookSecretId));
   const methods = $derived(PUBLISH_METHODS.filter((m) => {
     if (m === "assisted") return true;
+    // No public media host is configured by the plugin yet; keep Instagram on the assisted path.
+    if (platform === "instagram" && m === "api") return false;
     if (platform === "facebook" && !facebookReady) return false;
     return (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule);
   }));
@@ -225,6 +227,9 @@
         {/each}
       </div>
     {/if}
+  {/if}
+  {#if platform === "instagram"}
+    <p class="osmm-progress" role="status">Instagram API publishing is unavailable until a secure public image host that Meta can fetch is configured. Use assisted publishing to add images in Instagram.</p>
   {/if}
   {#if SERVER_LABEL[platform]}
     <label>{SERVER_LABEL[platform]}<input type="url" placeholder="https://" bind:value={server} /></label>

@@ -3,7 +3,7 @@ import type { AdapterDeps } from "../adapters";
 import { InvalidContentError, NeedsUserError, UnknownOutcomeError } from "../errors";
 import { fileName, readMedia } from "../files";
 import { isOk, parseJson, type HttpResponse } from "../http";
-import type { InstagramBusiness, MetaPage } from "../meta/accounts";
+import type { InstagramBusiness } from "../meta/accounts";
 import { MetaClient } from "../meta/client";
 import type {
   DeliveryJob,
@@ -56,11 +56,11 @@ export class InstagramAdapter implements PlatformAdapter {
 
   async publish(job: DeliveryJob): Promise<PublishResult> {
     const media = this.validateMedia(job);
-    const { account } = await this.target(job);
+    const { account, pageAccessToken } = await this.target(job);
     const children: string[] = [];
     for (const item of media) {
       const hosted = await this.hostMedia(job, item);
-      const response = await this.post(`${account.id}/media`, job.secret!, {
+      const response = await this.post(`${account.id}/media`, pageAccessToken, {
         image_url: hosted.url,
         ...(media.length > 1 ? { is_carousel_item: true } : { caption: job.text }),
       }, "prepare");
@@ -68,11 +68,11 @@ export class InstagramAdapter implements PlatformAdapter {
       if (typeof id !== "string" || !/^\d+$/.test(id))
         throw new NeedsUserError("Instagram: Meta did not return an image container id; nothing was published.");
       children.push(id);
-      await this.waitUntilReady(id, job.secret!);
+      await this.waitUntilReady(id, pageAccessToken);
     }
     let creationId = children[0]!;
     if (children.length > 1) {
-      const response = await this.post(`${account.id}/media`, job.secret!, {
+      const response = await this.post(`${account.id}/media`, pageAccessToken, {
         media_type: "CAROUSEL",
         children,
         caption: job.text,
@@ -81,13 +81,13 @@ export class InstagramAdapter implements PlatformAdapter {
       if (typeof id !== "string" || !/^\d+$/.test(id))
         throw new NeedsUserError("Instagram: Meta did not return a carousel container id; nothing was published.");
       creationId = id;
-      await this.waitUntilReady(creationId, job.secret!);
+      await this.waitUntilReady(creationId, pageAccessToken);
     }
-    const published = await this.post(`${account.id}/media_publish`, job.secret!, { creation_id: creationId }, "commit");
+    const published = await this.post(`${account.id}/media_publish`, pageAccessToken, { creation_id: creationId }, "commit");
     const remoteId = object(parseJson(published.text))?.id;
     if (typeof remoteId !== "string" || !/^\d+$/.test(remoteId))
       throw new UnknownOutcomeError("Instagram: Meta did not confirm the published media id; check Instagram before retrying.");
-    const state = await this.readMedia(remoteId, job.secret!);
+    const state = await this.readMedia(remoteId, pageAccessToken);
     if (!state || !this.supportedRemote(state, remoteId, account.username) || !permalink(state.permalink))
       throw new UnknownOutcomeError("Instagram: the image may be published, but Meta did not confirm its permalink; check Instagram.");
     return { remoteId, url: state.permalink };
@@ -97,8 +97,8 @@ export class InstagramAdapter implements PlatformAdapter {
     const id = job.delivery.remoteId;
     if (!id || !/^\d+$/.test(id)) return null;
     try {
-      const { account } = await this.target(job);
-      const state = await this.readMedia(id, job.secret!);
+      const { account, pageAccessToken } = await this.target(job);
+      const state = await this.readMedia(id, pageAccessToken);
       if (!state || !this.supportedRemote(state, id, account.username) || !permalink(state.permalink)) return null;
       return { published: true, remoteId: id, url: state.permalink };
     } catch {
@@ -108,19 +108,19 @@ export class InstagramAdapter implements PlatformAdapter {
 
   async update(job: DeliveryJob, change?: SyncChange): Promise<void> {
     if (change?.content === false) return;
-    const { account } = await this.target(job);
+    const { account, pageAccessToken } = await this.target(job);
     const id = job.delivery.remoteId;
     if (!id || !/^\d+$/.test(id))
       throw new NeedsUserError("Instagram: this post has no valid media id for the selected account.");
-    const state = await this.readMedia(id, job.secret!);
+    const state = await this.readMedia(id, pageAccessToken);
     if (!state || !this.supportedRemote(state, id, account.username) || !permalink(state.permalink))
       throw new NeedsUserError("Instagram: the post could not be confirmed; nothing was changed.");
-    const result = await this.post(id, job.secret!, { caption: job.text }, "commit");
+    const result = await this.post(id, pageAccessToken, { caption: job.text }, "commit");
     if (object(parseJson(result.text))?.success !== true)
       throw new UnknownOutcomeError("Instagram: Meta did not confirm the caption change; check Instagram.");
   }
 
-  private async target(who: Pick<DeliveryJob, "channel" | "secret">): Promise<{ page: MetaPage; account: InstagramBusiness }> {
+  private async target(who: Pick<DeliveryJob, "channel" | "secret">): Promise<{ account: InstagramBusiness; pageAccessToken: string }> {
     if (who.channel.platform !== "instagram" || who.channel.kind !== "profile" || !/^\d+$/.test(who.channel.handle ?? ""))
       throw new NeedsUserError("Instagram: select a discovered professional account with image publishing permission, or use assisted publishing.");
     if (!who.secret?.trim()) throw new NeedsUserError("Instagram: add a Meta user access token on this device, or use assisted publishing.");
@@ -134,7 +134,7 @@ export class InstagramAdapter implements PlatformAdapter {
       if (page.instagramContentPublishPermission !== "granted") continue;
       const accounts = await this.meta.listInstagramBusinesses(page);
       const account = accounts.find((candidate) => candidate.id === who.channel.handle);
-      if (account) return { page, account };
+      if (account) return { account, pageAccessToken: page.accessToken };
     }
     throw new NeedsUserError("Instagram: this professional account is unavailable to the token or lacks the Page CREATE_CONTENT task; rediscover accounts or use assisted publishing.");
   }

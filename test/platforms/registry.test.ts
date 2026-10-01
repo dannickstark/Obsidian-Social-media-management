@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { PLATFORMS, PLATFORM_META } from "../../src/model/platforms";
 import type { Channel } from "../../src/model/types";
 import { AdapterRegistry, PLATFORM_DEFS, effectiveMethod, platformDef } from "../../src/platforms/registry";
+import { createAdapters } from "../../src/platforms/adapters";
 import type { PlatformAdapter, PlatformDef } from "../../src/platforms/types";
 
 const folders = import.meta.glob<{ def: PlatformDef }>("../../src/platforms/*/index.ts", { eager: true });
@@ -63,5 +64,17 @@ describe("effectiveMethod", () => {
     expect(registry.get("linkedin")).toBeUndefined();
     registry.register(publisher);
     expect(registry.get("linkedin")).toBe(publisher);
+  });
+
+  it("does not register Instagram API publishing without a public media host", () => {
+    const adapters = createAdapters({
+      http: async () => ({ status: 200, headers: {}, text: "", arrayBuffer: new ArrayBuffer(0) }),
+      now: () => 0,
+      readBinary: async () => new ArrayBuffer(0),
+      sleep: async () => undefined,
+    });
+    expect(adapters.some((adapter) => adapter.platform === "instagram")).toBe(false);
+    const igChannel = { ...channel("api"), id: "ig/me", platform: "instagram" as const };
+    expect(effectiveMethod("auto", igChannel, undefined)).toBe("assisted");
   });
 });

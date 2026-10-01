@@ -36,15 +36,16 @@ export interface AdapterDeps {
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
 export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
-  return [
+  const adapters: PlatformAdapter[] = [
     new TelegramAdapter(deps),
     new DiscordAdapter(deps),
     new BlueskyAdapter(deps),
     new MastodonAdapter(deps),
     new WordPressAdapter(deps),
     new FacebookAdapter(deps),
-    new InstagramAdapter(deps, deps.instagramMediaHost),
   ];
+  if (deps.instagramMediaHost) adapters.push(new InstagramAdapter(deps, deps.instagramMediaHost));
+  return adapters;
 }
 
 /** Shared Graph discovery for future Facebook and Instagram adapters, using this device's HTTP dependency. */

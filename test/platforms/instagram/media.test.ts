@@ -21,6 +21,10 @@ describe("Instagram media hosting", () => {
     "https://localhost/cover.png",
     "https://127.0.0.1/cover.png",
     "https://images.example/cover.png?access_token=secret",
+    "https://images.example/Users/alice/Vault/cover.png",
+    "https://images.example/Users/alice/Desktop/cover.png",
+    "https://images.example/home/alice/.obsidian/attachments/cover.png",
+    "https://images.example/private/tmp/obsidian/vault/cover.png",
   ])("refuses a URL that could expose a vault path or credential: %s", (url) => {
     expect(() => validateInstagramMediaUrl(url)).toThrow(NeedsUserError);
   });

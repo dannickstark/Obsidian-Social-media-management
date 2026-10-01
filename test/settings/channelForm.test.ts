@@ -78,6 +78,14 @@ describe("ChannelForm", () => {
     expect(methods()).toEqual(["api", "native", "assisted"]);
   });
 
+  it("keeps Instagram assisted while no public image host is configured", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("instagram");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/public image host.*Meta can fetch/i)).toBeTruthy();
+  });
+
   it("saves a WordPress site address and user name, and refuses a site without https", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });

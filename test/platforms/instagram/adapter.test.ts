@@ -92,6 +92,9 @@ describe("Instagram Business image publishing", () => {
     expect(result).toEqual({ remoteId: "201", url: "https://www.instagram.com/p/Cabc123/" });
     expect(sentForm(3)).toEqual({ image_url: mediaUrl("a.png"), caption: "A caption" });
     expect(requestUrlMock.calls[5]?.url).toContain(`/${IG_ID}/media_publish`);
+    expect(requestUrlMock.calls[0]?.headers?.Authorization).toBe(`Bearer ${USER_TOKEN}`);
+    expect(requestUrlMock.calls[1]?.headers?.Authorization).toBe(`Bearer ${USER_TOKEN}`);
+    expect(requestUrlMock.calls.slice(2).every((request) => request.headers?.Authorization === `Bearer ${PAGE_TOKEN}`)).toBe(true);
   });
 
   it("keeps carousel items in the note's media order", async () => {
@@ -110,6 +113,7 @@ describe("Instagram Business image publishing", () => {
     expect(sentForm(3)).toEqual({ image_url: mediaUrl("first.png"), is_carousel_item: "true" });
     expect(sentForm(5)).toEqual({ image_url: mediaUrl("second.png"), is_carousel_item: "true" });
     expect(sentForm(7)).toEqual({ media_type: "CAROUSEL", children: "101,102", caption: "A caption" });
+    expect(requestUrlMock.calls.slice(2).every((request) => request.headers?.Authorization === `Bearer ${PAGE_TOKEN}`)).toBe(true);
   });
 
   it("polls processing containers until they finish", async () => {
@@ -167,6 +171,7 @@ describe("Instagram Business image publishing", () => {
     );
     await adapter().update!(j, { content: true, time: false });
     expect(sentForm(4)).toEqual({ caption: "A caption" });
+    expect(requestUrlMock.calls.slice(2).every((request) => request.headers?.Authorization === `Bearer ${PAGE_TOKEN}`)).toBe(true);
     requestUrlMock.reset();
     queue(
       ...before(),

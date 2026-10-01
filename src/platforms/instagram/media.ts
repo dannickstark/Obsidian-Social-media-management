@@ -39,6 +39,18 @@ export function validateInstagramMediaUrl(raw: string): string {
     throw new NeedsUserError("Instagram: the image host did not return a valid public URL; use assisted publishing.");
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch {
+    throw new NeedsUserError("Instagram: the image host URL has an invalid path; use assisted publishing.");
+  }
+  const localPath =
+    /(?:^|\/)users\/[^/]+(?:\/|$)/i.test(decodedPath) ||
+    /(?:^|\/)home\/[^/]+(?:\/|$)/i.test(decodedPath) ||
+    /(?:^|\/)(?:private\/)?(?:tmp|var)(?:\/|$)/i.test(decodedPath) ||
+    /(?:^|\/)\.obsidian(?:\/|$)/i.test(decodedPath) ||
+    /(?:^|\/)vault(?:\/|$)/i.test(decodedPath);
   const ipv4 = host.split(".").map(Number);
   const privateIpv4 =
     ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
@@ -56,7 +68,8 @@ export function validateInstagramMediaUrl(raw: string): string {
     url.password ||
     url.search ||
     url.hash ||
-    privateHost
+    privateHost ||
+    localPath
   ) {
     throw new NeedsUserError(
       "Instagram: the image host URL must be public HTTPS and contain no credentials or private path; use assisted publishing.",
