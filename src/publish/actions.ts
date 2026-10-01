@@ -8,9 +8,10 @@ import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseVariant } from "../model/frontmatter";
 import { PLATFORM_META, type Platform } from "../model/platforms";
-import type { Channel, Issue, Variant } from "../model/types";
+import type { Channel, Delivery, Issue, Variant } from "../model/types";
 import type { SafeWriter } from "../model/writer";
-import type { AssistedTarget, ClipItem, MediaInfo, VerifyResult } from "../platforms/types";
+import type { AssistedTarget, ClipItem, MediaInfo, SyncChange, VerifyResult } from "../platforms/types";
+import { RemoteRemovedError, ReplacementUnknownError } from "../platforms/errors";
 import type { AdapterRegistry } from "../platforms/registry";
 import { TelegramAdapter, type TelegramChat } from "../platforms/telegram/api";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
@@ -18,6 +19,7 @@ import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
 import { SvelteModal } from "../ui/dialogs";
 import type { OsmmContext } from "../ui/context";
 import { activateView } from "../views/PlannerView";
+import { formatShortDate, formatTime } from "../ui/format";
 import { assistedJob, assistedTarget } from "./assisted";
 import { assistedQueue } from "./assistedFlow";
 import AssistedFlow from "./AssistedFlow.svelte";
@@ -27,7 +29,7 @@ import { deliveryJob } from "./job";
 import { validateLiveUrl } from "./liveUrl";
 import type { AttemptLog } from "./log";
 import { LATE_SUCCESS_WINDOW_MS, PublishOrchestrator, type FailureInfo, type PublishedInfo, type RunResult } from "./orchestrator";
-import { HandOverService } from "./handover";
+import { HANDOVER_MARGIN_MS, HandOverService } from "./handover";
 import { toAwaiting, toPublished, toSkipped } from "./transitions";
 import { transition } from "../model/stateMachine";
 import { effectiveMethod, platformDef } from "../platforms/registry";
@@ -35,6 +37,7 @@ import { postItems, postText } from "../platforms/text";
 import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { GRACE_MS, type DueItem } from "../scheduler/due";
 import { withTimeout } from "../util/time";
+import { contentDigest, syncChange, syncInfo, type SyncInfo } from "./sync";
 
 /** How long "Test connection" waits for the platform. */
 export const VERIFY_TIMEOUT_MS = 20_000;
@@ -239,6 +242,84 @@ export class PublishActions {
   canLookup(path: string): boolean {
     const v = this.deps.index.getVariant(path);
     return !!v && !!this.deps.adapters.get(v.platform)?.lookup;
+  }
+
+  /** A handed-over channel compared with the platform's copy. */
+  syncOf(path: string, channelId: string): SyncInfo | null {
+    const v = this.deps.index.getVariant(path);
+    return v ? syncInfo(v, channelId) : null;
+  }
+
+  /** Pushes the current text and local time to one handed-over platform copy, only on the user's click. */
+  async pushUpdate(path: string, channelId: string): Promise<boolean> {
+    const fresh = await this.freshChecked(path);
+    if ("refuse" in fresh) {
+      const reason = fresh.refuse === HELD ? HELD_REFUSAL : fresh.refuse;
+      new Notice([reason, ...(fresh.issues ?? []).map((issue) => issue.message)].join(" "));
+      return false;
+    }
+    const { v, content } = fresh;
+    const d = v.deliveries[channelId];
+    const name = this.channelName(channelId);
+    if (d?.status !== "handed_over") {
+      new Notice(`${name} is not waiting on ${PLATFORM_META[v.platform].label}'s schedule.`);
+      return false;
+    }
+    const result = await this.updateChannel(v, content, channelId, syncChange(v, content.body, d));
+    new Notice(result.ok ? `Updated on ${PLATFORM_META[v.platform].label} for ${name}.` : `${name}: ${result.error}`);
+    return result.ok;
+  }
+
+  /** Puts the platform's time back on the note, locally and with Undo. */
+  async revertTime(path: string, channelId: string): Promise<boolean> {
+    const v = this.deps.index.getVariant(path);
+    if (!v) return false;
+    const label = PLATFORM_META[v.platform].label;
+    let back = 0;
+    const result = await this.deps.planner.write(v.file, (fresh) => {
+      const d = fresh.deliveries[channelId];
+      if (d?.status !== "handed_over" || d.remoteAt === undefined || unreadable(fresh, channelId)) {
+        return { refuse: `${this.channelName(channelId)} has no time on ${label} to go back to.` };
+      }
+      back = d.remoteAt;
+      return { deliveries: { [channelId]: { ...d, at: d.remoteAt } } };
+    });
+    this.deps.planner.afterWrite(result, `Back to ${formatShortDate(back)} ${formatTime(back)}, the time on ${label}.`);
+    return result.ok;
+  }
+
+  /** Takes the post off the platform's schedule and returns this channel to a local draft. */
+  async unscheduleRemote(path: string, channelId: string): Promise<boolean> {
+    const v = this.deps.index.getVariant(path);
+    const channel = this.deps.channels.get(channelId);
+    if (!v || !channel) return false;
+    const label = PLATFORM_META[v.platform].label;
+    const adapter = this.deps.adapters.get(v.platform);
+    const d = v.deliveries[channelId];
+    if (!adapter?.cancel || d?.status !== "handed_over" || !d.remoteId || unreadable(v, channelId)) {
+      new Notice(`${channel.name} is not on ${label}'s schedule.`);
+      return false;
+    }
+    if (!(await this.deps.planner.confirm(`Take this post off ${label}'s schedule for ${channel.name}? It won't be posted there, and becomes a draft here.`, "Unschedule"))) return false;
+    const secretId = channel.secretId;
+    try {
+      await adapter.cancel(deliveryJob(v, channel, d, await this.deps.composer.content.load(v), secretId ? this.deps.secrets.get(secretId) : null));
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      new Notice(secretId ? this.deps.secrets.redact(raw, [secretId]) : raw);
+      return false;
+    }
+    const result = await this.deps.writer.updateVariant(v.file, (fresh) => {
+      const now = fresh.deliveries[channelId];
+      if (now?.status !== "handed_over" || now.remoteId !== d.remoteId) return { refuse: "The delivery changed." };
+      const draft = transition(transition(now, "scheduled"), "draft");
+      for (const field of ["at", "remoteId", "remoteAt", "digest", "url", "error"] as const) delete draft[field];
+      return { deliveries: { [channelId]: draft } };
+    });
+    if ("refuse" in result) return false;
+    void this.deps.log.append({ at: this.deps.now(), path, channelId, result: "cancelled" });
+    new Notice(`Taken off ${label}'s schedule. ${channel.name} is a draft again.`);
+    return true;
   }
 
   protected channelName(channelId: string): string {
@@ -613,7 +694,26 @@ export class PublishActions {
       add("Excerpt", v.wordpress.excerpt);
       add("Featured image", content.featured ? image(content.featured) : v.wordpress.featuredImage);
     }
+    for (const id of v.channels) {
+      const d = v.deliveries[id];
+      if (d?.status !== "handed_over" || d.at === undefined || d.remoteAt === undefined || d.at === d.remoteAt) continue;
+      add(
+        `Time on ${this.channelName(id)}`,
+        `${formatShortDate(d.at)} ${formatTime(d.at)} (${PLATFORM_META[v.platform].label} has ${formatShortDate(d.remoteAt)} ${formatTime(d.remoteAt)})`,
+      );
+    }
     return { title: v.displayTitle, items: postItems(content.body, platformDef(v.platform)), details };
+  }
+
+  /** Approval digest for updates: content plus each handed-over channel's local time. */
+  private updateDigest(v: IndexedVariant, content: LoadedContent, channels: readonly string[]): string {
+    return JSON.stringify([
+      sendDigest(v, content),
+      channels.map((id) => {
+        const d = v.deliveries[id];
+        return [id, d?.status === "handed_over" ? (d.at ?? null) : null];
+      }),
+    ]);
   }
 
   private statusOf(v: Variant, id: string): string {
@@ -678,39 +778,98 @@ export class PublishActions {
     if (!channels.length) return { refuse: "No channel of this post is live on the platform with a known id." };
     if (!this.deps.adapters.get(v.platform)?.update) return { refuse: `${PLATFORM_META[v.platform].label} posts can't be updated from Obsidian yet.` };
     const statuses = Object.fromEntries(channels.map((id) => [id, this.statusOf(v, id)]));
-    return { path, channels, statuses, ...this.shown(v, content), text: postText(content.body, platformDef(v.platform)), digest: sendDigest(v, content) };
+    return { path, channels, statuses, ...this.shown(v, content), text: postText(content.body, platformDef(v.platform)), digest: this.updateDigest(v, content, channels) };
   }
 
-  /** After approval: re-validates and compares with what was approved, then updates each live channel. Ruling P7: a failure logs `update_failed`. */
+  /** One live channel's update. A handed-over copy must still be far enough ahead; successful pushes replace its baseline. */
+  private async updateChannel(v: IndexedVariant, content: LoadedContent, channelId: string, change?: SyncChange): Promise<{ ok: true } | { ok: false; error: string }> {
+    const d = v.deliveries[channelId];
+    const channel = this.deps.channels.get(channelId);
+    const adapter = this.deps.adapters.get(v.platform);
+    if (!channel || !d || !adapter?.update || unreadable(v, channelId) || !LIVE_STATUSES.has(d.status) || !d.remoteId) {
+      return { ok: false, error: "It is no longer live with a known id." };
+    }
+    const label = PLATFORM_META[v.platform].label;
+    if (d.status === "handed_over") {
+      const at = d.at ?? d.remoteAt;
+      if (at === undefined || at < this.deps.now() + (adapter.minLeadMs ?? 0) + HANDOVER_MARGIN_MS) {
+        return { ok: false, error: `It is too close to its time on ${label} to change it now. It goes out as it was handed over.` };
+      }
+      if (change && !change.content && !change.time) return { ok: true };
+    }
+    const secretId = channel.secretId;
+    const redact = (text: string) => (secretId ? this.deps.secrets.redact(text, [secretId]) : text);
+    const digest = contentDigest(v, content.body);
+    const pushedAt = d.at ?? d.remoteAt;
+    try {
+      const res = (await adapter.update(deliveryJob(v, channel, d, content, secretId ? this.deps.secrets.get(secretId) : null), change)) as { remoteId?: string } | undefined;
+      if (d.status === "handed_over") {
+        const written = await this.deps.writer.updateVariant(v.file, (fresh) => {
+          const now = fresh.deliveries[channelId];
+          if (now?.status !== "handed_over" || now.remoteId !== d.remoteId) return { refuse: "The delivery changed." };
+          const next: Delivery = { ...now, remoteId: res?.remoteId ?? now.remoteId!, remoteAt: pushedAt ?? now.remoteAt, digest };
+          delete next.error;
+          return { deliveries: { [channelId]: next } };
+        });
+        if ("refuse" in written) return { ok: false, error: written.refuse };
+      }
+      void this.deps.log.append({ at: this.deps.now(), path: v.path, channelId, result: "updated", ...(d.url ? { url: d.url } : {}) });
+      return { ok: true };
+    } catch (e) {
+      const error = redact(e instanceof Error ? e.message : String(e));
+      if (e instanceof ReplacementUnknownError && d.status === "handed_over") {
+        await this.deps.writer.updateVariant(v.file, (fresh) => {
+          const now = fresh.deliveries[channelId];
+          if (now?.status !== "handed_over" || now.remoteId !== d.remoteId) return { refuse: "The delivery changed." };
+          const checking = transition(now, "check_needed", { error, remoteAt: pushedAt ?? now.remoteAt, digest });
+          delete checking.remoteId;
+          delete checking.url;
+          return { deliveries: { [channelId]: checking } };
+        });
+      } else if (e instanceof RemoteRemovedError && d.status === "handed_over") {
+        await this.deps.writer.updateVariant(v.file, (fresh) => {
+          const now = fresh.deliveries[channelId];
+          if (now?.status !== "handed_over" || now.remoteId !== d.remoteId) return { refuse: "The delivery changed." };
+          const back = transition(now, "scheduled", { error });
+          for (const field of ["remoteId", "remoteAt", "digest", "url"] as const) delete back[field];
+          return { deliveries: { [channelId]: back } };
+        });
+      }
+      void this.deps.log.append({ at: this.deps.now(), path: v.path, channelId, result: "update_failed", error });
+      return { ok: false, error };
+    }
+  }
+
+  /** After approval: re-checks the approved content and local push times before every channel update. */
   async updateApproved(plan: UpdatePlan): Promise<{ updated: string[]; failed: Array<{ id: string; error: string }> } | SendRefusal> {
     const fresh = await this.freshChecked(plan.path);
     if ("refuse" in fresh) return fresh;
-    const { v, content } = fresh;
-    if (sendDigest(v, content) !== plan.digest) return { refuse: CHANGED };
+    if (this.updateDigest(fresh.v, fresh.content, plan.channels) !== plan.digest) return { refuse: CHANGED };
     const blocked = this.apiBlockedReason();
     if (blocked) return { refuse: blocked };
-    const adapter = this.deps.adapters.get(v.platform);
-    if (!adapter?.update) return { refuse: `${PLATFORM_META[v.platform].label} posts can't be updated from Obsidian yet.` };
+    if (!this.deps.adapters.get(fresh.v.platform)?.update) return { refuse: `${PLATFORM_META[fresh.v.platform].label} posts can't be updated from Obsidian yet.` };
     const updated: string[] = [];
     const failed: Array<{ id: string; error: string }> = [];
-    for (const id of plan.channels) {
-      const d = v.deliveries[id];
-      const channel = this.deps.channels.get(id);
-      if (!channel || !d || unreadable(v, id) || !LIVE_STATUSES.has(d.status) || !d.remoteId) {
-        failed.push({ id, error: "It is no longer live with a known id." });
-        continue;
+    let current = fresh;
+    for (let i = 0; i < plan.channels.length; i++) {
+      const id = plan.channels[i]!;
+      if (i > 0) {
+        const next = await this.freshChecked(plan.path);
+        if ("refuse" in next || this.updateDigest(next.v, next.content, plan.channels) !== plan.digest) {
+          for (const remaining of plan.channels.slice(i)) failed.push({ id: remaining, error: "refuse" in next ? next.refuse : CHANGED });
+          break;
+        }
+        current = next;
       }
-      const secretId = channel.secretId;
-      try {
-        await adapter.update(deliveryJob(v, channel, d, content, secretId ? this.deps.secrets.get(secretId) : null));
-        updated.push(id);
-        void this.deps.log.append({ at: this.deps.now(), path: plan.path, channelId: id, result: "updated", ...(d.url ? { url: d.url } : {}) });
-      } catch (e) {
-        const raw = e instanceof Error ? e.message : String(e);
-        const error = secretId ? this.deps.secrets.redact(raw, [secretId]) : raw;
-        failed.push({ id, error });
-        void this.deps.log.append({ at: this.deps.now(), path: plan.path, channelId: id, result: "update_failed", error });
+      const role = this.apiBlockedReason();
+      if (role) {
+        for (const remaining of plan.channels.slice(i)) failed.push({ id: remaining, error: role });
+        break;
       }
+      const d = current.v.deliveries[id];
+      const result = await this.updateChannel(current.v, current.content, id, d?.status === "handed_over" ? syncChange(current.v, current.content.body, d) : undefined);
+      if (result.ok) updated.push(id);
+      else failed.push({ id, error: result.error });
     }
     return { updated, failed };
   }

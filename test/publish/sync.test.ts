@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Variant } from "../../src/model/types";
 import { sendDigest } from "../../src/publish/actions";
-import { contentDigest, DIGESTED_VARIANT_FIELDS, IDENTITY_VARIANT_FIELDS } from "../../src/publish/sync";
+import { contentDigest, DIGESTED_VARIANT_FIELDS, handedOverChannels, IDENTITY_VARIANT_FIELDS, outOfSync, syncInfo } from "../../src/publish/sync";
 import { img } from "../platforms/fixtures";
 
 const base: Variant = {
@@ -87,5 +87,26 @@ describe("variant field classes (M4 carry, #87)", () => {
     for (const patch of patches) expect(sendDigest({ ...base, ...patch }, content)).not.toBe(sendDigest(base, content));
     expect(sendDigest(base, { ...content, media: [img("a.png", 1080, 1080, { alt: "Other" })] })).not.toBe(sendDigest(base, content));
     expect(sendDigest(base, { ...content, featured: img("cover.png", 1080, 1080, { alt: "Other" }) })).not.toBe(sendDigest(base, content));
+  });
+});
+
+describe("syncInfo (#66)", () => {
+  const v = (d: Record<string, unknown>, digest = "D") => ({ channels: ["ma/you"], deliveries: { "ma/you": { status: "handed_over", remoteId: "1", ...d } }, digest }) as never;
+
+  it("is in sync when the digest and the time match the platform's copy", () => {
+    expect(syncInfo(v({ at: 5, remoteAt: 5, digest: "D" }), "ma/you")).toEqual({ channelId: "ma/you", state: "in_sync", content: false, time: false, remoteAt: 5, at: 5 });
+  });
+
+  it("is out of sync when the content or the time changed", () => {
+    expect(syncInfo(v({ at: 5, remoteAt: 5, digest: "OLD" }), "ma/you")).toMatchObject({ state: "out_of_sync", content: true, time: false });
+    expect(syncInfo(v({ at: 9, remoteAt: 5, digest: "D" }), "ma/you")).toMatchObject({ state: "out_of_sync", content: false, time: true });
+    expect(outOfSync(v({ at: 9, remoteAt: 5, digest: "D" }))).toBe(true);
+  });
+
+  it("can't tell for a hand-over without a baseline, and ignores claims in progress and other statuses", () => {
+    expect(syncInfo(v({ at: 5 }), "ma/you")).toMatchObject({ state: "unknown" });
+    expect(syncInfo(v({ remoteId: undefined, at: 5, remoteAt: 5, digest: "D" }), "ma/you")).toBeNull();
+    expect(syncInfo({ channels: ["ma/you"], deliveries: { "ma/you": { status: "scheduled" } } } as never, "ma/you")).toBeNull();
+    expect(handedOverChannels(v({ at: 5, remoteAt: 5, digest: "D" })).map((s) => s.channelId)).toEqual(["ma/you"]);
   });
 });

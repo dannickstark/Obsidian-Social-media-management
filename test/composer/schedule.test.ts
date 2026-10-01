@@ -56,6 +56,13 @@ describe("planComposerSchedule", () => {
     });
   });
 
+  it("moves the local time of a handed-over channel with a baseline, so it shows as out of sync (#66)", () => {
+    const post = v({ deliveries: { "li/maker": { status: "handed_over", remoteId: "9", at: T + 30 * 60_000, remoteAt: T + 30 * 60_000, digest: "d" } } });
+    expect(planComposerSchedule(post, { at: NEW, reminders: [] }, 15)).toMatchObject({
+      deliveries: { "li/maker": { status: "handed_over", remoteId: "9", at: NEW + 30 * 60_000, remoteAt: T + 30 * 60_000, digest: "d" } },
+    });
+  });
+
   it.each([
     [v({ channels: [] }), "Pick at least one channel before scheduling."],
     [v({ deliveries: { "li/me": { status: "publishing" } } }), "This post is being published right now."],

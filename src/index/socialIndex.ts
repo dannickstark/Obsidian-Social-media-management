@@ -4,6 +4,7 @@ import { isRecord, parseCampaign, parseVariant, socialKind, type SocialKind } fr
 import type { Campaign, Issue, Variant } from "../model/types";
 import { platformDef } from "../platforms/registry";
 import { countFor, postText } from "../platforms/text";
+import { contentDigest } from "../publish/sync";
 
 export interface IndexedCampaign extends Campaign {
   file: TFile;
@@ -18,6 +19,8 @@ export interface IndexedVariant extends Variant {
   excerpt: string;
   displayTitle: string;
   bodyChars: number;
+  /** Content digest of the note, compared with a handed-over delivery's baseline. */
+  digest?: string;
 }
 
 export interface InvalidNote {
@@ -185,6 +188,7 @@ export class SocialIndex {
         displayTitle: r.value.title ?? (text || file.basename),
         campaignPath: this.resolveCampaign(r.value),
         bodyChars: countFor(postText(body, platformDef(r.value.platform)), platformDef(r.value.platform)),
+        digest: contentDigest(r.value, body),
       },
     };
   }

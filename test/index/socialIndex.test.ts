@@ -3,6 +3,7 @@ import { SocialIndex } from "../../src/index/socialIndex";
 import type { App } from "obsidian";
 import { platformDef } from "../../src/platforms/registry";
 import { countFor, postText } from "../../src/platforms/text";
+import { contentDigest } from "../../src/publish/sync";
 import { createApp, indexed, nextChange, settle, writeNote } from "../helpers";
 
 let index: SocialIndex | undefined;
@@ -56,6 +57,15 @@ async function vaultWithCampaign() {
 }
 
 describe("SocialIndex", () => {
+  it("computes each post's content digest (#66)", async () => {
+    const { app, index } = await vaultWithCampaign();
+    const path = "Social/Event X/Event X – LinkedIn.md";
+    const before = index.getVariant(path)!;
+    expect(before.digest).toBe(contentDigest(before, "\n# I almost didn't host Event X.\n\nMore text"));
+    await writeNote(app, path, { type: "social-post", campaign: "[[Event X]]", platform: "linkedin", channels: ["li/me"] }, "Changed");
+    await indexed(index, () => index.getVariant(path)?.digest !== before.digest);
+  });
+
   it("indexes campaigns, variants and invalid notes; ignores other notes", async () => {
     const { index } = await vaultWithCampaign();
     expect(index.campaigns().map((c) => c.title)).toEqual(["Event X"]);

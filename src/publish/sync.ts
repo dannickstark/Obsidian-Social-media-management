@@ -1,4 +1,6 @@
-import type { Variant } from "../model/types";
+import type { IndexedVariant } from "../index/socialIndex";
+import type { Delivery, Variant } from "../model/types";
+import type { SyncChange } from "../platforms/types";
 import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { cyrb53 } from "../util/hash";
 
@@ -37,4 +39,39 @@ export function contentDigest(v: Pick<Variant, DigestedField>, body: string): st
   const bodyImages = v.platform === "wordpress" ? imageEmbeds(body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
   const parts = [v.platform, v.title ?? "", v.url ?? "", body, bodyImages, v.media.map((t) => [t, ...meta(t)]), v.wordpress ?? null, featured ? meta(featured) : null];
   return cyrb53(JSON.stringify(parts)).toString(36);
+}
+
+/** A handed-over channel compared with the platform's copy (#66). */
+export interface SyncInfo {
+  channelId: string;
+  state: "in_sync" | "out_of_sync" | "unknown";
+  content: boolean;
+  time: boolean;
+  remoteAt?: number;
+  at?: number;
+}
+
+type SyncView = Pick<IndexedVariant, "channels" | "deliveries" | "invalidDeliveries" | "digest">;
+
+/** Null unless the channel is handed over with the platform's id and its entry is readable. */
+export function syncInfo(v: SyncView, channelId: string): SyncInfo | null {
+  const d = v.deliveries[channelId];
+  if (d?.status !== "handed_over" || !d.remoteId || v.invalidDeliveries?.includes(channelId)) return null;
+  const content = d.digest !== undefined && v.digest !== undefined && d.digest !== v.digest;
+  const time = d.remoteAt !== undefined && d.at !== undefined && d.at !== d.remoteAt;
+  const state = content || time ? "out_of_sync" : d.digest === undefined && d.remoteAt === undefined ? "unknown" : "in_sync";
+  return { channelId, state, content, time, ...(d.remoteAt !== undefined ? { remoteAt: d.remoteAt } : {}), ...(d.at !== undefined ? { at: d.at } : {}) };
+}
+
+export function handedOverChannels(v: SyncView): SyncInfo[] {
+  return v.channels.map((id) => syncInfo(v, id)).filter((s): s is SyncInfo => s !== null);
+}
+
+export function outOfSync(v: SyncView, channelId?: string): boolean {
+  return (channelId ? [channelId] : v.channels).some((id) => syncInfo(v, id)?.state === "out_of_sync");
+}
+
+/** What a push would change for this delivery; without a baseline, everything. */
+export function syncChange(v: Pick<Variant, DigestedField>, body: string, d: Delivery): SyncChange {
+  return { content: d.digest === undefined || d.digest !== contentDigest(v, body), time: d.remoteAt === undefined || d.at !== d.remoteAt };
 }

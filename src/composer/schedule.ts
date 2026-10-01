@@ -1,4 +1,5 @@
 import { deliveryTime, transition } from "../model/stateMachine";
+import { MINUTE } from "../model/dates";
 import type { Channel, Delivery, DeliveryStatus, Variant } from "../model/types";
 import type { OsmmSettings } from "../settings/settings";
 
@@ -29,6 +30,10 @@ export function planComposerSchedule(fresh: Variant, req: ScheduleRequest, defau
     if (frozen.includes(id)) continue;
     const d = fresh.deliveries[id];
     if (d && KEEP.has(d.status)) {
+      if (d.status === "handed_over" && d.remoteAt !== undefined) {
+        deliveries[id] = { ...d, at: req.at + Math.max(0, fresh.channels.indexOf(id)) * (fresh.staggerMinutes ?? defaultStagger) * MINUTE };
+        continue;
+      }
       if (d.at === undefined) {
         const effective = deliveryTime(fresh, id, defaultStagger);
         if (effective !== undefined) deliveries[id] = { ...d, at: effective };
