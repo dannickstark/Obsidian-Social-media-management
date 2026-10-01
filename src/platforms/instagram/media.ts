@@ -30,6 +30,27 @@ export class AssistedOnlyInstagramMediaHost implements InstagramMediaHost {
   }
 }
 
+function hasLocalMediaPath(path: string): boolean {
+  const normalizedPath = path.replace(/\\/g, "/");
+  return (
+    /(?:^|\/)users\/[^/]+(?:\/|$)/i.test(normalizedPath) ||
+    /(?:^|\/)home\/[^/]+(?:\/|$)/i.test(normalizedPath) ||
+    /(?:^|\/)[a-z]:\//i.test(normalizedPath) ||
+    /(?:^|\/)(?:private\/)?(?:tmp|var)(?:\/|$)/i.test(normalizedPath) ||
+    /(?:^|\/)\.obsidian(?:\/|$)/i.test(normalizedPath) ||
+    /(?:^|\/)vault(?:\/|$)/i.test(normalizedPath)
+  );
+}
+
+function decodePathLayer(path: string): string | undefined {
+  try {
+    // A percent sign not followed by two hex digits is literal path data, not an escape.
+    return decodeURIComponent(path.replace(/%(?![0-9a-f]{2})/gi, "%25"));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reject local/private destinations and URLs that carry userinfo, query credentials, or fragments. */
 export function validateInstagramMediaUrl(raw: string): string {
   let url: URL;
@@ -39,32 +60,25 @@ export function validateInstagramMediaUrl(raw: string): string {
     throw new NeedsUserError("Instagram: the image host did not return a valid public URL; use assisted publishing.");
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  let decodedPath = url.pathname;
-  let fullyDecoded = false;
-  for (let depth = 0; depth < 8; depth++) {
-    try {
-      // Protect literal percent signs (for example `%25` in an image name) while decoding real escapes.
-      const decodablePath = decodedPath.replace(/%(?![0-9a-f]{2})/gi, "%25");
-      const next = decodeURIComponent(decodablePath);
-      if (next === decodedPath) {
-        fullyDecoded = true;
-        break;
-      }
-      decodedPath = next;
-    } catch {
-      throw new NeedsUserError("Instagram: the image host URL has an invalid path; use assisted publishing.");
+  const decodedPath = decodePathLayer(url.pathname);
+  let localPath = decodedPath !== undefined && hasLocalMediaPath(decodedPath);
+  // Inspect a separate copy for nested encodings. Only recognizable local/vault markers
+  // are grounds for rejection; ordinary filename escapes (including encoded slashes,
+  // spaces, and literal percent sequences) must not be normalized or rejected.
+  let inspectionPath = decodedPath ?? url.pathname;
+  let inspectionComplete = false;
+  for (let depth = 0; depth < 8 && !localPath; depth++) {
+    const next = decodePathLayer(inspectionPath);
+    if (next === undefined || next === inspectionPath) {
+      inspectionComplete = true;
+      break;
     }
+    inspectionPath = next;
+    localPath = hasLocalMediaPath(inspectionPath);
   }
-  // Don't allow a deeply nested encoding to hide separators or a local path from the checks below.
-  if (!fullyDecoded && /%[0-9a-f]{2}/i.test(decodedPath))
+  if (!localPath && !inspectionComplete && /%[0-9a-f]{2}/i.test(inspectionPath)) {
     throw new NeedsUserError("Instagram: the image host URL path is too deeply encoded; use assisted publishing.");
-  decodedPath = decodedPath.replace(/\\/g, "/");
-  const localPath =
-    /(?:^|\/)users\/[^/]+(?:\/|$)/i.test(decodedPath) ||
-    /(?:^|\/)home\/[^/]+(?:\/|$)/i.test(decodedPath) ||
-    /(?:^|\/)(?:private\/)?(?:tmp|var)(?:\/|$)/i.test(decodedPath) ||
-    /(?:^|\/)\.obsidian(?:\/|$)/i.test(decodedPath) ||
-    /(?:^|\/)vault(?:\/|$)/i.test(decodedPath);
+  }
   const ipv4 = host.split(".").map(Number);
   const privateIpv4 =
     ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&

@@ -24,6 +24,7 @@ describe("Instagram media hosting", () => {
     "https://images.example/Users/alice/Vault/cover.png",
     "https://images.example/%2555sers/alice/Vault/cover.png",
     "https://images.example/%252FUsers%252Falice%252FVault%252Fcover.png",
+    "https://images.example/%2543%253A%252FUsers%252Falice%252FVault%252Fcover.png",
     "https://images.example/%255cUsers%255calice%255cVault%255ccover.png",
     "https://images.example/Users/alice/Desktop/cover.png",
     "https://images.example/home/alice/.obsidian/attachments/cover.png",
@@ -42,5 +43,13 @@ describe("Instagram media hosting", () => {
     expect(validateInstagramMediaUrl("https://cdn.example.net/image/100%25complete.png")).toBe(
       "https://cdn.example.net/image/100%25complete.png",
     );
+  });
+
+  it.each([
+    "https://cdn.example.net/image/name%252Fpart.png",
+    "https://cdn.example.net/image/name%2520part.png",
+    "https://cdn.example.net/image/name%25FFpart.png",
+  ])("preserves nested escaped characters in a public filename: %s", (url) => {
+    expect(validateInstagramMediaUrl(url)).toBe(url);
   });
 });
