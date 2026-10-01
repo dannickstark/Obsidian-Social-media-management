@@ -143,7 +143,7 @@ describe("XAdapter", () => {
   });
 
   it("refuses a persisted thread checkpoint when the post text has changed", async () => {
-    const checkpoint = JSON.stringify({ version: 1, accountId: "42", sendKey: "send-key-x-1", fingerprint: "old", partIds: [X_ID], nextPart: 1 });
+    const checkpoint = JSON.stringify({ version: 1, accountId: "42", sendKey: "send-key-x-1", fingerprint: "old", partIds: [X_ID], mediaKeys: [], nextPart: 1 });
     const thread = { text: "Edited\n\nSecond", items: ["Edited", "Second"], delivery: { status: "failed" as const, at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: checkpoint } };
     queue(json(200, X_USER));
     await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("does not match the saved X thread checkpoint") });
@@ -167,6 +167,10 @@ describe("XAdapter", () => {
       json(201, { data: { id: "media-1" } }),
       json(200, { data: { associated_metadata: { id: "media-1" } } }),
       json(201, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(200, {
+        data: { id: X_ID, text: "First", author_id: "42", attachments: { media_keys: ["3_abc"] } },
+        includes: { media: [{ media_key: "3_abc", alt_text: "Expected cover" }] },
+      }),
       json(400, { title: "Invalid Request", detail: "temporarily rejected" }),
     );
     let state: string | undefined;
@@ -179,14 +183,69 @@ describe("XAdapter", () => {
       data: { id: X_ID, text: "First", author_id: "42", attachments: { media_keys: ["3_abc"] } },
       includes: { media: [{ media_key: "3_abc", alt_text: "Different cover" }] },
     }));
-    await expect(retry.publish(job({ ...thread, delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: state } }))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("media on a saved thread part") });
+    await expect(retry.publish(job({ ...thread, delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: state } }))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("media identity") });
     expect(requestUrlMock.calls.slice(retryStart).filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
+  });
+
+  it.each([
+    ["same alt text", "Expected cover", "Expected cover"],
+    ["empty alt text", "", null],
+  ])("refuses resume when the remote image key changed despite %s", async (_label, localAlt, remoteAlt) => {
+    const media = img("cover.png", 800, 600, { alt: localAlt });
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], media: [media] };
+    const initial = make();
+    const initialFixtures = [json(200, X_USER), json(201, { data: { id: "media-1" } })];
+    if (localAlt) initialFixtures.push(json(200, { data: { associated_metadata: { id: "media-1" } } }));
+    initialFixtures.push(
+      json(201, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(200, {
+        data: { id: X_ID, text: "First", author_id: "42", attachments: { media_keys: ["3_original"] } },
+        includes: { media: [{ media_key: "3_original", ...(localAlt ? { alt_text: localAlt } : {}) }] },
+      }),
+      json(400, { title: "Invalid Request", detail: "temporarily rejected" }),
+    );
+    queue(...initialFixtures);
+    let state: string | undefined;
+    try { await initial.publish(job(thread)); } catch (e) { state = (e as { adapterState?: string }).adapterState; }
+    expect(state).toEqual(expect.any(String));
+
+    const retry = make();
+    const retryStart = requestUrlMock.calls.length;
+    const remoteMedia = { media_key: "3_different", ...(remoteAlt ? { alt_text: remoteAlt } : {}) };
+    queue(
+      json(200, X_USER),
+      json(200, {
+        data: { id: X_ID, text: "First", author_id: "42", attachments: { media_keys: ["3_different"] } },
+        includes: { media: [remoteMedia] },
+      }),
+      json(201, { data: { id: "2000000000000000000", text: "Second" } }),
+    );
+    await expect(retry.publish(job({ ...thread, delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1", adapterState: state } }))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("media identity") });
+    expect(requestUrlMock.calls.slice(retryStart).filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
+  });
+
+  it("does not attach replies when exact root media identity cannot be recovered", async () => {
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], media: [img("cover.png", 800, 600)] };
+    queue(
+      json(200, X_USER),
+      json(201, { data: { id: "media-1" } }),
+      json(201, { data: { id: X_ID, text: "First", author_id: "42" } }),
+      json(200, { data: { id: X_ID, text: "First", author_id: "42" } }),
+    );
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "unknown", message: expect.stringContaining("exact remote media identity could not be confirmed") });
+    expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(1);
   });
 
   it("propagates reply authorization failures after earlier parts went live", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"] };
     queue(json(200, X_USER), json(201, { data: { id: X_ID, text: "First" } }), json(403, { title: "Forbidden", detail: "This endpoint is not available on your API tier." }));
     await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("earlier parts are live") });
+  });
+
+  it("refuses automatic retry when a confirmed part has no persistable checkpoint", async () => {
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "publishing", attempts: 1 } as DeliveryJob["delivery"] };
+    queue(json(200, X_USER), json(201, { data: { id: X_ID, text: "First" } }), json(400, { title: "Invalid Request", detail: "reply rejected" }));
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "unknown", message: expect.stringContaining("safe thread checkpoint could not be saved") });
   });
 
   it("does not resume a failed partial thread from an unbound timeline match", async () => {

@@ -510,14 +510,15 @@ describe("PublishOrchestrator", () => {
   });
 
   it("clears an earlier checkpoint when a resumed part has an unknown outcome", async () => {
-    const adapterState = JSON.stringify({ version: 1, accountId: "42", sendKey: "3mxdyj6ws22jm", fingerprint: "fingerprint", partIds: ["1999999999999999999"], nextPart: 1 });
-    const { c, orchestrator } = await setup(async () => { throw new UnknownOutcomeError("reply outcome is unknown"); }, {
+    const adapterState = JSON.stringify({ version: 1, accountId: "42", sendKey: "3mxdyj6ws22jm", fingerprint: "fingerprint", partIds: ["1999999999999999999"], mediaKeys: [], nextPart: 1 });
+    const { c, orchestrator } = await setup(async () => { throw new UnknownOutcomeError("a confirmed part could not be checkpointed safely"); }, {
       notes: [note(P, { status: "failed", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW), send_key: "3mxdyj6ws22jm", adapter_state: adapterState })],
       lookup: async () => null,
     });
     expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "check_needed" });
     await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "check_needed");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).not.toHaveProperty("adapterState");
+    expect((await fm(c)).deliveries).not.toMatchObject({ "tg/event-x": { adapter_state: expect.any(String) } });
   });
 });
 

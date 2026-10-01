@@ -30,7 +30,7 @@ interface Tweet {
   attachments?: { media_keys?: string[] };
 }
 interface XMedia { media_key: string; alt_text?: string | null }
-interface XThreadCheckpoint { version: 1; accountId: string; sendKey: string; fingerprint: string; partIds: string[]; nextPart: number }
+interface XThreadCheckpoint { version: 1; accountId: string; sendKey: string; fingerprint: string; partIds: string[]; mediaKeys: string[]; nextPart: number }
 type Who = Pick<DeliveryJob, "channel" | "secret">;
 
 async function sha256(bytes: BufferSource): Promise<string> {
@@ -100,6 +100,7 @@ export class XAdapter implements PlatformAdapter {
     const resume = job.resume === true || (job.delivery.attempts ?? 1) > 1;
     let parent: Tweet | undefined;
     let root: Tweet | undefined;
+    let rootMediaKeys: string[] = [];
     let partIds: string[] = [];
     let startPart = 0;
     if (resume) {
@@ -109,6 +110,7 @@ export class XAdapter implements PlatformAdapter {
       const confirmed = await this.readConfirmedParts(job, account, checkpoint);
       partIds = checkpoint.partIds;
       root = confirmed[0];
+      rootMediaKeys = checkpoint.mediaKeys;
       parent = confirmed.at(-1);
       startPart = partIds.length;
     }
@@ -118,6 +120,7 @@ export class XAdapter implements PlatformAdapter {
         if (!root && i === 0) {
           const mediaIds = await this.uploadAll(job);
           root = await this.post(job, { text, ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}) }, 0);
+          if (mediaIds.length && job.items.length > 1) rootMediaKeys = await this.confirmRootMedia(job, account, root, job.media);
           parent = root;
           partIds.push(root.id);
         } else {
@@ -127,7 +130,8 @@ export class XAdapter implements PlatformAdapter {
         }
       } catch (e) {
         if (i > 0) {
-          const adapterState = await this.makeCheckpoint(job, account, partIds);
+          const adapterState = await this.makeCheckpoint(job, account, partIds, rootMediaKeys);
+          if (!adapterState) throw new UnknownOutcomeError(`X: part ${i + 1} was not confirmed, but an earlier part is live and a safe thread checkpoint could not be saved. The delivery needs manual review; do not retry automatically. ${e instanceof Error ? e.message : String(e)}`);
           if (e instanceof PublishError && e.kind === "transient") throw new TransientError(`X: part ${i + 1} is not posted yet; earlier parts are live and a retry will validate their saved remote IDs first: ${e.message}`, e.retryAfterMs, adapterState);
           if (e instanceof NeedsUserError) throw new NeedsUserError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`, adapterState);
           if (e instanceof InvalidContentError) throw new InvalidContentError(`X: part ${i + 1} could not be posted; earlier parts are live and the thread is not marked published. ${e.message}`, adapterState);
@@ -190,7 +194,10 @@ export class XAdapter implements PlatformAdapter {
       !Array.isArray(checkpoint.partIds) || checkpoint.partIds.length < 1 ||
       checkpoint.partIds.length >= job.items.length ||
       checkpoint.nextPart !== checkpoint.partIds.length ||
-      !checkpoint.partIds.every((id) => typeof id === "string" && /^\d+$/.test(id))
+      !checkpoint.partIds.every((id) => typeof id === "string" && /^\d+$/.test(id)) ||
+      !Array.isArray(checkpoint.mediaKeys) || !checkpoint.mediaKeys.every((key) => typeof key === "string" && key.length > 0) ||
+      new Set(checkpoint.mediaKeys).size !== checkpoint.mediaKeys.length ||
+      checkpoint.mediaKeys.length !== job.media.length
     ) throw new NeedsUserError("X: no valid confirmed-part checkpoint is saved for this send. Check X and reconcile this delivery manually.");
     return checkpoint as XThreadCheckpoint;
   }
@@ -203,7 +210,7 @@ export class XAdapter implements PlatformAdapter {
     return sha256(new TextEncoder().encode(JSON.stringify({ channel: job.channel.id, sendKey: job.delivery.sendKey, items: job.items, media })));
   }
 
-  private async makeCheckpoint(job: DeliveryJob, account: Account, partIds: string[]): Promise<string | undefined> {
+  private async makeCheckpoint(job: DeliveryJob, account: Account, partIds: string[], mediaKeys: string[]): Promise<string | undefined> {
     if (!job.delivery.sendKey || !partIds.length || partIds.length >= job.items.length) return undefined;
     try {
       const checkpoint: XThreadCheckpoint = {
@@ -212,6 +219,7 @@ export class XAdapter implements PlatformAdapter {
         sendKey: job.delivery.sendKey,
         fingerprint: await this.threadFingerprint(job),
         partIds,
+        mediaKeys,
         nextPart: partIds.length,
       };
       const value = JSON.stringify(checkpoint);
@@ -238,7 +246,10 @@ export class XAdapter implements PlatformAdapter {
       const includes = body?.includes?.media;
       const media = Array.isArray(includes) ? includes.filter((candidate): candidate is XMedia => !!candidate && typeof candidate === "object" && typeof (candidate as XMedia).media_key === "string") : [];
       const expected = index === 0 ? job.media : [];
-      if (!this.mediaMatches(tweet, media, expected)) throw new NeedsUserError("X: media on a saved thread part no longer matches this post. Check X and reconcile this delivery manually.");
+      if (!this.mediaMatches(tweet, media, expected)) throw new NeedsUserError("X: media identity on a saved thread part no longer matches this post. Check X and reconcile this delivery manually.");
+      if (index === 0 && JSON.stringify(tweet.attachments?.media_keys ?? []) !== JSON.stringify(checkpoint.mediaKeys)) {
+        throw new NeedsUserError("X: remote media identity on the saved root changed. Check X and reconcile this delivery manually.");
+      }
       tweets.push(tweet);
     }
     return tweets;
@@ -261,6 +272,33 @@ export class XAdapter implements PlatformAdapter {
       const media = included.find((candidate) => candidate.media_key === keys[index]);
       return !!media && (!item.alt || media.alt_text === item.alt);
     });
+  }
+
+  private async confirmRootMedia(job: DeliveryJob, account: Account, root: Tweet, expected: MediaInfo[]): Promise<string[]> {
+    try {
+      const keys = await this.confirmedMediaKeys(job, account, root.id);
+      if (keys.length !== expected.length) throw new Error("unexpected number of remote media keys");
+      return keys;
+    } catch {
+      throw new UnknownOutcomeError("X: the root post was created, but its exact remote media identity could not be confirmed. The thread needs manual review; no replies were attached.");
+    }
+  }
+
+  private async confirmedMediaKeys(job: DeliveryJob, account: Account, id: string): Promise<string[]> {
+    if (!job.media.length) return [];
+    const api = this.api(job.secret);
+    const query = new URLSearchParams({ "tweet.fields": "author_id,entities,attachments", expansions: "attachments.media_keys", "media.fields": "media_key,alt_text" });
+    const response = await api.read({ url: `${X_API}/2/tweets/${encodeURIComponent(id)}?${query}`, method: "GET", headers: { Authorization: `Bearer ${job.secret}` } });
+    if (!isOk(response)) throw api.error(response, { phase: "prepare" });
+    const body = parseJson(response.text) as { data?: unknown; includes?: { media?: unknown } } | null;
+    const tweet = readTweet(body);
+    if (!tweet || tweet.id !== id || tweet.author_id !== account.id || this.normalizedText(tweet) !== (job.items[0] ?? "").normalize("NFC")) throw new Error("root identity could not be verified");
+    const keys = tweet.attachments?.media_keys;
+    if (!Array.isArray(keys) || keys.length !== job.media.length || !keys.every((key) => typeof key === "string" && key.length > 0) || new Set(keys).size !== keys.length) throw new Error("exact media keys were not returned");
+    const included = body?.includes?.media;
+    const media = Array.isArray(included) ? included.filter((candidate): candidate is XMedia => !!candidate && typeof candidate === "object" && typeof (candidate as XMedia).media_key === "string") : [];
+    if (!this.mediaMatches(tweet, media, job.media)) throw new Error("root media details do not match uploaded media");
+    return keys;
   }
 
   private async post(job: DeliveryJob, payload: Record<string, unknown>, part: number): Promise<Tweet> {
