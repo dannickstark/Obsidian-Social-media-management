@@ -39,12 +39,24 @@ export function validateInstagramMediaUrl(raw: string): string {
     throw new NeedsUserError("Instagram: the image host did not return a valid public URL; use assisted publishing.");
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(url.pathname);
-  } catch {
-    throw new NeedsUserError("Instagram: the image host URL has an invalid path; use assisted publishing.");
+  let decodedPath = url.pathname;
+  let fullyDecoded = false;
+  for (let depth = 0; depth < 8; depth++) {
+    try {
+      const next = decodeURIComponent(decodedPath);
+      if (next === decodedPath) {
+        fullyDecoded = true;
+        break;
+      }
+      decodedPath = next;
+    } catch {
+      throw new NeedsUserError("Instagram: the image host URL has an invalid path; use assisted publishing.");
+    }
   }
+  // Don't allow a deeply nested encoding to hide separators or a local path from the checks below.
+  if (!fullyDecoded && /%[0-9a-f]{2}/i.test(decodedPath))
+    throw new NeedsUserError("Instagram: the image host URL path is too deeply encoded; use assisted publishing.");
+  decodedPath = decodedPath.replace(/\\/g, "/");
   const localPath =
     /(?:^|\/)users\/[^/]+(?:\/|$)/i.test(decodedPath) ||
     /(?:^|\/)home\/[^/]+(?:\/|$)/i.test(decodedPath) ||
