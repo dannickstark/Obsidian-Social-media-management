@@ -61,6 +61,7 @@ export function effectiveMethod(
   adapter: PlatformAdapter | undefined,
 ): EffectiveMethod {
   if (mode === "assisted" || !channel || channel.method === "assisted") return "assisted";
+  if (!PLATFORM_DEFS[channel.platform].capabilities.api) return "assisted";
   if (
     channel.platform === "facebook" &&
     (!channel.secretId || channel.kind !== "page" || !/^\d+$/.test(channel.handle ?? ""))

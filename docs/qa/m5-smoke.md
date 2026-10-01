@@ -56,11 +56,9 @@ Run on test accounts before each release with a production build in a test vault
 
 ## X
 
-- [ ] OAuth user token connects with `tweet.write` and `media.write`; **Test connection** shows the authenticated account.
-- [ ] Weighted text counting treats URLs as 23 characters; image posts preserve alt text.
-- [ ] Thread replies are ordered, and a resumed send finds its own recent thread parts before continuing.
-- [ ] **(QA)** API-tier 403 errors explain that the account remains usable in assisted mode; verify current X app approval separately.
-- [ ] An unanswered create stays **Check needed**; confirm the post manually if the account timeline cannot identify the attempt.
+- [ ] **Test connection** verifies the X identity and clearly says that write/media scopes and API-tier access are not verified.
+- [ ] The API auto-post option stays unavailable until OAuth write/media permissions and API-tier access can be verified; assisted publishing remains available.
+- [ ] **(QA)** If X API permissions become verifiable through OAuth setup, re-enable the adapter only after checking account binding, post/tier permissions, media alt metadata, and thread recovery on a reviewed app.
 
 ## WordPress
 

@@ -55,6 +55,8 @@ export function contractDeps(): AdapterDeps {
     instagramMediaHost: {
       create: async (file) => ({ url: `https://cdn.example.net/${encodeURIComponent(file.name)}` }),
     },
+    // Contract fixtures stand in for externally verified X OAuth scopes and API-tier access.
+    xApiAccessVerified: true,
   };
 }
 

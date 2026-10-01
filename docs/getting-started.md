@@ -83,10 +83,9 @@ On the publisher device, open **Settings → Social Planner → Channels**, edit
 - **Discord:** the channel's webhook URL (Server settings → Integrations → Webhooks). Optionally set a name and avatar to post as.
 - **Mastodon:** an access token with read and write scopes. Your `@you@your.instance` handle tells the plugin which server to use.
 - **Bluesky:** an app password and your handle.
-- **X:** an OAuth 2 user access token with `tweet.write` and `media.write`; API access depends on your app's current tier and approval.
 - **WordPress:** an HTTPS site address, your user name and an application password.
 
-Click **Test connection**. Scheduled posts on these channels now go out by themselves while the publisher device runs Obsidian.
+Click **Test connection**. Scheduled posts on channels with verified API access now go out by themselves while the publisher device runs Obsidian. X currently verifies identity only and uses assisted publishing.
 
 For Mastodon and WordPress, choose **API with native scheduling** instead: a scheduled post is handed over to the platform (at least 7 minutes ahead on Mastodon, 3 on WordPress) and goes out even when Obsidian is closed. If you edit or move it afterwards, it shows **Out of sync**: the platform keeps the old version until you click **Push update** in the composer or row menu. **Revert time** takes the platform's time back, and **Unschedule on …** takes it off the platform's schedule. A Mastodon thread is never handed over; it posts from Obsidian at its time.
 

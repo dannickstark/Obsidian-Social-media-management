@@ -93,9 +93,24 @@ const BARE_DOMAIN_RE = new RegExp(`(^|[^\\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-
 export function countChars(text: string, counter: CharCounter = "graphemes"): number {
   if (counter === "graphemes") return [...segmenter.segment(text)].length;
   let total = 0;
-  const withoutUrls = text.replace(URL_RE, () => {
+  const withoutUrls = text.replace(URL_RE, (url) => {
+    // twitter-text treats terminal punctuation as prose, and excludes only unmatched closing brackets
+    // from a URL. Keep these characters in the text so they retain their normal weight.
+    let end = url.length;
+    while (end > 0) {
+      const last = url[end - 1]!;
+      if (/[.,!?;:]/.test(last)) { end--; continue; }
+      const pair: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+      const open = pair[last];
+      if (open) {
+        const closingCount = [...url.slice(0, end)].filter((c) => c === last).length;
+        const openingCount = [...url.slice(0, end)].filter((c) => c === open).length;
+        if (closingCount > openingCount) { end--; continue; }
+      }
+      break;
+    }
     total += 23;
-    return "";
+    return url.slice(end);
   });
   // Mastodon: graphemes, every URL counts 23 no matter its length, and `@user@domain` counts as `@user`.
   if (counter === "mastodon") return total + [...segmenter.segment(withoutUrls.replace(REMOTE_MENTION_RE, "$1$2"))].length;

@@ -33,6 +33,8 @@ export interface AdapterDeps {
   resolveEmbed?(target: string, fromPath: string): EmbedFile | null;
   /** The link card for a URL (Bluesky's external embed); null when there is none. */
   linkCard?(url: string): Promise<LinkCard | null>;
+  /** Set only by OAuth setup after confirming X tweet.write, media.write, and account-tier availability. */
+  xApiAccessVerified?: boolean;
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */

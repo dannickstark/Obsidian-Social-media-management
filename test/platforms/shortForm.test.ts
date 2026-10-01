@@ -33,6 +33,15 @@ describe("X (280 weighted, URL = 23, media ≤ 4)", () => {
     expect(validateFor(input("mastodon", `Hi\n---\n${"a".repeat(500)}`, { url }), MA)).toEqual([]);
   });
 
+  it.each([
+    ["period after URL", "https://example.com.", 24],
+    ["comma after URL", "https://example.com,", 24],
+    ["exclamation after URL", "https://example.com!", 24],
+    ["balanced closing parenthesis", "(https://example.com/a_(b)).", 26],
+  ])("keeps punctuation outside the shortened URL (%s)", (_name, text, expected) => {
+    expect(countChars(text, "x-weighted")).toBe(expected);
+  });
+
   it("allows at most four images", () => {
     const media = ["1.png", "2.png", "3.png", "4.png", "5.png"].map((t) => img(t));
     expect(messages(validateFor(input("x", "Hi", {}, media), X))).toEqual(["error:media:X allows at most 4 images; this post has 5."]);

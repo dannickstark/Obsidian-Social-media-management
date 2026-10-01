@@ -34,7 +34,7 @@ describe("platform registry", () => {
 
   it("follows the spec §4.2 platform matrix", () => {
     expect(PLATFORMS.filter((p) => platformDef(p).capabilities.nativeSchedule)).toEqual(["facebook", "mastodon", "wordpress"]);
-    expect(PLATFORMS.filter((p) => !platformDef(p).capabilities.api)).toEqual(["hackernews", "indiehackers", "reddit", "whatsapp"]);
+    expect(PLATFORMS.filter((p) => !platformDef(p).capabilities.api)).toEqual(["x", "hackernews", "indiehackers", "reddit", "whatsapp"]);
   });
 });
 
@@ -51,6 +51,12 @@ describe("effectiveMethod", () => {
     expect(effectiveMethod("auto", channel("api"), publisher)).toBe("api");
     expect(effectiveMethod("auto", channel("native"), scheduler)).toBe("native");
     expect(effectiveMethod("auto", channel("native"), publisher)).toBe("api");
+  });
+
+  it("keeps X assisted until API permissions are verified", () => {
+    const xChannel = { ...channel("api"), platform: "x" as const };
+    expect(platformDef("x").capabilities.api).toBe(false);
+    expect(effectiveMethod("auto", xChannel, { platform: "x", publish: async () => ({ remoteId: "1", url: "https://x.com" }) })).toBe("assisted");
   });
 
   it("is assisted when the post or the channel is assisted, or the channel is unknown", () => {

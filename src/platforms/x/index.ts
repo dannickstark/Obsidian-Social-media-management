@@ -5,7 +5,8 @@ export const def: PlatformDef = {
   dialect: "plain",
   preview: "thread",
   capabilities: {
-    api: true,
+    // Identity can be tested, but this client cannot validate OAuth write scopes or tier without publishing.
+    api: false,
     nativeSchedule: false,
     threads: true,
     limits: { maxChars: 280, counter: "x-weighted", link: "optional" },
