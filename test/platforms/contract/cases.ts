@@ -2,6 +2,7 @@ import { blueskyCase } from "../bluesky/contract";
 import { discordCase } from "../discord/contract";
 import { facebookCase } from "../facebook/contract";
 import { instagramCase } from "../instagram/contract";
+import { linkedinCase } from "../linkedin/contract";
 import { mastodonCase } from "../mastodon/contract";
 import { telegramCase } from "../telegram/contract";
 import { wordpressCase } from "../wordpress/contract";
@@ -18,4 +19,5 @@ export const CASES: ContractCase[] = [
   xCase,
   facebookCase,
   instagramCase,
+  linkedinCase,
 ];

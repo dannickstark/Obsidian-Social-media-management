@@ -2,6 +2,7 @@ import { BlueskyAdapter } from "./bluesky/api";
 import { DiscordAdapter } from "./discord/api";
 import { FacebookAdapter } from "./facebook/api";
 import { InstagramAdapter } from "./instagram/api";
+import { LinkedInAdapter } from "./linkedin/api";
 import type { InstagramMediaHost } from "./instagram/media";
 import type { HttpFn } from "./http";
 import { MastodonAdapter } from "./mastodon/api";
@@ -35,6 +36,12 @@ export interface AdapterDeps {
   linkCard?(url: string): Promise<LinkCard | null>;
   /** Set only by OAuth setup after confirming X tweet.write, media.write, and account-tier availability. */
   xApiAccessVerified?: boolean;
+  /** Set only after LinkedIn app access and w_member_social have been verified. */
+  linkedInMemberAccessVerified?: boolean;
+  /** Set only after Community Management product access and w_organization_social have been verified. */
+  linkedInCommunityManagementAccessVerified?: boolean;
+  /** Explicitly confirmed scopes for the manually supplied LinkedIn token, when known. */
+  linkedInGrantedScopes?: readonly string[];
 }
 
 /** Every API adapter the plugin ships. The contract suite (test/platforms/contract) runs against exactly this list. */
@@ -46,6 +53,7 @@ export function createAdapters(deps: AdapterDeps): PlatformAdapter[] {
     new MastodonAdapter(deps),
     new WordPressAdapter(deps),
     new FacebookAdapter(deps),
+    new LinkedInAdapter(deps),
     new XAdapter(deps),
   ];
   if (deps.instagramMediaHost) adapters.push(new InstagramAdapter(deps, deps.instagramMediaHost));

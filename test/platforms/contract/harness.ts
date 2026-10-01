@@ -57,6 +57,10 @@ export function contractDeps(): AdapterDeps {
     },
     // Contract fixtures stand in for externally verified X OAuth scopes and API-tier access.
     xApiAccessVerified: true,
+    // Contract fixtures stand in for separately verified LinkedIn member and Community Management access.
+    linkedInMemberAccessVerified: true,
+    linkedInCommunityManagementAccessVerified: true,
+    linkedInGrantedScopes: ["w_member_social", "w_organization_social", "r_organization_admin"],
   };
 }
 

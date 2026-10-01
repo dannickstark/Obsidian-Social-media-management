@@ -6,6 +6,7 @@
   import { platformDef } from "../platforms/registry";
   import type { TelegramChat } from "../platforms/telegram/api";
   import type { FacebookPageChoice } from "../platforms/facebook/api";
+  import type { LinkedInAccountChoice } from "../platforms/linkedin/accounts";
   import { useOsmm } from "../ui/context";
   import { secretField } from "../ui/secretField";
   import { PLATFORM_COLORS } from "../ui/colors";
@@ -39,6 +40,9 @@
   let facebookPages = $state<FacebookPageChoice[]>([]);
   let facebookNote = $state("");
   let findingFacebookPages = $state(false);
+  let linkedInAccounts = $state<LinkedInAccountChoice[]>([]);
+  let linkedInNote = $state("");
+  let findingLinkedInAccounts = $state(false);
   let selectedFacebookPageId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.handle ?? "" : "");
   let selectedFacebookSecretId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.secretId ?? "" : "");
 
@@ -73,6 +77,7 @@
     // No public media host is configured by the plugin yet; keep Instagram on the assisted path.
     if (platform === "instagram" && m === "api") return false;
     if (platform === "facebook" && !facebookReady) return false;
+    if (platform === "linkedin" && (kind !== "profile" && kind !== "page" || !publish.canPublishLinkedIn(kind === "page" ? "page" : "profile"))) return false;
     return (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule);
   }));
   $effect(() => {
@@ -111,6 +116,13 @@
       if (!answer.ok) {
         method = "assisted";
         facebookNote = `${answer.error} Assisted publishing remains available.`;
+      }
+    }
+    if (platform === "linkedin" && method !== "assisted") {
+      const answer = await publish.verifyChannel(parsed.data);
+      if (!answer.ok) {
+        method = "assisted";
+        linkedInNote = `${answer.error} Assisted publishing remains available.`;
       }
     }
     // Editing never renames (that would orphan notes using the old id); adding never overwrites.
@@ -159,6 +171,12 @@
       handle = "";
       method = "assisted";
     }
+    if (platform === "linkedin" && id !== secretId) {
+      linkedInAccounts = [];
+      linkedInNote = "";
+      handle = "";
+      method = "assisted";
+    }
     secretId = id;
   }
 
@@ -186,6 +204,27 @@
     if (!page.canPublish) method = "assisted";
     facebookNote = page.canPublish ? "Page access and publishing permissions verified." : "This Page is missing publishing permissions. Assisted publishing remains available.";
     facebookPages = [];
+  }
+
+  async function findLinkedInAccounts(): Promise<void> {
+    linkedInAccounts = [];
+    linkedInNote = "";
+    findingLinkedInAccounts = true;
+    const found = await publish.findLinkedInAccounts(secretId);
+    findingLinkedInAccounts = false;
+    if ("error" in found) linkedInNote = found.error;
+    else if (!found.length) linkedInNote = "No LinkedIn accounts were found for this token. Use assisted publishing if access is unavailable.";
+    else linkedInAccounts = found;
+  }
+
+  function useLinkedInAccount(account: LinkedInAccountChoice): void {
+    handle = account.id;
+    kind = account.kind;
+    method = account.canPublish && publish.canPublishLinkedIn(account.kind) ? "api" : "assisted";
+    linkedInNote = account.permissionStatus === "granted" && method === "api"
+      ? "Account and required publishing access verified."
+      : `Identity found; ${account.requiredPermission} or LinkedIn app access is not verified. Assisted publishing remains available.`;
+    linkedInAccounts = [];
   }
 </script>
 
@@ -226,6 +265,20 @@
       <div class="osmm-chips" role="group" aria-label="Facebook Pages the token can see">
         {#each facebookPages as page (page.id)}
           <button type="button" onclick={() => useFacebookPage(page)}>Use {page.name}</button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+  {#if platform === "linkedin"}
+    <p class="osmm-progress" role="status">LinkedIn native PKCE and product access are unverified. Add a user access token to discover your profile; company-page publishing also requires Community Management access. Assisted publishing remains available.</p>
+    <div class="osmm-row">
+      <button type="button" disabled={!secretId || findingLinkedInAccounts} onclick={() => void findLinkedInAccounts()}>Find LinkedIn accounts</button>
+      {#if linkedInNote}<span class="osmm-progress" role="status">{linkedInNote}</span>{/if}
+    </div>
+    {#if linkedInAccounts.length}
+      <div class="osmm-chips" role="group" aria-label="LinkedIn accounts the token can see">
+        {#each linkedInAccounts as account (account.id)}
+          <button type="button" onclick={() => useLinkedInAccount(account)}>Use {account.name}{account.kind === "page" ? " (Company Page)" : " (Profile)"}</button>
         {/each}
       </div>
     {/if}

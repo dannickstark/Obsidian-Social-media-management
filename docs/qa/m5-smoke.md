@@ -33,6 +33,13 @@ Run on test accounts before each release with a production build in a test vault
 - [ ] Text, link-only, and up to ten image posts publish to the selected Page; profiles and groups stay on assisted publishing.
 - [ ] Native scheduling, time/content updates, startup lookup, and cancellation affect only confirmed Page posts. An unanswered create stays **Check needed**. **(QA)** verify the scheduled post in Meta.
 
+## LinkedIn
+
+- [ ] Account discovery verifies the signed-in member identity; a supplied token without confirmed `w_member_social` remains assisted. Native PKCE and Share on LinkedIn product access remain unverified. **(QA)** verify against a LinkedIn test app before enabling API access.
+- [ ] With verified member access, text and one image or a 2–9 image post publish from the selected profile. Image uploads stay on LinkedIn hosts and preserve alt text.
+- [ ] Company Pages remain assisted unless Community Management access and `w_organization_social` are verified; only an organization returned with an approved publishing role may post. **(QA)** verify permissions and roles using an approved test app.
+- [ ] Rate limits wait for `Retry-After`; an unanswered post create becomes **Check needed** and is never retried automatically.
+
 ## Instagram
 
 - [ ] Discovery lists only linked professional accounts after `instagram_content_publish` and the Page `CREATE_CONTENT` task are confirmed. **(QA)** verify with a Meta test app.

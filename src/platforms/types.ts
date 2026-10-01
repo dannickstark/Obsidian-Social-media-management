@@ -144,6 +144,8 @@ export type VerifyResult = { ok: true; account: string } | { ok: false; error: s
  */
 export interface PlatformAdapter {
   readonly platform: Platform;
+  /** Runtime product or permission gate; false routes automatic publishing to the assisted flow. */
+  apiAvailable?(channel: Channel): boolean;
   /** How far ahead a native hand-over must be (Mastodon: 5 minutes). */
   readonly minLeadMs?: number;
   publish?(job: DeliveryJob): Promise<PublishResult>;

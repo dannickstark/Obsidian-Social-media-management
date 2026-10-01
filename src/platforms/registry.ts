@@ -67,6 +67,7 @@ export function effectiveMethod(
     (!channel.secretId || channel.kind !== "page" || !/^\d+$/.test(channel.handle ?? ""))
   )
     return "assisted";
+  if (adapter?.apiAvailable && !adapter.apiAvailable(channel)) return "assisted";
   if (channel.method === "native" && adapter?.schedule) return "native";
   if (adapter?.publish) return "api";
   return "assisted";

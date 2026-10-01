@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestUrlMock } from "../../fakes/obsidian";
 import type { Platform } from "../../../src/model/platforms";
 import { createAdapters } from "../../../src/platforms/adapters";
@@ -16,6 +16,7 @@ const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> =
   discord: "unknown",
   facebook: "unknown",
   instagram: "unknown",
+  linkedin: "unknown",
   mastodon: "transient",
   bluesky: "transient",
   x: "unknown",
@@ -29,6 +30,9 @@ const UNREADABLE: Array<[string, Fixture]> = [
 ];
 
 // M5 P8: every job in this file goes through the read guard, and every test checks it.
+beforeEach(() => {
+  if (typeof window === "undefined") vi.stubGlobal("window", { setTimeout, clearTimeout });
+});
 afterEach(() => expectDigestReads());
 
 describe("adapter registry (#87)", () => {

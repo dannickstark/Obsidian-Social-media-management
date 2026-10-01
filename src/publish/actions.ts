@@ -14,6 +14,8 @@ import type { AssistedTarget, ClipItem, MediaInfo, SyncChange, VerifyResult } fr
 import { RemoteRemovedError, ReplacementUnknownError } from "../platforms/errors";
 import type { AdapterRegistry } from "../platforms/registry";
 import { FacebookAdapter, type FacebookPageChoice } from "../platforms/facebook/api";
+import { LinkedInAdapter } from "../platforms/linkedin/api";
+import type { LinkedInAccountChoice } from "../platforms/linkedin/accounts";
 import { TelegramAdapter, type TelegramChat } from "../platforms/telegram/api";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
@@ -181,6 +183,23 @@ export class PublishActions {
       const message = e instanceof Error ? e.message : String(e);
       return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
     }
+  }
+
+  /** Channel settings, LinkedIn account discovery: only account ids, names and verified permission states leave the adapter. */
+  async findLinkedInAccounts(secretId: string): Promise<LinkedInAccountChoice[] | { error: string }> {
+    const linkedin = this.deps.adapters.get("linkedin");
+    if (!(linkedin instanceof LinkedInAdapter)) return { error: "LinkedIn account discovery isn't connected in this version." };
+    try {
+      return await linkedin.findAccounts(secretId ? this.deps.secrets.get(secretId) : null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
+    }
+  }
+
+  canPublishLinkedIn(kind: "profile" | "page"): boolean {
+    const linkedin = this.deps.adapters.get("linkedin");
+    return linkedin instanceof LinkedInAdapter && linkedin.canPublish(kind);
   }
 
   readonly orchestrator: PublishOrchestrator;

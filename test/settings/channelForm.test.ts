@@ -86,6 +86,25 @@ describe("ChannelForm", () => {
     expect(screen.getByText(/public image host.*Meta can fetch/i)).toBeTruthy();
   });
 
+  it("discovers a LinkedIn profile and keeps it assisted while PKCE and product access are unverified", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters({ ...contractDeps(), linkedInMemberAccessVerified: false, linkedInCommunityManagementAccessVerified: false, linkedInGrantedScopes: undefined })) c.adapters.register(a);
+    c.app.secretStorage.setSecret("li-token", "LINKEDIN-TOKEN");
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/native PKCE and product access are unverified/i)).toBeTruthy();
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Ada" } });
+    await SecretComponent.last!.change("li-token");
+    expect(requestUrlMock.calls).toHaveLength(0);
+    queue(json(200, { sub: "abc123", name: "Ada Lovelace" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Find LinkedIn accounts" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Ada Lovelace (Profile)" }));
+    expect((screen.getByLabelText("Handle / URL") as HTMLInputElement).value).toBe("urn:li:person:abc123");
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("profile");
+    expect(methods()).toEqual(["assisted"]);
+    expect(await screen.findByText(/Identity found; w_member_social.*not verified/i)).toBeTruthy();
+  });
+
   it("saves a WordPress site address and user name, and refuses a site without https", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
