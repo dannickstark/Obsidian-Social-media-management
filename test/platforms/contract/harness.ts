@@ -41,7 +41,7 @@ export interface ContractCase {
    * "not_found" for an exact lookup, which answers `{ published: false }`; "unknown" for a heuristic one, which
    * answers null (can't tell).
    */
-  lookup?: { job(): DeliveryJob; found: Fixture[]; expect: RemoteState; notFound: Fixture[]; notFoundAnswer: "not_found" | "unknown" };
+  lookup?: { job(): DeliveryJob; found: Fixture[]; expect: RemoteState | null; notFound: Fixture[]; notFoundAnswer: "not_found" | "unknown" };
 }
 
 export function contractDeps(): AdapterDeps {

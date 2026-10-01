@@ -37,6 +37,9 @@ describe("X (280 weighted, URL = 23, media ≤ 4)", () => {
     ["period after URL", "https://example.com.", 24],
     ["comma after URL", "https://example.com,", 24],
     ["exclamation after URL", "https://example.com!", 24],
+    ["period after bare-domain path", "example.com/path.", 24],
+    ["comma after bare-domain path", "example.com/path,", 24],
+    ["exclamation after bare-domain path", "example.com/path!", 24],
     ["balanced closing parenthesis", "(https://example.com/a_(b)).", 26],
   ])("keeps punctuation outside the shortened URL (%s)", (_name, text, expected) => {
     expect(countChars(text, "x-weighted")).toBe(expected);

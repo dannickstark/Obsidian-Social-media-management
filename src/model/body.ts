@@ -90,34 +90,40 @@ const TLDS = [...GENERIC_TLDS.split(" "), ...COUNTRY_TLDS.split(" ")].sort((a, b
 /** A domain without a scheme (`example.com`, `sub.example.co.uk/path`), not part of an email or a longer word. */
 const BARE_DOMAIN_RE = new RegExp(`(^|[^\\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+(?:${TLDS})(?![\\w-])(?:/[^\\s]*)?)`, "gi");
 
+/** Return the end of a matched link before terminal prose punctuation and unmatched closers. */
+function linkEnd(link: string): number {
+  let end = link.length;
+  while (end > 0) {
+    const last = link[end - 1]!;
+    if (/[.,!?;:]/.test(last)) { end--; continue; }
+    const open = last === ")" ? "(" : last === "]" ? "[" : last === "}" ? "{" : undefined;
+    if (open) {
+      const closingCount = [...link.slice(0, end)].filter((c) => c === last).length;
+      const openingCount = [...link.slice(0, end)].filter((c) => c === open).length;
+      if (closingCount > openingCount) { end--; continue; }
+    }
+    break;
+  }
+  return end;
+}
+
 export function countChars(text: string, counter: CharCounter = "graphemes"): number {
   if (counter === "graphemes") return [...segmenter.segment(text)].length;
   let total = 0;
   const withoutUrls = text.replace(URL_RE, (url) => {
     // twitter-text treats terminal punctuation as prose, and excludes only unmatched closing brackets
     // from a URL. Keep these characters in the text so they retain their normal weight.
-    let end = url.length;
-    while (end > 0) {
-      const last = url[end - 1]!;
-      if (/[.,!?;:]/.test(last)) { end--; continue; }
-      const pair: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
-      const open = pair[last];
-      if (open) {
-        const closingCount = [...url.slice(0, end)].filter((c) => c === last).length;
-        const openingCount = [...url.slice(0, end)].filter((c) => c === open).length;
-        if (closingCount > openingCount) { end--; continue; }
-      }
-      break;
-    }
+    const end = linkEnd(url);
     total += 23;
     return url.slice(end);
   });
   // Mastodon: graphemes, every URL counts 23 no matter its length, and `@user@domain` counts as `@user`.
   if (counter === "mastodon") return total + [...segmenter.segment(withoutUrls.replace(REMOTE_MENTION_RE, "$1$2"))].length;
   // X also shortens bare domains to a 23-character t.co link.
-  const withoutDomains = withoutUrls.replace(BARE_DOMAIN_RE, (_m, lead: string) => {
+  const withoutDomains = withoutUrls.replace(BARE_DOMAIN_RE, (_m, lead: string, link: string) => {
+    const end = linkEnd(link);
     total += 23;
-    return lead;
+    return lead + link.slice(end);
   });
   for (const { segment } of segmenter.segment(withoutDomains)) total += xWeight(segment);
   return total;

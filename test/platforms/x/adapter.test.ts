@@ -73,63 +73,52 @@ describe("XAdapter", () => {
     expect(call(1)).toMatchObject({ url: "https://api.x.com/2/media/upload", contentType: expect.stringContaining("multipart/form-data") });
     expect(formParts(1).media).toMatchObject({ filename: "cover.png", type: "image/png" });
     expect(call(2).url).toBe("https://api.x.com/2/media/metadata");
-    expect(sentJson(2)).toEqual({ id: "media-1", metadata: { text: "A cover" } });
+    expect(sentJson(2)).toEqual({ id: "media-1", metadata: { alt_text: { text: "A cover" } } });
     expect(call(3).url).toBe("https://api.x.com/2/tweets");
     expect(sentJson(3)).toEqual({ text: "Hello", media: { media_ids: ["media-1"] } });
     expect(result.remoteId).toBe(X_ID);
   });
 
-  it("normalizes X short URLs to their expanded source and refuses duplicate recovery matches", async () => {
+  it("does not treat timeline text matches as proof of this send without an exact send-key binding", async () => {
     const postText = "Read https://example.com/article.";
-    const entry = { id: X_ID, text: "Read https://t.co/short.", author_id: "42", created_at: new Date(CONTRACT_NOW).toISOString(), entities: { urls: [{ url: "https://t.co/short", expanded_url: "https://example.com/article" }] } };
     const lookupJob = job({ text: postText, items: [postText], delivery: { status: "check_needed", at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } });
-    queue(json(200, X_USER), json(200, { data: [entry] }));
-    await expect(make().lookup(lookupJob)).resolves.toMatchObject({ published: true, remoteId: X_ID });
-    queue(json(200, X_USER), json(200, { data: [entry, { ...entry, id: "2000000000000000000" }] }));
     await expect(make().lookup(lookupJob)).resolves.toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
   });
 
-  it("uses attached image metadata to disambiguate lookup matches", async () => {
+  it("does not treat matching media metadata as proof of this send", async () => {
     const text = "A launch";
     const media = img("cover.png", 800, 600, { alt: "Launch cover" });
     const lookupJob = job({ text, items: [text], media: [media], delivery: { status: "check_needed", at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } });
-    const found = { data: [{ id: X_ID, text, author_id: "42", created_at: new Date(CONTRACT_NOW).toISOString(), attachments: { media_keys: ["3_abc"] } }], includes: { media: [{ media_key: "3_abc", alt_text: "Launch cover" }] } };
-    queue(json(200, X_USER), json(200, found));
-    await expect(make().lookup(lookupJob)).resolves.toMatchObject({ published: true, remoteId: X_ID });
-    queue(json(200, X_USER), json(200, { ...found, includes: { media: [{ media_key: "3_abc", alt_text: "Different image" }] } }));
     await expect(make().lookup(lookupJob)).resolves.toBeNull();
+    expect(requestUrlMock.calls).toHaveLength(0);
   });
 
-  it("sequences replies and resumes from sent thread parts using the persisted send key", async () => {
+  it("refuses to attach a reply to a heuristic timeline match on resume", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "publishing", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW - 60_000, sendKey: "send-key-x-1" } };
-    queue(json(200, X_USER), json(200, { data: [{ id: X_ID, text: "First", author_id: "42", created_at: new Date(CONTRACT_NOW).toISOString() }] }), json(201, { data: { id: "2000000000000000000", text: "Second" } }));
-    const result = await make().publish(job(thread));
-    expect(result.remoteId).toBe(X_ID);
-    expect(call(1).url).toContain("/2/users/42/tweets");
-    expect(call(2).headers).toMatchObject({ "Idempotency-Key": "osmm-send-key-x-1-1" });
-    expect(sentJson(2)).toEqual({ text: "Second", reply: { in_reply_to_tweet_id: X_ID } });
+    queue(json(200, X_USER));
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("cannot be bound to the persisted send key") });
+    expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
   });
 
-  it("reports a later thread part as partial and resumes it without reposting the root", async () => {
+  it("propagates a later thread part 400 as an invalid-content error with partial context", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"] };
     const adapter = make();
     queue(json(200, X_USER), json(201, { data: { id: X_ID, text: "First", created_at: new Date(CONTRACT_NOW).toISOString() } }), json(400, { title: "Invalid Request", detail: "temporarily rejected" }));
-    const partial = await adapter.publish(job(thread));
-    expect(partial.note).toContain("Part 2 of 2 was not posted");
-    requestUrlMock.queue.push(
-      json(200, { data: [{ id: X_ID, text: "First", author_id: "42", created_at: new Date(CONTRACT_NOW).toISOString() }] }),
-      json(201, { data: { id: "2000000000000000000", text: "Second" } }),
-    );
-    const resumed = await adapter.publish(job({ ...thread, delivery: { status: "publishing", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } }));
-    expect(resumed.remoteId).toBe(X_ID);
-    expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(3);
-    expect(sentJson(4)).toEqual({ text: "Second", reply: { in_reply_to_tweet_id: X_ID } });
+    await expect(adapter.publish(job(thread))).rejects.toMatchObject({ kind: "invalid_content", message: expect.stringContaining("part 2 could not be posted; earlier parts are live") });
   });
 
   it("propagates reply authorization failures after earlier parts went live", async () => {
     const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"] };
     queue(json(200, X_USER), json(201, { data: { id: X_ID, text: "First" } }), json(403, { title: "Forbidden", detail: "This endpoint is not available on your API tier." }));
     await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("earlier parts are live") });
+  });
+
+  it("does not resume a failed partial thread from an unbound timeline match", async () => {
+    const thread: Partial<DeliveryJob> = { text: "First\n\nSecond", items: ["First", "Second"], delivery: { status: "failed", at: CONTRACT_NOW, attempts: 2, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } };
+    queue(json(200, X_USER));
+    await expect(make().publish(job(thread))).rejects.toMatchObject({ kind: "needs_user", message: expect.stringContaining("cannot be bound to the persisted send key") });
+    expect(requestUrlMock.calls.filter((entry) => entry.url.endsWith("/2/tweets"))).toHaveLength(0);
   });
 
   it("refuses unsupported or excess media instead of silently omitting it", async () => {

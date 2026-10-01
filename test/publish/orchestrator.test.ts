@@ -4,7 +4,7 @@ import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
 import { TID_RE } from "../../src/platforms/bluesky/tid";
 import { AdapterRegistry } from "../../src/platforms/registry";
-import { TransientError } from "../../src/platforms/errors";
+import { InvalidContentError, TransientError } from "../../src/platforms/errors";
 import type { DeliveryJob, PlatformAdapter, RemoteState } from "../../src/platforms/types";
 import { PublishOrchestrator, type FailureInfo } from "../../src/publish/orchestrator";
 import { Secrets } from "../../src/secrets/secrets";
@@ -483,6 +483,15 @@ describe("PublishOrchestrator", () => {
     await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "published", error: note });
     expect(c.log.entries.at(-1)).toMatchObject({ result: "published", url: "https://t.me/eventx/42", error: note });
+  });
+
+  it("keeps a rejected later thread part visible instead of finalizing the delivery as published", async () => {
+    const message = "X: part 2 could not be posted; earlier parts are live and the thread is not marked published. Invalid Request";
+    const { c, orchestrator } = await setup(async () => { throw new InvalidContentError(message); });
+    expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "failed", kind: "invalid_content", error: message });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "failed", attempts: 1, error: message });
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).not.toHaveProperty("remoteId");
   });
 });
 

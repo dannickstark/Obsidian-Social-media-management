@@ -140,7 +140,7 @@ describe.each(CASES.map((c) => [c.platform, c] as const))("%s adapter contract (
   it.runIf(!!c.lookup)("finds an interrupted post with lookup(), and reports one it can't find (M5 P5)", async () => {
     const l = c.lookup!;
     const found = await attempt(() => adapterFor(platform).lookup!(trackedJob(l.job())), l.found);
-    expect(found).toEqual({ ok: true, value: expect.objectContaining(l.expect) });
+    expect(found).toEqual({ ok: true, value: l.expect === null ? null : expect.objectContaining(l.expect) });
     const missing = await attempt(() => adapterFor(platform).lookup!(trackedJob(l.job())), l.notFound);
     if (l.notFoundAnswer === "unknown") expect(missing).toEqual({ ok: true, value: null });
     else expect(missing).toEqual({ ok: true, value: expect.objectContaining({ published: false }) });

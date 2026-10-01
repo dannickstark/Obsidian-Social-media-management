@@ -31,9 +31,9 @@ export const xCase: ContractCase = {
   sensitive: [X_TOKEN],
   lookup: {
     job: () => ({ ...job(), delivery: { status: "check_needed" as const, at: CONTRACT_NOW, sendAt: CONTRACT_NOW, sendKey: "send-key-x-1" } }),
-    found: [json(200, X_USER), json(200, { data: [{ id: X_ID, text: "Hello", author_id: "42", created_at: new Date(CONTRACT_NOW).toISOString() }] })],
-    expect: { published: true, remoteId: X_ID, url: `https://x.com/ada/status/${X_ID}` },
-    notFound: [json(200, X_USER), json(200, { data: [] })],
+    found: [],
+    expect: null,
+    notFound: [],
     notFoundAnswer: "unknown",
   },
 };
