@@ -136,6 +136,28 @@ describe("desktop OAuth", () => {
     }
   });
 
+  it("closes a streaming redirect response instead of draining it indefinitely", async () => {
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => { resolveClosed = resolve; });
+    const source = createServer((_req, res) => {
+      res.writeHead(307, { Location: "https://other.example.test/token" });
+      res.write("still streaming");
+      res.on("close", resolveClosed);
+    });
+    const port = await listen(source);
+    try {
+      await expect(postTokenNoFollow(
+        { url: "https://oauth.example.test/token", method: "POST", body: "code=secret-code", headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+        (_url, options, onResponse) => request(`http://127.0.0.1:${port}/token`, options, onResponse),
+      )).rejects.toThrow(/redirect/i);
+      const connectionClosed = await Promise.race([closed.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500))]);
+      expect(connectionClosed).toBe(true);
+    } finally {
+      source.closeAllConnections();
+      await close(source);
+    }
+  });
+
   it("rejects mismatched state and never exchanges the code", async () => {
     let exchanged = false;
     const flow = new OAuthFlow({

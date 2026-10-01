@@ -179,7 +179,10 @@ export async function postTokenNoFollow(req: TokenRequest, opener?: RequestOpene
     const request = open(url, { method: "POST", headers, signal: req.signal }, (response) => {
       const status = response.statusCode ?? 0;
       if (status >= 300 && status < 400) {
-        response.resume();
+        // A redirect body can stream forever. Destroy its socket instead of draining it,
+        // and absorb a late response error so it cannot surface as an unhandled event.
+        response.on("error", () => undefined);
+        response.destroy();
         reject(new Error("OAuth token endpoint redirected; credentials were not forwarded."));
         return;
       }
