@@ -37,4 +37,10 @@ describe("Instagram media hosting", () => {
       "https://cdn.example.net/image/opaque-id.png",
     );
   });
+
+  it("preserves a literal percent sign in a public image filename", () => {
+    expect(validateInstagramMediaUrl("https://cdn.example.net/image/100%25complete.png")).toBe(
+      "https://cdn.example.net/image/100%25complete.png",
+    );
+  });
 });

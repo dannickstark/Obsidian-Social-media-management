@@ -43,7 +43,9 @@ export function validateInstagramMediaUrl(raw: string): string {
   let fullyDecoded = false;
   for (let depth = 0; depth < 8; depth++) {
     try {
-      const next = decodeURIComponent(decodedPath);
+      // Protect literal percent signs (for example `%25` in an image name) while decoding real escapes.
+      const decodablePath = decodedPath.replace(/%(?![0-9a-f]{2})/gi, "%25");
+      const next = decodeURIComponent(decodablePath);
       if (next === decodedPath) {
         fullyDecoded = true;
         break;
