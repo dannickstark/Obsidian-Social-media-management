@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAIImageClient } from "../../src/images/openai";
 import { png } from "../media/bytes";
-import { validPng } from "./bytes";
+import { splitIdatPng, truncatedDeflatePng, validPng } from "./bytes";
 
 const image = validPng(8, 8);
 const encoded = Buffer.from(image).toString("base64");
@@ -43,6 +43,13 @@ describe("OpenAI image client", () => {
     const damaged = new Uint8Array(image.slice(0));
     damaged[damaged.length - 1] = damaged[damaged.length - 1]! ^ 1;
     await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from(damaged).toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
+    await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from(truncatedDeflatePng(8, 8)).toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
+  });
+
+  it("accepts a valid PNG when the zlib header is split between IDAT chunks", async () => {
+    const image = splitIdatPng(8, 8);
+    const client = new OpenAIImageClient({ getKey: () => "key", request: async () => ({ status: 200, text: JSON.stringify({ data: [{ b64_json: Buffer.from(image).toString("base64") }] }) }) });
+    expect(new Uint8Array(await client.generate({ prompt: "Lake", size: "1024x1024" }))).toEqual(new Uint8Array(image));
   });
 
   it("cancels the result even when requestUrl cannot abort the request", async () => {

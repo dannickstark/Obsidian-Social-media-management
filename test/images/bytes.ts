@@ -21,6 +21,34 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
+function rebuilt(base: ArrayBuffer, pieces: Uint8Array[]): ArrayBuffer {
+  const bytes = new Uint8Array(base);
+  const ihdr = bytes.subarray(16, 29);
+  const parts = [signature, chunk("IHDR", ihdr), ...pieces.map((piece) => chunk("IDAT", piece)), chunk("IEND", new Uint8Array())];
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { out.set(part, offset); offset += part.length; }
+  return out.buffer;
+}
+
+function idat(base: ArrayBuffer): Uint8Array {
+  const bytes = new Uint8Array(base);
+  const length = new DataView(base).getUint32(33);
+  return bytes.slice(41, 41 + length);
+}
+
+export function splitIdatPng(width: number, height: number): ArrayBuffer {
+  const base = validPng(width, height);
+  const data = idat(base);
+  return rebuilt(base, [data.subarray(0, 1), data.subarray(1)]);
+}
+
+export function truncatedDeflatePng(width: number, height: number): ArrayBuffer {
+  const base = validPng(width, height);
+  const data = idat(base);
+  return rebuilt(base, [data.subarray(0, data.length - 4)]);
+}
+
 /** Fully structured RGBA PNG fixture; unlike test/media/bytes.ts it has IDAT and IEND chunks. */
 export function validPng(width: number, height: number, shade = 0): ArrayBuffer {
   const ihdr = new Uint8Array(13);

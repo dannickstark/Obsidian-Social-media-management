@@ -18,24 +18,35 @@ export interface SaveGeneratedOptions {
 /** Saves vault-local original and optional crop. The caller may preview bytes before calling this. */
 export async function saveGeneratedImage(app: App, notePath: string, source: ArrayBuffer, options: SaveGeneratedOptions = {}): Promise<SavedGeneratedImage> {
   if (source.byteLength > 20 * 1024 * 1024) throw new Error("Generated image must be a PNG under 20 MB and 40 megapixels.");
-  const size = pngStructure(new Uint8Array(source));
+  const size = await pngStructure(new Uint8Array(source));
   if (!size) {
     throw new Error("Generated image must be a PNG under 20 MB and 40 megapixels.");
   }
   const focus = (options.focus ?? [0.5, 0.5]).map((n) => Math.round((Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5) * 100) / 100) as FocalPoint;
   // Render before writing either file so a failed crop leaves no orphaned original.
   const cropped = options.ratio === undefined ? undefined : await cropFromFocus(source, options.ratio, focus, options.render);
-  if (cropped && (cropped.byteLength > 20 * 1024 * 1024 || !pngStructure(new Uint8Array(cropped)))) throw new Error("Generated crop must be a complete PNG under 20 MB.");
+  if (cropped && (cropped.byteLength > 20 * 1024 * 1024 || !await pngStructure(new Uint8Array(cropped)))) throw new Error("Generated crop must be a complete PNG under 20 MB.");
   const sourcePath = await app.fileManager.getAvailablePathForAttachment("generated-original.png", notePath);
-  const original = await app.vault.createBinary(sourcePath, source);
+  const plannedPaths: string[] = [];
+  let original: TFile | undefined;
   let crop: TFile | undefined;
   try {
+    if (app.vault.getFileByPath(sourcePath)) throw new Error("Generated image path is already occupied.");
+    plannedPaths.push(sourcePath);
+    original = await app.vault.createBinary(sourcePath, source);
     if (cropped === undefined) return { sourcePath: original.path, focus, target: app.metadataCache.fileToLinktext(original, notePath, true) };
     const cropPath = await app.fileManager.getAvailablePathForAttachment("generated-crop.png", notePath);
+    if (cropPath === sourcePath || app.vault.getFileByPath(cropPath)) throw new Error("Generated crop path is already occupied.");
+    plannedPaths.push(cropPath);
     crop = await app.vault.createBinary(cropPath, cropped);
     return { sourcePath: original.path, cropPath: crop.path, cropRatio: options.ratio!, focus, target: app.metadataCache.fileToLinktext(crop, notePath, true) };
   } catch (error) {
-    const cleanup = await Promise.allSettled([crop, original].filter((file): file is TFile => !!file && app.vault.getFileByPath(file.path) === file).map((file) => app.vault.delete(file)));
+    // A vault write can create a file and still reject before returning its TFile.
+    // These exact paths were verified absent and recorded before each attempted write.
+    const cleanup = await Promise.allSettled(plannedPaths.reverse().map(async (path) => {
+      const file = app.vault.getFileByPath(path);
+      if (file && (!original || path !== original.path || file === original) && (!crop || path !== crop.path || file === crop)) await app.vault.delete(file);
+    }));
     const failed = cleanup.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failed.length) throw new AggregateError([error, ...failed.map((result) => result.reason)], "Generated image save failed and cleanup was incomplete.");
     throw error;

@@ -76,7 +76,7 @@ export class OpenAIImageClient {
     } catch {
       throw new Error("OpenAI returned an invalid image response.");
     }
-    if (!bytes.length || bytes.byteLength > MAX_IMAGE_BYTES || !pngStructure(bytes)) throw new Error("OpenAI returned an invalid image response.");
+    if (!bytes.length || bytes.byteLength > MAX_IMAGE_BYTES || !await pngStructure(bytes)) throw new Error("OpenAI returned an invalid image response.");
     const output = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(output).set(bytes);
     return output;

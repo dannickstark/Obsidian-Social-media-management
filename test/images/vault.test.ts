@@ -8,6 +8,7 @@ import { sendDigest } from "../../src/publish/actions";
 import { createApp, indexed, writeNote } from "../helpers";
 import { png } from "../media/bytes";
 import { validPng } from "./bytes";
+import { splitIdatPng, truncatedDeflatePng } from "./bytes";
 import { makeCtx } from "../ui/ctx";
 import { Vault as FakeVault } from "../fakes/obsidian";
 
@@ -58,6 +59,32 @@ describe("generated vault assets", () => {
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
     await expect(saveGeneratedImage(app as never, file.path, png(8, 8))).rejects.toThrow(/PNG/i);
     expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    await expect(saveGeneratedImage(app as never, file.path, truncatedDeflatePng(8, 8))).rejects.toThrow(/PNG/i);
+    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    expect((await saveGeneratedImage(app as never, file.path, splitIdatPng(8, 8))).sourcePath).toBe("Social/generated-original.png");
+  });
+
+  it("removes the original when createBinary writes it and then rejects", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
+    const create = app.vault.createBinary.bind(app.vault);
+    vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => { await create(path, data); throw new Error("write acknowledgement lost"); });
+    await expect(saveGeneratedImage(app as never, file.path, validPng(8, 8))).rejects.toThrow("write acknowledgement lost");
+    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+  });
+
+  it("removes both files when the crop write succeeds but rejects before returning", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
+    const create = app.vault.createBinary.bind(app.vault);
+    vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => {
+      const written = await create(path, data);
+      if (path.includes("generated-crop")) throw new Error("crop acknowledgement lost");
+      return written;
+    });
+    await expect(saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) })).rejects.toThrow("crop acknowledgement lost");
+    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    expect(app.vault.getFileByPath("Social/generated-crop.png")).toBeNull();
   });
 
   it("removes the original if writing the crop fails", async () => {

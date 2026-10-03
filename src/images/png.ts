@@ -25,9 +25,54 @@ function allowedDepth(depth: number, color: number): boolean {
   return false;
 }
 
-/** Checks PNG signature, complete chunks/CRCs, IHDR, IDAT and terminal IEND. */
-export function pngStructure(bytes: Uint8Array): { width: number; height: number } | null {
-  if (bytes.length < 57 || SIGNATURE.some((part, i) => bytes[i] !== part)) return null;
+const MAX_COMPRESSED = 20 * 1024 * 1024;
+const MAX_DECOMPRESSED = 80 * 1024 * 1024;
+
+async function validPixels(parts: readonly Uint8Array[], width: number, height: number, depth: number, color: number): Promise<boolean> {
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[color];
+  if (!channels) return false;
+  const rowLength = Math.ceil(width * channels * depth / 8) + 1;
+  const expected = rowLength * height;
+  const compressedLength = parts.reduce((sum, part) => sum + part.length, 0);
+  if (expected > MAX_DECOMPRESSED || compressedLength < 6 || compressedLength > MAX_COMPRESSED || typeof DecompressionStream === "undefined") return false;
+  const compressed = new Uint8Array(new ArrayBuffer(compressedLength));
+  let at = 0;
+  for (const part of parts) { compressed.set(part, at); at += part.length; }
+  const cmf = compressed[0]!;
+  const flg = compressed[1]!;
+  if ((cmf & 0x0f) !== 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 !== 0) return false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const source = new ReadableStream<BufferSource>({
+      start(controller) {
+        controller.enqueue(compressed);
+        controller.close();
+      },
+    });
+    reader = source.pipeThrough(new DecompressionStream("deflate")).getReader();
+    let total = 0;
+    let position = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return total === expected;
+      for (const byte of value) {
+        if (total >= expected || (position === 0 && byte > 4)) {
+          await reader.cancel();
+          return false;
+        }
+        total++;
+        position = (position + 1) % rowLength;
+      }
+    }
+  } catch {
+    await reader?.cancel().catch(() => undefined);
+    return false;
+  }
+}
+
+/** Checks complete chunks/CRCs and bounded, decodable scanlines before saving an image. */
+export async function pngStructure(bytes: Uint8Array): Promise<{ width: number; height: number } | null> {
+  if (bytes.length < 57 || bytes.length > MAX_COMPRESSED || SIGNATURE.some((part, i) => bytes[i] !== part)) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 8;
   let width = 0;
@@ -35,6 +80,9 @@ export function pngStructure(bytes: Uint8Array): { width: number; height: number
   let sawHeader = false;
   let sawData = false;
   let endedData = false;
+  let depth = 0;
+  let color = 0;
+  const idat: Uint8Array[] = [];
   while (offset + 12 <= bytes.length) {
     const length = view.getUint32(offset);
     if (length > bytes.length - offset - 12) return null;
@@ -48,22 +96,18 @@ export function pngStructure(bytes: Uint8Array): { width: number; height: number
       if (sawHeader || length !== 13) return null;
       width = view.getUint32(dataStart);
       height = view.getUint32(dataStart + 4);
+      depth = bytes[dataStart + 8]!;
+      color = bytes[dataStart + 9]!;
       if (!width || !height || width > 8192 || height > 8192 || width * height > 40_000_000 ||
-          !allowedDepth(bytes[dataStart + 8]!, bytes[dataStart + 9]!) ||
-          bytes[dataStart + 10] !== 0 || bytes[dataStart + 11] !== 0 || ![0, 1].includes(bytes[dataStart + 12]!)) return null;
+          !allowedDepth(depth, color) ||
+          bytes[dataStart + 10] !== 0 || bytes[dataStart + 11] !== 0 || bytes[dataStart + 12] !== 0) return null;
       sawHeader = true;
     } else if (type === "IDAT") {
-      if (endedData || length === 0) return null;
-      if (!sawData) {
-        // IDAT is a zlib stream: require deflate compression and a valid header checksum.
-        if (length < 6) return null;
-        const cmf = bytes[dataStart]!;
-        const flg = bytes[dataStart + 1]!;
-        if ((cmf & 0x0f) !== 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 !== 0) return null;
-      }
+      if (endedData) return null;
+      idat.push(bytes.subarray(dataStart, dataEnd));
       sawData = true;
     } else if (type === "IEND") {
-      return sawHeader && sawData && length === 0 && dataEnd + 4 === bytes.length ? { width, height } : null;
+      return sawHeader && sawData && length === 0 && dataEnd + 4 === bytes.length && await validPixels(idat, width, height, depth, color) ? { width, height } : null;
     } else if (sawData) {
       endedData = true;
     }
