@@ -164,7 +164,7 @@ export class HandOverService {
       this.retryAt.set(tryKey, { at: Number.POSITIVE_INFINITY, failures: 0 });
       return "kept";
     }
-    const digest = contentDigest(v, content.body);
+    const digest = contentDigest(v, content.body, [...content.media, ...(content.featured ? [content.featured] : [])]);
     const stagger = this.deps.defaultStaggerMinutes();
     const box: { v?: Variant; d?: Delivery; before?: Delivery } = {};
     const claimed = await this.deps.writer.updateVariant(v.file, (fresh) => {
@@ -172,7 +172,7 @@ export class HandOverService {
       const d = effectiveDelivery(fresh, channelId);
       if (d?.status !== "scheduled") return { refuse: "It is no longer scheduled." };
       if (deliveryTime(fresh, channelId, stagger) !== at) return { refuse: "Its time changed." };
-      if (contentDigest(fresh, content.body) !== digest) return { refuse: "It changed while it was being read." };
+      if (contentDigest(fresh, content.body, [...content.media, ...(content.featured ? [content.featured] : [])]) !== digest) return { refuse: "It changed while it was being read." };
       const next = transition(d, "handed_over", { at, remoteAt: at, digest, attempts: (d.attempts ?? 0) + 1 });
       delete next.remoteId;
       delete next.url;

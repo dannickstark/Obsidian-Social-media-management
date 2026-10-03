@@ -1,6 +1,7 @@
 import type { IndexedVariant } from "../index/socialIndex";
 import type { Delivery, Variant } from "../model/types";
 import type { SyncChange } from "../platforms/types";
+import type { MediaInfo } from "../platforms/types";
 import { imageEmbeds } from "../platforms/wordpress/markdown";
 import { cyrb53 } from "../util/hash";
 
@@ -30,14 +31,21 @@ type DigestedField = (typeof DIGESTED_VARIANT_FIELDS)[number];
 
 /**
  * What a hand-over sent, as a short string (#66): computed by the index for every note and stored on the delivery
- * at hand-over. Built from the note itself (no file reads), so it covers the same content as `sendDigest`
- * except the resolved vault paths of the media.
+ * at hand-over. The index supplies live fingerprints for generated originals and crops when it reads the note.
  */
-export function contentDigest(v: Pick<Variant, DigestedField>, body: string): string {
-  const meta = (target: string) => [v.mediaMeta?.[target]?.alt ?? null, v.mediaMeta?.[target]?.focus ?? null];
+export function contentDigest(v: Pick<Variant, DigestedField>, body: string, media: readonly MediaInfo[] = []): string {
+  const meta = (target: string) => {
+    const m = v.mediaMeta?.[target];
+    return [m?.alt ?? null, m?.focus ?? null, m?.sourcePath ?? null, m?.cropPath ?? null, m?.cropRatio ?? null];
+  };
   const featured = v.wordpress?.featuredImage;
-  const bodyImages = v.platform === "wordpress" ? imageEmbeds(body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
-  const parts = [v.platform, v.title ?? "", v.url ?? "", body, bodyImages, v.media.map((t) => [t, ...meta(t)]), v.wordpress ?? null, featured ? meta(featured) : null];
+  const fingerprint = (target: string) => {
+    if (!v.mediaMeta?.[target]?.sourcePath) return null;
+    const found = media.find((m) => m.target === target);
+    return found ? [found.fingerprint ?? "missing", found.sourceFingerprint ?? "missing"] : null;
+  };
+  const bodyImages = v.platform === "wordpress" ? imageEmbeds(body).map((target) => [target, ...meta(target), fingerprint(target)]) : [];
+  const parts = [v.platform, v.title ?? "", v.url ?? "", body, bodyImages, v.media.map((t) => [t, ...meta(t), fingerprint(t)]), v.wordpress ?? null, featured ? [...meta(featured), fingerprint(featured)] : null];
   return cyrb53(JSON.stringify(parts)).toString(36);
 }
 
@@ -72,6 +80,6 @@ export function outOfSync(v: SyncView, channelId?: string): boolean {
 }
 
 /** What a push would change for this delivery; without a baseline, everything. */
-export function syncChange(v: Pick<Variant, DigestedField>, body: string, d: Delivery): SyncChange {
-  return { content: d.digest === undefined || d.digest !== contentDigest(v, body), time: d.remoteAt === undefined || d.at !== d.remoteAt };
+export function syncChange(v: Pick<Variant, DigestedField>, body: string, d: Delivery, media: readonly MediaInfo[] = []): SyncChange {
+  return { content: d.digest === undefined || d.digest !== contentDigest(v, body, media), time: d.remoteAt === undefined || d.at !== d.remoteAt };
 }

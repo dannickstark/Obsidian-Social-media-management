@@ -5,6 +5,7 @@ import {
   POST_MODES,
   zChannelId,
   zCount,
+  zCropRatio,
   zDeliveryStatus,
   zMinutes,
   zMinutesList,
@@ -164,6 +165,11 @@ function parseFocus(value: unknown): [number, number] | undefined {
   return nums.every((n) => Number.isFinite(n) && n >= 0 && n <= 1) ? [nums[0]!, nums[1]!] : undefined;
 }
 
+function generatedPath(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= 500 && !value.startsWith("/") && !value.includes("\\") &&
+    !value.split("/").some((part) => !part || part === "." || part === "..") && /\.(png|jpe?g|webp)$/i.test(value) ? value : undefined;
+}
+
 function parseMediaMeta(raw: unknown, issues: Issue[]): Record<string, MediaMeta> | undefined {
   if (isBlank(raw)) return undefined;
   if (!isRecord(raw)) {
@@ -189,6 +195,17 @@ function parseMediaMeta(raw: unknown, issues: Issue[]): Record<string, MediaMeta
       if (focus) meta.focus = focus;
       else issues.push({ level: "warning", field: `${field}.focus`, message: "focus must be two numbers between 0 and 1, e.g. 0.5, 0.3" });
     }
+    for (const [rawKey, key] of [["source_path", "sourcePath"], ["crop_path", "cropPath"]] as const) {
+      if (isBlank(value[rawKey])) continue;
+      const path = generatedPath(value[rawKey]);
+      if (path) meta[key] = path;
+      else issues.push({ level: "warning", field: `${field}.${rawKey}`, message: `${rawKey} must be a vault-relative image path` });
+    }
+    if (!isBlank(value.crop_ratio)) {
+      const ratio = zCropRatio.safeParse(value.crop_ratio);
+      if (ratio.success) meta.cropRatio = ratio.data;
+      else issues.push({ level: "warning", field: `${field}.crop_ratio`, message: "crop_ratio must be a positive image width/height ratio" });
+    }
     out[target] = meta;
   }
   return out;
@@ -200,6 +217,9 @@ export function serializeMediaMeta(meta: Record<string, MediaMeta> | undefined):
       const out: Record<string, unknown> = {};
       if (m.alt) out.alt = m.alt;
       if (m.focus) out.focus = m.focus.map((n) => Math.round(n * 100) / 100);
+      if (m.sourcePath) out.source_path = m.sourcePath;
+      if (m.cropPath) out.crop_path = m.cropPath;
+      if (m.cropRatio !== undefined) out.crop_ratio = m.cropRatio;
       return [target, out] as const;
     })
     .filter(([, out]) => Object.keys(out).length > 0);

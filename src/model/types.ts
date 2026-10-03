@@ -76,6 +76,12 @@ export interface MediaMeta {
   alt?: string;
   /** Focal point, 0..1 from the left and from the top; adapters crop around it. */
   focus?: [number, number];
+  /** Original generated image, kept so crops can be regenerated. Vault-relative path. */
+  sourcePath?: string;
+  /** Derived PNG that the media entry uses. Vault-relative path. */
+  cropPath?: string;
+  /** Width / height of the derived crop. */
+  cropRatio?: number;
 }
 
 export interface Variant {

@@ -78,10 +78,17 @@ export interface DeliveryNotifier {
  * unchanged (M2b P3 for approvals), and the approval question shows each of these fields.
  */
 export function sendDigest(v: Variant, content: LoadedContent): string {
-  const media = (m: MediaInfo | undefined) => (m ? [m.target, m.path ?? null, m.alt ?? null, m.focus ?? null] : null);
+  const media = (m: MediaInfo | undefined) => (m ? [
+    m.target, m.path ?? null, m.alt ?? null, m.focus ?? null,
+    v.mediaMeta?.[m.target]?.sourcePath ?? null, v.mediaMeta?.[m.target]?.cropPath ?? null,
+    v.mediaMeta?.[m.target]?.cropRatio ?? null, m.fingerprint ?? null, m.sourceFingerprint ?? null,
+  ] : null);
   // Media a platform never sends (maxCount 0) is neither shown nor part of the digest.
   const sent = platformDef(v.platform).capabilities.media.maxCount > 0 ? content.media : [];
-  const bodyImages = v.platform === "wordpress" ? imageEmbeds(content.body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
+  const bodyImages = v.platform === "wordpress" ? imageEmbeds(content.body).map((target) => [
+    target, v.mediaMeta?.[target]?.alt ?? null, v.mediaMeta?.[target]?.sourcePath ?? null,
+    v.mediaMeta?.[target]?.cropPath ?? null, v.mediaMeta?.[target]?.cropRatio ?? null,
+  ]) : [];
   return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, bodyImages, sent.map(media), media(content.featured), v.wordpress ?? null]);
 }
 
@@ -299,7 +306,7 @@ export class PublishActions {
       new Notice(`${name} is not waiting on ${PLATFORM_META[v.platform].label}'s schedule.`);
       return false;
     }
-    const result = await this.updateChannel(v, content, channelId, syncChange(v, content.body, d));
+    const result = await this.updateChannel(v, content, channelId, syncChange(v, content.body, d, [...content.media, ...(content.featured ? [content.featured] : [])]));
     new Notice(result.ok ? `Updated on ${PLATFORM_META[v.platform].label} for ${name}.` : `${name}: ${result.error}`);
     return result.ok;
   }
@@ -833,7 +840,7 @@ export class PublishActions {
     }
     const secretId = channel.secretId;
     const redact = (text: string) => (secretId ? this.deps.secrets.redact(text, [secretId]) : text);
-    const digest = contentDigest(v, content.body);
+    const digest = contentDigest(v, content.body, [...content.media, ...(content.featured ? [content.featured] : [])]);
     const pushedAt = d.at ?? d.remoteAt;
     try {
       const res = (await adapter.update(deliveryJob(v, channel, d, content, secretId ? this.deps.secrets.get(secretId) : null), change)) as { remoteId?: string } | undefined;
@@ -901,7 +908,7 @@ export class PublishActions {
         break;
       }
       const d = current.v.deliveries[id];
-      const result = await this.updateChannel(current.v, current.content, id, d?.status === "handed_over" ? syncChange(current.v, current.content.body, d) : undefined);
+      const result = await this.updateChannel(current.v, current.content, id, d?.status === "handed_over" ? syncChange(current.v, current.content.body, d, [...current.content.media, ...(current.content.featured ? [current.content.featured] : [])]) : undefined);
       if (result.ok) updated.push(id);
       else failed.push({ id, error: result.error });
     }

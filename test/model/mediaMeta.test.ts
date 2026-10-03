@@ -49,4 +49,15 @@ describe("media_meta", () => {
     expect(fm.media_meta).toEqual({ "cover.png": { alt: "Makers", focus: [0.25, 0.75] } });
     expect(parseVariant(fm, file.path).value?.mediaMeta).toEqual({ "cover.png": { alt: "Makers", focus: [0.25, 0.75] } });
   });
+
+  it("round-trips generated source and crop provenance with focus", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "Social/Posts/Generated.md", base, "Hi\n");
+    const writer = new SafeWriter(app as never);
+    const meta = { "crop.png": { focus: [0.1, 0.9] as [number, number], sourcePath: "Attachments/original.png", cropPath: "Attachments/crop.png", cropRatio: 1 } };
+    await writer.updateVariant(file as never, () => ({ fields: { media: ["crop.png"], mediaMeta: meta } }));
+    const fm = app.metadataCache.getFileCache(file)!.frontmatter!;
+    expect(fm.media_meta).toEqual({ "crop.png": { focus: [0.1, 0.9], source_path: "Attachments/original.png", crop_path: "Attachments/crop.png", crop_ratio: 1 } });
+    expect(parseVariant(fm, file.path).value?.mediaMeta).toEqual(meta);
+  });
 });

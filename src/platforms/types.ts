@@ -59,6 +59,9 @@ export interface MediaInfo {
   alt?: string;
   /** Focal point, 0..1 from the left and from the top. */
   focus?: [number, number];
+  /** Live content hashes of generated assets, so a binary edit invalidates approval. */
+  fingerprint?: string;
+  sourceFingerprint?: string;
 }
 
 /** What validators and previews look at: the note's fields, its Markdown body and its resolved media. */
