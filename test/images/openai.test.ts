@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAIImageClient } from "../../src/images/openai";
 import { png } from "../media/bytes";
+import { validPng } from "./bytes";
 
-const image = png(1024, 1024);
+const image = validPng(8, 8);
 const encoded = Buffer.from(image).toString("base64");
 const response = { status: 200, text: JSON.stringify({ data: [{ b64_json: encoded }] }) };
 
@@ -37,6 +38,11 @@ describe("OpenAI image client", () => {
     await expect(make("not json").generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
     await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from("not an image").toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
     await expect(make("x".repeat(30_000_000)).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/too large/i);
+    await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from(png(8, 8)).toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
+    await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from(image.slice(0, -12)).toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
+    const damaged = new Uint8Array(image.slice(0));
+    damaged[damaged.length - 1] = damaged[damaged.length - 1]! ^ 1;
+    await expect(make(JSON.stringify({ data: [{ b64_json: Buffer.from(damaged).toString("base64") }] })).generate({ prompt: "Lake", size: "1024x1024" })).rejects.toThrow(/invalid image response/i);
   });
 
   it("cancels the result even when requestUrl cannot abort the request", async () => {

@@ -1,5 +1,5 @@
 import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
-import { imageSize } from "../media/imageSize";
+import { pngStructure } from "./png";
 import { SecretIds, type Secrets } from "../secrets/secrets";
 import type { ImageGenerationRequest } from "./types";
 
@@ -76,7 +76,7 @@ export class OpenAIImageClient {
     } catch {
       throw new Error("OpenAI returned an invalid image response.");
     }
-    if (!bytes.length || bytes.byteLength > MAX_IMAGE_BYTES || imageSize(bytes)?.mime !== "image/png") throw new Error("OpenAI returned an invalid image response.");
+    if (!bytes.length || bytes.byteLength > MAX_IMAGE_BYTES || !pngStructure(bytes)) throw new Error("OpenAI returned an invalid image response.");
     const output = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(output).set(bytes);
     return output;

@@ -225,10 +225,10 @@ export class Vault extends Events {
     return entry.binary ? entry.binary.slice(0) : new TextEncoder().encode(entry.content).buffer;
   }
 
-  async modifyBinary(file: TFile, data: ArrayBuffer): Promise<void> {
+  async modifyBinary(file: TFile, data: ArrayBuffer, options: { preserveMtime?: boolean } = {}): Promise<void> {
     const entry = this.entry(file);
     entry.binary = data.slice(0);
-    file.stat = { ...file.stat, mtime: file.stat.mtime + 1, size: data.byteLength };
+    file.stat = { ...file.stat, mtime: options.preserveMtime ? file.stat.mtime : file.stat.mtime + 1, size: data.byteLength };
     this.trigger("modify", file);
     this.app.metadataCache.fileChanged(file, "");
   }

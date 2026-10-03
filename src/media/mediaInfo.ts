@@ -51,18 +51,18 @@ export class MediaInspector {
     const info: MediaInfo = { ...base, path: file.path, kind, bytes: file.stat.size };
     if (kind !== "image") return info;
     info.mime = IMAGE_MIME[file.extension.toLowerCase()];
-    const detail = await this.detail(file);
+    const detail = await this.detail(file, !!meta?.sourcePath);
     if (meta?.sourcePath) {
       info.fingerprint = detail.fingerprint;
       const source = this.app.vault.getFileByPath(meta.sourcePath);
-      info.sourceFingerprint = source ? (await this.detail(source)).fingerprint : "missing";
+      info.sourceFingerprint = source ? (await this.detail(source, true)).fingerprint : "missing";
     }
     return detail.size ? { ...info, width: detail.size.width, height: detail.size.height } : info;
   }
 
-  private async detail(file: TFile): Promise<{ size: Size; fingerprint: string }> {
+  private async detail(file: TFile, live = false): Promise<{ size: Size; fingerprint: string }> {
     const cached = this.sizes.get(file.path);
-    if (cached && cached.mtime === file.stat.mtime) return cached;
+    if (!live && cached && cached.mtime === file.stat.mtime) return cached;
     const bytes = await this.app.vault.readBinary(file);
     const found = imageSize(new Uint8Array(bytes));
     const size = found ? { width: found.width, height: found.height } : null;
