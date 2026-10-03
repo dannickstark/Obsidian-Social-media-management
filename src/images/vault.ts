@@ -3,6 +3,21 @@ import { pngStructure } from "./png";
 import type { SafeWriter } from "../model/writer";
 import { cropFromFocus, type CropRenderer } from "./crops";
 import type { FocalPoint, GeneratedMediaProvenance } from "./types";
+import { randomString } from "../model/ids";
+
+// Reserve candidates across in-flight saves. Obsidian's availability lookup only
+// sees files that have already been written, not writes awaiting completion.
+const reservedPaths = new Set<string>();
+
+async function reserveGeneratedPath(app: App, notePath: string, kind: "original" | "crop"): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const path = await app.fileManager.getAvailablePathForAttachment(`generated-${randomString(16)}-${kind}.png`, notePath);
+    if (reservedPaths.has(path) || app.vault.getFileByPath(path)) continue;
+    reservedPaths.add(path);
+    return path;
+  }
+  throw new Error("Could not reserve a distinct generated image path.");
+}
 
 export interface SavedGeneratedImage extends GeneratedMediaProvenance {
   /** A link target that resolves from the note, suitable for `media:`. */
@@ -26,17 +41,15 @@ export async function saveGeneratedImage(app: App, notePath: string, source: Arr
   // Render before writing either file so a failed crop leaves no orphaned original.
   const cropped = options.ratio === undefined ? undefined : await cropFromFocus(source, options.ratio, focus, options.render);
   if (cropped && (cropped.byteLength > 20 * 1024 * 1024 || !await pngStructure(new Uint8Array(cropped)))) throw new Error("Generated crop must be a complete PNG under 20 MB.");
-  const sourcePath = await app.fileManager.getAvailablePathForAttachment("generated-original.png", notePath);
   const plannedPaths: string[] = [];
   let original: TFile | undefined;
   let crop: TFile | undefined;
   try {
-    if (app.vault.getFileByPath(sourcePath)) throw new Error("Generated image path is already occupied.");
+    const sourcePath = await reserveGeneratedPath(app, notePath, "original");
     plannedPaths.push(sourcePath);
     original = await app.vault.createBinary(sourcePath, source);
     if (cropped === undefined) return { sourcePath: original.path, focus, target: app.metadataCache.fileToLinktext(original, notePath, true) };
-    const cropPath = await app.fileManager.getAvailablePathForAttachment("generated-crop.png", notePath);
-    if (cropPath === sourcePath || app.vault.getFileByPath(cropPath)) throw new Error("Generated crop path is already occupied.");
+    const cropPath = await reserveGeneratedPath(app, notePath, "crop");
     plannedPaths.push(cropPath);
     crop = await app.vault.createBinary(cropPath, cropped);
     return { sourcePath: original.path, cropPath: crop.path, cropRatio: options.ratio!, focus, target: app.metadataCache.fileToLinktext(crop, notePath, true) };
@@ -50,6 +63,8 @@ export async function saveGeneratedImage(app: App, notePath: string, source: Arr
     const failed = cleanup.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failed.length) throw new AggregateError([error, ...failed.map((result) => result.reason)], "Generated image save failed and cleanup was incomplete.");
     throw error;
+  } finally {
+    for (const path of plannedPaths) reservedPaths.delete(path);
   }
 }
 

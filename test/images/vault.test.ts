@@ -58,10 +58,10 @@ describe("generated vault assets", () => {
     const app = createApp();
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
     await expect(saveGeneratedImage(app as never, file.path, png(8, 8))).rejects.toThrow(/PNG/i);
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
     await expect(saveGeneratedImage(app as never, file.path, truncatedDeflatePng(8, 8))).rejects.toThrow(/PNG/i);
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
-    expect((await saveGeneratedImage(app as never, file.path, splitIdatPng(8, 8))).sourcePath).toBe("Social/generated-original.png");
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
+    expect((await saveGeneratedImage(app as never, file.path, splitIdatPng(8, 8))).sourcePath).toMatch(/^Social\/generated-[a-z0-9]{16}-original\.png$/);
   });
 
   it("removes the original when createBinary writes it and then rejects", async () => {
@@ -70,7 +70,34 @@ describe("generated vault assets", () => {
     const create = app.vault.createBinary.bind(app.vault);
     vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => { await create(path, data); throw new Error("write acknowledgement lost"); });
     await expect(saveGeneratedImage(app as never, file.path, validPng(8, 8))).rejects.toThrow("write acknowledgement lost");
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
+  });
+
+  it("never rolls back a concurrent save that succeeded while the first write was pending", async () => {
+    const app = createApp();
+    const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
+    const create = app.vault.createBinary.bind(app.vault);
+    let firstPath = "";
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const pendingFirst = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => {
+      if (!firstPath) {
+        firstPath = path;
+        firstStarted();
+        await pendingFirst;
+        throw new Error("first write failed");
+      }
+      return create(path, data);
+    });
+    const first = saveGeneratedImage(app as never, file.path, validPng(8, 8));
+    await started;
+    const second = await saveGeneratedImage(app as never, file.path, validPng(9, 9));
+    releaseFirst();
+    await expect(first).rejects.toThrow("first write failed");
+    expect(second.sourcePath).not.toBe(firstPath);
+    expect(app.vault.getFileByPath(second.sourcePath)).not.toBeNull();
   });
 
   it("removes both files when the crop write succeeds but rejects before returning", async () => {
@@ -79,21 +106,20 @@ describe("generated vault assets", () => {
     const create = app.vault.createBinary.bind(app.vault);
     vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => {
       const written = await create(path, data);
-      if (path.includes("generated-crop")) throw new Error("crop acknowledgement lost");
+      if (path.endsWith("-crop.png")) throw new Error("crop acknowledgement lost");
       return written;
     });
     await expect(saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) })).rejects.toThrow("crop acknowledgement lost");
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
-    expect(app.vault.getFileByPath("Social/generated-crop.png")).toBeNull();
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
   });
 
   it("removes the original if writing the crop fails", async () => {
     const app = createApp();
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
     const create = app.vault.createBinary.bind(app.vault);
-    vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => path.includes("generated-crop") ? Promise.reject(new Error("disk full")) : create(path, data));
+    vi.spyOn(app.vault, "createBinary").mockImplementation(async (path, data) => path.endsWith("-crop.png") ? Promise.reject(new Error("disk full")) : create(path, data));
     await expect(saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) })).rejects.toThrow("disk full");
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
   });
 
   it("removes both created files when attaching to the note fails", async () => {
@@ -112,8 +138,7 @@ describe("generated vault assets", () => {
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
     vi.spyOn(app.metadataCache, "fileToLinktext").mockImplementationOnce(() => { throw new Error("link unavailable"); });
     await expect(saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) })).rejects.toThrow("link unavailable");
-    expect(app.vault.getFileByPath("Social/generated-original.png")).toBeNull();
-    expect(app.vault.getFileByPath("Social/generated-crop.png")).toBeNull();
+    expect(app.vault.getFiles().filter((asset) => asset.extension === "png")).toHaveLength(0);
   });
 
   it("recomputes generated fingerprints after a same-path, same-mtime binary edit", async () => {
