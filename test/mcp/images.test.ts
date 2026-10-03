@@ -3,6 +3,7 @@ import { SecretIds } from "../../src/secrets/secrets";
 import { validPng } from "../images/bytes";
 import { indexed } from "../helpers";
 import { mcpCtx } from "./helpers";
+import { TEST_NOW } from "../ui/ctx";
 
 const POST = "Social/Event X/Event X – Instagram.md";
 
@@ -57,6 +58,26 @@ describe("generate_image tool", () => {
     const failed = await c.call("generate_image", { prompt: "A lake" });
     expect(failed).toMatchObject({ ok: false });
     expect(JSON.stringify(failed)).not.toContain("super-private-key");
+    expect(c.app.vault.getFiles().filter((f) => f.extension === "png")).toHaveLength(0);
+  });
+
+  it("refuses and removes generated files when a post is moved inside the 10-minute window during generation", async () => {
+    const path = "Social/Posts/Queued Image.md";
+    const c = await mcpCtx({ notes: [{ path, frontmatter: {
+      type: "social-post", platform: "linkedin", title: "Queued Image", channels: ["li/acme-studio"], status: "scheduled",
+      scheduled_at: "2026-10-08T10:20:00+02:00", deliveries: { "li/acme-studio": { status: "scheduled" } },
+    }, body: "Hello makers\n" }] });
+    let release!: (bytes: ArrayBuffer) => void;
+    const pending = new Promise<ArrayBuffer>((resolve) => { release = resolve; });
+    const generate = vi.spyOn(c.deps.images.client, "generate").mockReturnValue(pending);
+    const call = c.call("generate_image", { prompt: "A lake", path });
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    const note = c.app.vault.getFileByPath(path)!;
+    await c.writer.patchVariant(note as never, { scheduledAt: TEST_NOW + 5 * 60_000 });
+    const before = await c.app.vault.read(note);
+    release(validPng(8, 8));
+    expect(await call).toMatchObject({ ok: false, error: "This post goes out in less than 10 minutes; unschedule it first or ask the user." });
+    expect(await c.app.vault.read(note)).toBe(before);
     expect(c.app.vault.getFiles().filter((f) => f.extension === "png")).toHaveLength(0);
   });
 });

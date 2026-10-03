@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { planComposerSchedule, reminderDefaults, scheduleNeeds } from "../../composer/schedule";
-import { channelRowStatus, heldForReview } from "../../index/queries";
-import { MINUTE } from "../../model/dates";
+import { heldForReview } from "../../index/queries";
 import { zMinutesList } from "../../model/schemas";
 import { deliveryTime } from "../../model/stateMachine";
 import type { Delivery, DeliveryStatus, Issue, Variant } from "../../model/types";
 import { UNSCHEDULE_BLOCKED, unscheduleBlocked, unscheduleDeliveries } from "../../planner/board";
 import { deliveryChanges } from "../../planner/changes";
+import { MIN_SCHEDULE_LEAD_MS } from "../../planner/leadTime";
 import { blocking } from "../../platforms/checks";
 import { formatShortDate, formatTime } from "../../ui/format";
 import { claudeNotice, findPost, noPost, untilIndexed, zPath, zWhen } from "../common";
@@ -14,8 +14,7 @@ import type { McpToolDeps } from "../deps";
 import { channelRows, iso } from "../present";
 import { defineTool, fail, ok, type ToolRegistry } from "../tools";
 
-/** Ruling P5: a post Claude schedules goes out without a second question, so the user gets this long to see the Notice and step in. */
-export const MIN_SCHEDULE_LEAD_MS = 10 * MINUTE;
+export { GOES_OUT_SOON, goesOutSoon, MIN_SCHEDULE_LEAD_MS } from "../../planner/leadTime";
 
 const PAST = "That time has passed. Pick a future time (find_free_slots can help).";
 const TOO_SOON =
@@ -24,22 +23,6 @@ const HANDED_OVER =
   "Some channels were already handed over to the platform. Change the time in Obsidian, or ask the user; the platform keeps the old time until an update is pushed.";
 const AWAITING =
   "Some channels are waiting for the user to post them by hand. Ask the user whether to move them too, then call schedule again with move_awaiting: true.";
-
-export const GOES_OUT_SOON = "This post goes out in less than 10 minutes; unschedule it first or ask the user.";
-
-/**
- * Final review 3: a scheduled channel (among `channelIds`) whose effective time (its own `at`, or the post's
- * time plus the stagger) is less than MIN_SCHEDULE_LEAD_MS away, or already past. Claude may not change what
- * such a post says in the window P5 leaves the user to step in.
- */
-export function goesOutSoon(
-  v: Pick<Variant, "channels" | "deliveries" | "status" | "scheduledAt" | "staggerMinutes">,
-  now: number,
-  stagger: number,
-  channelIds: readonly string[] = v.channels,
-): boolean {
-  return channelIds.some((id) => channelRowStatus(v, id) === "scheduled" && (deliveryTime(v, id, stagger) ?? Infinity) < now + MIN_SCHEDULE_LEAD_MS);
-}
 
 /** Final review 6: why unschedule is refused, most urgent first; each blocked status gets its own reason. */
 const UNSCHEDULE_REFUSALS: Array<[DeliveryStatus, string]> = [

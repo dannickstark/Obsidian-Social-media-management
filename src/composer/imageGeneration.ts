@@ -5,6 +5,7 @@ import { pngStructure } from "../images/png";
 import type { FocalPoint, ImageGenerationRequest } from "../images/types";
 import { attachGeneratedImage, saveGeneratedImage, type SavedGeneratedImage } from "../images/vault";
 import type { SafeWriter } from "../model/writer";
+import { GOES_OUT_SOON } from "../planner/leadTime";
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -18,6 +19,7 @@ export function safeImageError(error: unknown): string {
   if (/^Image generation was cancelled\.$/.test(message)) return message;
   if (/^OpenAI image request failed(?: \(HTTP \d{3}\))?\.$/.test(message)) return message;
   if (/^OpenAI (?:image response is too large|returned an invalid image response)\.$/.test(message)) return message;
+  if (message === GOES_OUT_SOON) return message;
   if (message === "Generated image must be a PNG under 20 MB and 40 megapixels." || message === "Generated crop must be a complete PNG under 20 MB.") return message;
   if (/^(?:Invalid crop ratio|Choose a supported image under 25 MB and 40 megapixels|Could not encode the image crop|Image cropping is unavailable on this device)\.$/.test(message)) return message;
   return "Image generation failed. Check the connection and try again.";
@@ -28,6 +30,8 @@ export interface ImageGenerationDeps {
   writer: SafeWriter;
   client: Pick<OpenAIImageClient, "generate">;
   rootFolder(): string;
+  now(): number;
+  defaultStaggerMinutes(): number;
   render?: CropRenderer;
 }
 
@@ -88,7 +92,7 @@ export class ImageGenerationSession {
     try {
       const notePath = this.note?.path ?? `${this.deps.rootFolder().replace(/\/$/, "")}/_generated.md`;
       const saved = await saveGeneratedImage(this.deps.app, notePath, this.source, { ...options, render: this.deps.render });
-      if (this.note) await attachGeneratedImage(this.deps.app, this.deps.writer, this.note, saved);
+      if (this.note) await attachGeneratedImage(this.deps.app, this.deps.writer, this.note, saved, this.deps);
       this.closed = true;
       this.source = null;
       return saved;

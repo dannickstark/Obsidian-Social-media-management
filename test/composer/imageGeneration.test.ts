@@ -8,6 +8,7 @@ import { osmmContext } from "../../src/ui/context";
 import { indexed } from "../helpers";
 import { validPng } from "../images/bytes";
 import { makeCtx } from "../ui/ctx";
+import { TEST_NOW } from "../ui/ctx";
 
 const POST = "Social/Event X/Event X – Instagram.md";
 const source = validPng(16, 9);
@@ -38,6 +39,8 @@ describe("composer image generation", () => {
       writer: c.writer,
       client: { generate },
       rootFolder: () => "Social",
+      now: () => 0,
+      defaultStaggerMinutes: () => 0,
       render: async (_bytes, rect) => validPng(rect.width, rect.height),
     });
     const note = c.app.vault.getFileByPath(POST)!;
@@ -75,6 +78,7 @@ describe("composer image generation", () => {
       app: c.app as never, writer: c.writer,
       client: { generate: async () => { throw new Error("Add an OpenAI key in this device's secret storage before generating an image."); } },
       rootFolder: () => "Social",
+      now: () => 0, defaultStaggerMinutes: () => 0,
     });
     render(ImageGeneration, { props: { session: service.open(c.app.vault.getFileByPath(POST)! as never), onClose: () => undefined } });
     await fireEvent.input(screen.getByLabelText("Image prompt"), { target: { value: "A lake" } });
@@ -89,9 +93,31 @@ describe("composer image generation", () => {
       app: c.app as never, writer: c.writer,
       client: { generate: async () => new ArrayBuffer(20 * 1024 * 1024 + 1) },
       rootFolder: () => "Social",
+      now: () => 0, defaultStaggerMinutes: () => 0,
     });
     const session = service.open(c.app.vault.getFileByPath(POST)! as never);
     await expect(session.generate({ prompt: "A lake", size: "1024x1024" })).rejects.toThrow(/20 MB|too large/i);
+    expect(c.app.vault.getFiles().filter((f) => f.extension === "png")).toHaveLength(0);
+  });
+
+  it("rejects a late scheduled post on the fresh attach and removes both original and crop", async () => {
+    const path = "Social/Posts/Queued Image.md";
+    const c = await makeCtx({ seed: true, notes: [{ path, frontmatter: {
+      type: "social-post", platform: "linkedin", title: "Queued Image", channels: ["li/acme-studio"], status: "scheduled",
+      scheduled_at: "2026-10-08T10:20:00+02:00", deliveries: { "li/acme-studio": { status: "scheduled" } },
+    }, body: "Hello makers\n" }] });
+    const note = c.app.vault.getFileByPath(path)!;
+    const service = new ImageGenerationService({
+      app: c.app as never, writer: c.writer, client: { generate: async () => source },
+      rootFolder: () => "Social", now: () => TEST_NOW, defaultStaggerMinutes: () => 0,
+      render: async (_bytes, rect) => validPng(rect.width, rect.height),
+    });
+    const session = service.open(note as never);
+    await session.generate({ prompt: "A lake", size: "1024x1024" });
+    await c.writer.patchVariant(note as never, { scheduledAt: TEST_NOW + 5 * 60_000 });
+    const before = await c.app.vault.read(note);
+    await expect(session.accept({ ratio: 1, focus: [0.75, 0.25] })).rejects.toThrow("This post goes out in less than 10 minutes; unschedule it first or ask the user.");
+    expect(await c.app.vault.read(note)).toBe(before);
     expect(c.app.vault.getFiles().filter((f) => f.extension === "png")).toHaveLength(0);
   });
 });

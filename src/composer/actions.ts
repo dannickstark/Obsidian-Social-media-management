@@ -68,7 +68,11 @@ export class ComposerActions {
   constructor(protected readonly deps: ComposerDeps) {
     this.media = new MediaInspector(deps.app);
     this.content = new ContentLoader(deps.app, this.media);
-    this.images = new ImageGenerationService({ app: deps.app, writer: deps.writer, client: new OpenAIImageClient({ secrets: new Secrets(deps.app) }), rootFolder: () => deps.settings().rootFolder });
+    this.images = new ImageGenerationService({
+      app: deps.app, writer: deps.writer, client: new OpenAIImageClient({ secrets: new Secrets(deps.app) }),
+      rootFolder: () => deps.settings().rootFolder, now: deps.now,
+      defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
+    });
   }
 
   /** Opens a preview session. Nothing enters the vault until the user accepts it. */

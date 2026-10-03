@@ -12,6 +12,8 @@ import { splitIdatPng, truncatedDeflatePng } from "./bytes";
 import { makeCtx } from "../ui/ctx";
 import { Vault as FakeVault } from "../fakes/obsidian";
 
+const timing = { now: () => 0, defaultStaggerMinutes: () => 0 };
+
 describe("generated vault assets", () => {
   it("preserves the original, writes a crop, and attaches only the crop to the note", async () => {
     const app = createApp();
@@ -23,7 +25,7 @@ describe("generated vault assets", () => {
     expect(asset.sourcePath).not.toBe(asset.cropPath);
     expect(new Uint8Array(await app.vault.readBinary(app.vault.getFileByPath(asset.sourcePath)!))).toEqual(new Uint8Array(source));
     expect(app.vault.getFileByPath(asset.cropPath!)).not.toBeNull();
-    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset);
+    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset, timing);
     const fm = app.metadataCache.getFileCache(file)!.frontmatter!;
     const v = parseVariant(fm, file.path).value!;
     expect(v.media).toEqual([asset.target]);
@@ -34,7 +36,7 @@ describe("generated vault assets", () => {
     const app = createApp();
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] }, "Body");
     const asset = await saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) });
-    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset);
+    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset, timing);
     const index = new SocialIndex(app as never, 0);
     await index.build();
     index.start();
@@ -128,7 +130,7 @@ describe("generated vault assets", () => {
     const asset = await saveGeneratedImage(app as never, file.path, validPng(16, 9), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) });
     const writer = new SafeWriter(app as never);
     vi.spyOn(writer, "updateVariant").mockRejectedValueOnce(new Error("note write failed"));
-    await expect(attachGeneratedImage(app as never, writer, file as never, asset)).rejects.toThrow("note write failed");
+    await expect(attachGeneratedImage(app as never, writer, file as never, asset, timing)).rejects.toThrow("note write failed");
     expect(app.vault.getFileByPath(asset.sourcePath)).toBeNull();
     expect(app.vault.getFileByPath(asset.cropPath!)).toBeNull();
   });
@@ -145,7 +147,7 @@ describe("generated vault assets", () => {
     const app = createApp();
     const file = await writeNote(app, "Social/Post.md", { type: "social-post", platform: "instagram", channels: ["ig/me"] });
     const asset = await saveGeneratedImage(app as never, file.path, validPng(8, 8), { ratio: 1, render: async (_input, rect) => validPng(rect.width, rect.height) });
-    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset);
+    await attachGeneratedImage(app as never, new SafeWriter(app as never), file as never, asset, timing);
     const index = new SocialIndex(app as never, 0);
     await index.build();
     index.start();

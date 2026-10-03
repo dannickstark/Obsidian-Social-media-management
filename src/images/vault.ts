@@ -4,6 +4,7 @@ import type { SafeWriter } from "../model/writer";
 import { cropFromFocus, type CropRenderer } from "./crops";
 import type { FocalPoint, GeneratedMediaProvenance } from "./types";
 import { randomString } from "../model/ids";
+import { GOES_OUT_SOON, goesOutSoon } from "../planner/leadTime";
 
 // Reserve candidates across in-flight saves. Obsidian's availability lookup only
 // sees files that have already been written, not writes awaiting completion.
@@ -69,16 +70,24 @@ export async function saveGeneratedImage(app: App, notePath: string, source: Arr
 }
 
 /** One fresh note write. It never schedules or publishes a delivery. */
-export async function attachGeneratedImage(app: App, writer: SafeWriter, note: TFile, image: SavedGeneratedImage): Promise<void> {
+export async function attachGeneratedImage(
+  app: App, writer: SafeWriter, note: TFile, image: SavedGeneratedImage,
+  timing: { now(): number; defaultStaggerMinutes(): number },
+): Promise<void> {
   try {
-    await writer.updateVariant(note, (fresh) => ({ fields: {
-      media: fresh.media.includes(image.target) ? fresh.media : [...fresh.media, image.target],
-      mediaMeta: { ...fresh.mediaMeta, [image.target]: {
-        ...fresh.mediaMeta?.[image.target], sourcePath: image.sourcePath,
-        ...(image.cropPath ? { cropPath: image.cropPath } : {}),
-        ...(image.cropRatio !== undefined ? { cropRatio: image.cropRatio } : {}), focus: image.focus,
-      } },
-    } }));
+    const result = await writer.updateVariant(note, (fresh) => {
+      // The request and crop can take minutes. Check the current schedule inside the note's write queue.
+      if (goesOutSoon(fresh, timing.now(), timing.defaultStaggerMinutes())) return { refuse: GOES_OUT_SOON };
+      return { fields: {
+        media: fresh.media.includes(image.target) ? fresh.media : [...fresh.media, image.target],
+        mediaMeta: { ...fresh.mediaMeta, [image.target]: {
+          ...fresh.mediaMeta?.[image.target], sourcePath: image.sourcePath,
+          ...(image.cropPath ? { cropPath: image.cropPath } : {}),
+          ...(image.cropRatio !== undefined ? { cropRatio: image.cropRatio } : {}), focus: image.focus,
+        } },
+      } };
+    });
+    if ("refuse" in result) throw new Error(result.refuse);
   } catch (error) {
     // These paths were returned by saveGeneratedImage for this note. Never delete a path that no longer resolves.
     const files: TFile[] = [];
