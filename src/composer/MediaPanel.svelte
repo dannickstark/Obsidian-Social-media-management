@@ -7,7 +7,7 @@
   import { useOsmm } from "../ui/context";
   import { icon } from "../ui/icon";
 
-  let { variant, media }: { variant: IndexedVariant; media: MediaInfo[] } = $props();
+  let { variant, media, generateImage }: { variant: IndexedVariant; media: MediaInfo[]; generateImage?: () => void } = $props();
   const { composer } = useOsmm();
   let dragging = $state(false);
   const rules = $derived(platformDef(variant.platform).capabilities.media);
@@ -121,6 +121,7 @@
       Add image…
       <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/*" multiple onchange={(e) => void onChoose(e)} />
     </label>
+    {#if generateImage}<button type="button" onclick={generateImage}>Generate image</button>{/if}
   </div>
   <ol class="osmm-media-list">
     {#each media as m, i (m.target)}

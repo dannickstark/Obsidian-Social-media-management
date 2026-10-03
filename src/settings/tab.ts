@@ -205,6 +205,20 @@ export class OsmmSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl).setName("Image generation").setHeading();
+    new Setting(containerEl)
+      .setName("OpenAI API key")
+      .setDesc("Required to generate images in the composer or from Claude. Stored in this device's secret storage only.")
+      .addText((t) => {
+        t.inputEl.type = "password";
+        t.setPlaceholder(this.osmm.secrets.has(SecretIds.openaiKey) ? "Key saved on this device" : "Paste key")
+          .onChange((value) => this.osmm.secrets.set(SecretIds.openaiKey, value.trim()));
+      })
+      .addButton((b) => b.setButtonText("Remove key").onClick(() => {
+        this.osmm.secrets.clear(SecretIds.openaiKey);
+        this.display();
+      }));
+
     this.phoneSection(containerEl);
 
     if (Platform.isDesktopApp) this.claudeSection(containerEl);

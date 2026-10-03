@@ -42,6 +42,9 @@ The last lines of the publish log (`Social/_log.md`): time · channel · post ·
 ### validate
 Either `path` (an existing post) or `draft` (`platform`, `channels`, `title`, `url`, `body`, `media`, `wordpress`). Returns `issues`, `blocking` and `counters` without writing. Use it before `create_variant`.
 
+### generate_image
+`prompt`, optional `negative_prompt`, `size` (`1024x1024` by default, `1024x1536` portrait or `1536x1024` landscape), and optional `path` of an existing social post. Uses the OpenAI key stored on this device to generate one PNG in the vault attachments folder. With `path`, adds it to that post's `media:` and stores its source path and center focal point in `media_meta:`; without `path`, returns an unattached vault image. Returns `media`, `source_path`, `focus`, and the note `path` when attached. It never publishes or schedules the post. Ask the user before generating an image that may incur API charges, and ask for alt text before publishing it.
+
 ### Idempotency keys
 `create_campaign` and `create_variant` take an `idempotency_key` (any string, at least 8 characters — a UUID is fine). Use a fresh key per post or campaign and reuse it only to retry that exact call: a retry with the same key and the same arguments returns the first result again (`replayed: true`) instead of creating a second note. **Calling the same key again with different arguments is refused** ("This idempotency_key was already used with different arguments. Use a new key.") — pick a new key instead of changing your mind about a call already in flight.
 

@@ -276,6 +276,7 @@ export default class OsmmPlugin extends Plugin {
       writer: this.writer,
       planner: ui.actions,
       composer: ui.composer,
+      images: ui.composer.images,
       publish: ui.publish,
       secrets: this.secrets,
       settings: () => this.settings,

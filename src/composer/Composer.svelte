@@ -9,6 +9,8 @@
   import ActionsBar from "./ActionsBar.svelte";
   import Checks from "./Checks.svelte";
   import MediaPanel from "./MediaPanel.svelte";
+  import ImageGeneration from "./ImageGeneration.svelte";
+  import type { ImageGenerationSession } from "./imageGeneration";
   import PostAs from "./PostAs.svelte";
   import SchedulePanel from "./SchedulePanel.svelte";
   import SyncPanel from "./SyncPanel.svelte";
@@ -60,6 +62,10 @@
   const model = $derived(variant && content ? composer.preview(variant, content, previewChannel) : null);
   const issues = $derived(variant && content ? composer.check(variant, content) : []);
   const counterList = $derived(variant && content ? composer.counters(variant, content, previewChannel) : []);
+  let generation = $state<ImageGenerationSession | null>(null);
+  function generateImage(): void {
+    if (variant) generation = composer.generateImage(variant);
+  }
 </script>
 
 {#if !variant}
@@ -105,10 +111,13 @@
           <Checks {variant} {issues} counters={counterList} />
           <SchedulePanel {variant} {issues} />
           <SyncPanel {variant} />
-          <MediaPanel {variant} media={content.media} />
+          <MediaPanel {variant} media={content.media} {generateImage} />
           <ActionsBar {variant} {issues} />
         </aside>
       </div>
     {/if}
   </div>
+{/if}
+{#if generation}
+  <ImageGeneration session={generation} onClose={() => (generation = null)} />
 {/if}
