@@ -9,6 +9,7 @@ import type { LinkCardFetcher } from "../platforms/og";
 import type { ViewState } from "../planner/viewState";
 import type { PublishActions } from "../publish/actions";
 import type { PublisherService } from "../settings/publisher";
+import type { CredentialHealthStore, DeviceSettings } from "../settings/device";
 import type { OsmmSettings } from "../settings/settings";
 import type { PlannerActions } from "./actions";
 
@@ -25,6 +26,9 @@ export interface OsmmContext {
   composer: ComposerActions;
   publish: PublishActions;
   publisher: PublisherService;
+  /** Per-device status and reminder state. Never synced with vault settings. */
+  device: Readable<DeviceSettings>;
+  credentialHealth: CredentialHealthStore;
   /** The local MCP server's state (desktop); absent where there is none (phones, tests). */
   mcp?: { status: Readable<McpStatus> };
   /** Fetched link cards for the previews (#93); absent in contexts that don't fetch (some tests). */

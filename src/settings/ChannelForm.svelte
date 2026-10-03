@@ -8,11 +8,12 @@
   import type { FacebookPageChoice } from "../platforms/facebook/api";
   import type { LinkedInAccountChoice } from "../platforms/linkedin/accounts";
   import { useOsmm } from "../ui/context";
+  import { credentialHealthState } from "./credentialHealth";
   import { secretField } from "../ui/secretField";
   import { PLATFORM_COLORS } from "../ui/colors";
 
   let { channel, close }: { channel?: Channel; close: () => void } = $props();
-  const { app, channels, publish } = useOsmm();
+  const { app, channels, publish, device, credentialHealth, now } = useOsmm();
   /** Snapshot the prop once: this form only ever initializes from it, never reacts to later changes. */
   const initial = untrack(() => channel);
   const editing = !!initial;
@@ -71,6 +72,11 @@
   };
 
   const def = $derived(platformDef(platform));
+  const healthState = $derived(credentialHealthState(
+    secretId === initial?.secretId ? ($device.credentialHealth?.[editing ? initial!.id : id] ?? null) : null,
+    !!secretId && !!app.secretStorage.getSecret(secretId),
+    $now,
+  ));
   const facebookReady = $derived(platform !== "facebook" || (!!secretId && !!app.secretStorage.getSecret(secretId) && kind === "page" && /^\d+$/.test(handle) && handle === selectedFacebookPageId && secretId === selectedFacebookSecretId));
   const methods = $derived(PUBLISH_METHODS.filter((m) => {
     if (m === "assisted") return true;
@@ -131,6 +137,7 @@
       issues = result.issues;
       return;
     }
+    if (editing && initial!.secretId !== secretId) credentialHealth.clear(initial!.id);
     close();
   }
 
@@ -145,6 +152,10 @@
     testing = true;
     const answer = await publish.verifyChannel(parsed.data);
     testing = false;
+    if (secretId && app.secretStorage.getSecret(secretId)) {
+      if (answer.ok) credentialHealth.setVerified(parsed.data.id, answer.expiresAt);
+      else credentialHealth.setTestFailed(parsed.data.id);
+    } else credentialHealth.clear(parsed.data.id);
     testResult = answer.ok ? `Connected: ${answer.account}` : answer.error;
   }
 
@@ -312,6 +323,7 @@
     <span>Credential (stored only on this device)</span>
     {#if CREDENTIAL_HINT[platform]}<p class="osmm-progress">{CREDENTIAL_HINT[platform]}</p>{/if}
     <div use:secretField={{ app, value: secretId, onchange: changeSecret }}></div>
+    {#if editing}<p class="osmm-progress" aria-label="Credential health">{healthState.label}</p>{/if}
   </div>
   {#if publish.canVerify(platform)}
     <div class="osmm-row">

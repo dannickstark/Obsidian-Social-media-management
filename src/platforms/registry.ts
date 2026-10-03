@@ -47,6 +47,11 @@ export class AdapterRegistry {
   get(platform: Platform): PlatformAdapter | undefined {
     return this.adapters.get(platform);
   }
+
+  /** A provider may report expiry through verify or a future refresh implementation. */
+  canRefresh(platform: Platform): boolean {
+    return !!this.adapters.get(platform)?.refreshCredential;
+  }
 }
 
 export type EffectiveMethod = "api" | "native" | "assisted";

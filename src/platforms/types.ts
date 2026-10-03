@@ -138,7 +138,7 @@ export interface SyncChange {
   time: boolean;
 }
 
-export type VerifyResult = { ok: true; account: string } | { ok: false; error: string };
+export type VerifyResult = { ok: true; account: string; /** Only when the provider reports a precise timestamp. */ expiresAt?: number } | { ok: false; error: string };
 
 /**
  * Network operations of one platform (spec §4.1). Every request goes through `ApiClient` (src/platforms/http.ts),
@@ -163,6 +163,8 @@ export interface PlatformAdapter {
   lookup?(job: DeliveryJob): Promise<RemoteState | null>;
   /** Channel settings "Test connection". Never throws. */
   verify?(channel: Channel, secret: string | null): Promise<VerifyResult>;
+  /** Optional provider-owned token renewal. No adapter enables this until a tested, device-local rotation flow exists. */
+  refreshCredential?(channel: Channel, secret: string | null): Promise<VerifyResult>;
 }
 
 /** One thing for the user to paste: text, or an image file from the vault. */

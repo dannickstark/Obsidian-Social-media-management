@@ -13,7 +13,7 @@ import { PublishActions } from "../../src/publish/actions";
 import { ClipboardService } from "../../src/publish/clipboard";
 import { MemoryLog } from "../../src/publish/log";
 import { Secrets } from "../../src/secrets/secrets";
-import type { DeviceSettings } from "../../src/settings/device";
+import { CredentialHealthStore, saveDeviceSettings, type DeviceSettings } from "../../src/settings/device";
 import { PublisherService } from "../../src/settings/publisher";
 import { migrateSettings, type OsmmSettings } from "../../src/settings/settings";
 import { PlannerActions } from "../../src/ui/actions";
@@ -97,6 +97,13 @@ export async function makeCtx(
     ntfy: { enabled: false, server: "https://ntfy.sh", results: false },
     mcp: { enabled: false, port: 27150 },
   };
+  let localDevice = device;
+  const deviceStore = writable(localDevice);
+  const credentialHealth = new CredentialHealthStore(() => localDevice, (next) => {
+    localDevice = next;
+    deviceStore.set(next);
+    saveDeviceSettings(app as never, next);
+  });
   const publisher = new PublisherService({
     device: () => device,
     settings: () => get(settings),
@@ -114,6 +121,8 @@ export async function makeCtx(
     composer,
     publish,
     publisher,
+    device: deviceStore,
+    credentialHealth,
   };
   actions.context = ctx;
   publish.context = ctx;

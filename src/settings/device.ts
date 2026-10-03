@@ -18,8 +18,10 @@ export interface McpDeviceSettings {
 }
 
 export interface CredentialHealth {
-  status: "verified" | "expired";
+  status: "verified" | "expired" | "refresh-failed" | "test-failed";
   expiresAt?: number;
+  /** Local de-duplication key for one status/expiry reminder; never a token. */
+  notifiedKey?: string;
 }
 
 export const DEFAULT_MCP_PORT = 27150;
@@ -75,9 +77,14 @@ function sanitizeCredentialHealth(raw: unknown): Record<string, CredentialHealth
   if (!isRecord(raw)) return {};
   const health: Record<string, CredentialHealth> = {};
   for (const [channelId, value] of Object.entries(raw)) {
-    if (!channelId || !isRecord(value) || (value.status !== "verified" && value.status !== "expired")) continue;
+    if (!channelId || !isRecord(value) || (value.status !== "verified" && value.status !== "expired" && value.status !== "refresh-failed" && value.status !== "test-failed")) continue;
     const expiresAt = typeof value.expiresAt === "number" && Number.isSafeInteger(value.expiresAt) && value.expiresAt >= 0 ? value.expiresAt : undefined;
-    health[channelId] = value.status === "verified" && expiresAt !== undefined ? { status: "verified", expiresAt } : { status: value.status };
+    const notifiedKey = typeof value.notifiedKey === "string" && /^(?:refresh-failed|test-failed|expired(?::\d+)?|expiring:\d+)$/.test(value.notifiedKey) ? value.notifiedKey : undefined;
+    health[channelId] = {
+      status: value.status,
+      ...(value.status === "verified" && expiresAt !== undefined ? { expiresAt } : {}),
+      ...(notifiedKey ? { notifiedKey } : {}),
+    };
   }
   return health;
 }
@@ -121,6 +128,16 @@ export class CredentialHealthStore {
 
   setExpired(channelId: string): void { this.set(channelId, { status: "expired" }); }
 
+  setRefreshFailed(channelId: string): void { this.set(channelId, { status: "refresh-failed" }); }
+
+  setTestFailed(channelId: string): void { this.set(channelId, { status: "test-failed" }); }
+
+  markNotified(channelId: string, noticeKey: string): void {
+    if (!/^(?:refresh-failed|test-failed|expired(?::\d+)?|expiring:\d+)$/.test(noticeKey)) throw new Error("Invalid credential notice key.");
+    const health = this.get(channelId);
+    if (health) this.set(channelId, { ...health, notifiedKey: noticeKey });
+  }
+
   clear(channelId: string): void {
     const credentialHealth = { ...this.read().credentialHealth };
     delete credentialHealth[channelId];
@@ -130,6 +147,8 @@ export class CredentialHealthStore {
   private set(channelId: string, health: CredentialHealth): void {
     if (!channelId) throw new Error("Channel id is required.");
     const device = this.read();
-    this.write({ ...device, credentialHealth: { ...device.credentialHealth, [channelId]: health } });
+    const previous = device.credentialHealth?.[channelId];
+    const notifiedKey = health.notifiedKey ?? (previous?.status === health.status && previous?.expiresAt === health.expiresAt ? previous.notifiedKey : undefined);
+    this.write({ ...device, credentialHealth: { ...device.credentialHealth, [channelId]: { ...health, ...(notifiedKey ? { notifiedKey } : {}) } } });
   }
 }

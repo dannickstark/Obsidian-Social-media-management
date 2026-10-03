@@ -11,6 +11,7 @@ import { json, queue } from "../platforms/http";
 import { TG, TG_TOKEN } from "../platforms/telegram/fixtures";
 import { createAdapters } from "../../src/platforms/adapters";
 import { before as facebookBefore, PAGE_TOKEN, USER_TOKEN, PAGE } from "../platforms/facebook/contract";
+import { TEST_NOW } from "../ui/ctx";
 
 describe("ChannelForm", () => {
   const pick = (value: string) => fireEvent.change(screen.getByLabelText("Platform"), { target: { value } });
@@ -189,6 +190,33 @@ describe("ChannelForm", () => {
     expect((await screen.findByRole("status")).textContent).toBe("Connected: Event X, posting as @osmm_bot");
   });
 
+  it("records a provider-reported expiry after a connection test and shows an expiring badge", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: true, account: "Event X", expiresAt: TEST_NOW + 86_400_000 }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Connected: Event X");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "verified", expiresAt: TEST_NOW + 86_400_000 });
+    expect(await screen.findByText("Expires soon")).toBeTruthy();
+    expect(JSON.stringify(c.app.loadLocalStorage("osmm-device"))).not.toContain("PRIVATE-TOKEN");
+  });
+
+  it("marks a failed connection test as needing attention without claiming expiry", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: false, error: "Permission denied" }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Permission denied");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "test-failed" });
+    expect(await screen.findByText("Needs attention · connection test failed")).toBeTruthy();
+  });
+
   it("has no Test connection where the plugin has no API adapter", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
@@ -262,6 +290,16 @@ describe("ChannelForm", () => {
   });
 });
 describe("ChannelsSection", () => {
+  it("shows local credential health without exposing token values", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("li/acme-studio")!;
+    c.app.secretStorage.setSecret("li-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "li-credential" });
+    c.ctx.credentialHealth.setVerified(channel.id);
+    render(ChannelsSection, { context: osmmContext(c.ctx) });
+    expect(screen.getByText("Verified · expiry unknown")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("PRIVATE-TOKEN");
+  });
   it("lists channels grouped by platform and removes after confirmation, warning about usage", async () => {
     const { ctx } = await makeCtx({ seed: true });
     let asked = "";
