@@ -217,6 +217,21 @@ describe("ChannelForm", () => {
     expect(await screen.findByText("Needs attention · connection test failed")).toBeTruthy();
   });
 
+  it("does not record health for a credential that is not saved yet (whole-branch review)", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("tg-other", "OTHER-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.ctx.credentialHealth.setTestFailed(channel.id);
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: true, account: "Event X" }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await SecretComponent.last!.change("tg-other");
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Connected: Event X");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "test-failed" });
+  });
+
   it("has no Test connection where the plugin has no API adapter", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });

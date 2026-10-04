@@ -98,7 +98,8 @@ export function validateInstagramMediaUrl(raw: string): string {
       (ipv4[0] === 192 && ipv4[1] === 168));
   const privateHost =
     host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
-    host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:") || privateIpv4;
+    // Every IPv6 literal (loopback, unspecified, IPv4-mapped, ULA, link-local): a public image host uses a DNS name.
+    host.includes(":") || privateIpv4;
   if (
     url.protocol !== "https:" ||
     !url.hostname ||

@@ -20,6 +20,10 @@ describe("Instagram media hosting", () => {
     "https://user:secret@images.example/cover.png",
     "https://localhost/cover.png",
     "https://127.0.0.1/cover.png",
+    "https://[::1]/cover.png",
+    "https://[::ffff:127.0.0.1]/cover.png",
+    "https://[::]/cover.png",
+    "https://[fd00::1]/cover.png",
     "https://images.example/cover.png?access_token=secret",
     "https://images.example/Users/alice/Vault/cover.png",
     "https://images.example/%2555sers/alice/Vault/cover.png",
@@ -39,6 +43,11 @@ describe("Instagram media hosting", () => {
     expect(validateInstagramMediaUrl("https://cdn.example.net/image/opaque-id.png")).toBe(
       "https://cdn.example.net/image/opaque-id.png",
     );
+  });
+
+  it("accepts a public host whose name merely starts with fc or fd", () => {
+    expect(validateInstagramMediaUrl("https://fcdn.example.com/a.png")).toBe("https://fcdn.example.com/a.png");
+    expect(validateInstagramMediaUrl("https://fdn.example.net/a.png")).toBe("https://fdn.example.net/a.png");
   });
 
   it("preserves a literal percent sign in a public image filename", () => {

@@ -152,10 +152,13 @@
     testing = true;
     const answer = await publish.verifyChannel(parsed.data);
     testing = false;
-    if (secretId && app.secretStorage.getSecret(secretId)) {
-      if (answer.ok) credentialHealth.setVerified(parsed.data.id, answer.expiresAt);
-      else credentialHealth.setTestFailed(parsed.data.id);
-    } else credentialHealth.clear(parsed.data.id);
+    // Health belongs to the saved credential: a test of an unsaved channel or credential records nothing.
+    if (editing && secretId === initial!.secretId) {
+      if (secretId && app.secretStorage.getSecret(secretId)) {
+        if (answer.ok) credentialHealth.setVerified(parsed.data.id, answer.expiresAt);
+        else credentialHealth.setTestFailed(parsed.data.id);
+      } else credentialHealth.clear(parsed.data.id);
+    }
     testResult = answer.ok ? `Connected: ${answer.account}` : answer.error;
   }
 
