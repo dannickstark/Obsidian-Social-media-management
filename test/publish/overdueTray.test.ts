@@ -71,8 +71,9 @@ describe("Overdue tray", () => {
 
   it("flushes an open editor before an API delivery, so it sends the exact text on screen (ruling P3)", async () => {
     const c = await makeCtx({ seed: true });
-    const X = "Social/Event X/Event X – X.md";
-    const file = c.app.vault.getFileByPath(X)!;
+    // Bluesky, not X: X stays assisted until its write tier is verified (M6 Task 6), so it never reaches an adapter.
+    const BS = "Social/Event X/Event X – Bluesky.md";
+    const file = c.app.vault.getFileByPath(BS)!;
     const raw = await c.app.vault.cachedRead(file);
     const info = getFrontMatterInfo(raw);
     const buffer = `${raw.slice(0, info.contentStart)}Fresh buffer text, not yet saved.\n`;
@@ -86,14 +87,14 @@ describe("Overdue tray", () => {
 
     let sentText = "";
     c.adapters.register({
-      platform: "x",
+      platform: "bluesky",
       publish: async (job) => {
         sentText = job.text;
-        return { remoteId: "1", url: "https://x.com/you/status/1" };
+        return { remoteId: "1", url: "https://bsky.app/profile/you/post/1" };
       },
     });
-    await c.ctx.publish.postNow(X, ["x/you"]);
-    await indexed(c.index, () => c.index.getVariant(X)?.deliveries["x/you"]?.status === "published");
+    await c.ctx.publish.postNow(BS, ["bs/you"]);
+    await indexed(c.index, () => c.index.getVariant(BS)?.deliveries["bs/you"]?.status === "published");
     expect(sentText).toBe("Fresh buffer text, not yet saved.");
   });
 
