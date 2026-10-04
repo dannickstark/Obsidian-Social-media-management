@@ -22,7 +22,7 @@ Tip: for Mastodon, set the handle to `@you@your.instance` so the right server op
 
 1. Run **Open composer for this post**. The composer opens next to the note.
 2. The preview follows what you type. The **Checks** panel counts characters the way Bluesky does (300) and lists anything that would block the post.
-3. Drop an image on **Media** if you want one, and give it alt text.
+3. Drop an image on **Media** if you want one, and give it alt text. With an OpenAI API key (**Settings → Image generation**), **Generate image** makes one for you; pick the crop and focal point, then **Use image**.
 
 ## 4. Schedule it (1 minute)
 
@@ -85,9 +85,13 @@ On the publisher device, open **Settings → Social Planner → Channels**, edit
 - **Bluesky:** an app password and your handle.
 - **WordPress:** an HTTPS site address, your user name and an application password.
 
-Click **Test connection**. Scheduled posts on channels with verified API access now go out by themselves while the publisher device runs Obsidian. X currently verifies identity only and uses assisted publishing.
+- **Facebook Pages:** a Meta user access token. Click **Find Facebook Pages** and **Use** the Page. See [the Facebook guide](setup/facebook.md).
 
-For Mastodon and WordPress, choose **API with native scheduling** instead: a scheduled post is handed over to the platform (at least 7 minutes ahead on Mastodon, 3 on WordPress) and goes out even when Obsidian is closed. If you edit or move it afterwards, it shows **Out of sync**: the platform keeps the old version until you click **Push update** in the composer or row menu. **Revert time** takes the platform's time back, and **Unschedule on …** takes it off the platform's schedule. A Mastodon thread is never handed over; it posts from Obsidian at its time.
+Click **Test connection**. Scheduled posts on channels with verified API access now go out by themselves while the publisher device runs Obsidian. The channel list shows each channel's credential health (for example **Verified · expiry unknown** or **Needs attention · connection test failed**); with desktop notifications on, you get one reminder when a channel needs attention.
+
+Instagram, X and LinkedIn stay on assisted publishing in this release; their guides explain why and what each needs: [Instagram](setup/instagram.md), [X](setup/x.md), [LinkedIn](setup/linkedin.md).
+
+For Facebook Pages, Mastodon and WordPress, choose **API with native scheduling** instead: a scheduled post is handed over to the platform (at least 12 minutes ahead on Facebook, 7 on Mastodon, 3 on WordPress) and goes out even when Obsidian is closed. If you edit or move it afterwards, it shows **Out of sync**: the platform keeps the old version until you click **Push update** in the composer or row menu. **Revert time** takes the platform's time back, and **Unschedule on …** takes it off the platform's schedule. A Mastodon thread is never handed over; it posts from Obsidian at its time.
 
 ## When something goes wrong
 
