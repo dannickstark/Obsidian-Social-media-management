@@ -69,3 +69,7 @@ Open `dev-vault/` as a vault in Obsidian and enable **Social Planner (OSMM)** un
     npm run typecheck && npm run lint
 
 Design spec: `docs/superpowers/specs/2026-09-27-osmm-social-planner-design.md` · implementation plans: `docs/superpowers/plans/` · manual QA: `docs/qa/`.
+
+## License
+
+[MIT](LICENSE) © 2026 Dannick Arnold Kwengang Tankeu

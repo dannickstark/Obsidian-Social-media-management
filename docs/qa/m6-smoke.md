@@ -54,7 +54,7 @@ Run on test accounts before each release, after the [M5 smoke checklist](m5-smok
 Complete before opening the pull request to `obsidianmd/obsidian-releases`:
 
 - [ ] `manifest.json` has the final `id` (no "obsidian"), `name`, `version`, `minAppVersion` 1.11.4, `description` (under 250 characters, no "Obsidian"), `author`, `authorUrl` and `isDesktopOnly: false`; `versions.json` maps the version to 1.11.4.
-- [ ] A `LICENSE` file is in the repository root and matches `package.json` (MIT). **Missing at the time of writing.**
+- [x] A `LICENSE` file is in the repository root and matches `package.json` (MIT).
 - [ ] The GitHub release tag equals `manifest.json`'s version and attaches `main.js`, `manifest.json` and `styles.css`.
 - [ ] README states what the plugin sends over the network and to whom (platform APIs, ntfy, OpenAI, link-card fetches), that there is no server in between, and that credentials stay in per-device secret storage.
 - [ ] Obsidian's plugin guidelines pass: no `innerHTML` with user content, no default hotkeys, no `console.log` noise in production, settings headings via `setHeading`, the `Vault`/`FileManager` APIs for file changes, and network requests through `requestUrl` except the documented OAuth token exchange (ADR 0003).
