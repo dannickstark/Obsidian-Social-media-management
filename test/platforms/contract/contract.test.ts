@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestUrlMock } from "../../fakes/obsidian";
 import type { Platform } from "../../../src/model/platforms";
 import { createAdapters } from "../../../src/platforms/adapters";
@@ -14,8 +14,12 @@ import { adapterFor, attempt, contractDeps, expectDigestReads, trackedJob, type 
 const EXPECTED_PUBLISH_5XX: Partial<Record<Platform, "unknown" | "transient">> = {
   telegram: "unknown",
   discord: "unknown",
+  facebook: "unknown",
+  instagram: "unknown",
+  linkedin: "unknown",
   mastodon: "transient",
   bluesky: "transient",
+  x: "unknown",
   wordpress: "transient",
 };
 
@@ -26,6 +30,9 @@ const UNREADABLE: Array<[string, Fixture]> = [
 ];
 
 // M5 P8: every job in this file goes through the read guard, and every test checks it.
+beforeEach(() => {
+  if (typeof window === "undefined") vi.stubGlobal("window", { setTimeout, clearTimeout });
+});
 afterEach(() => expectDigestReads());
 
 describe("adapter registry (#87)", () => {
@@ -41,7 +48,6 @@ describe("adapter registry (#87)", () => {
     }
   });
 });
-
 function scenarios(c: ContractCase): Array<[string, Fixture[]]> {
   return [
     ["rate limited", [...c.before, ...c.rateLimited.post]],
@@ -138,7 +144,7 @@ describe.each(CASES.map((c) => [c.platform, c] as const))("%s adapter contract (
   it.runIf(!!c.lookup)("finds an interrupted post with lookup(), and reports one it can't find (M5 P5)", async () => {
     const l = c.lookup!;
     const found = await attempt(() => adapterFor(platform).lookup!(trackedJob(l.job())), l.found);
-    expect(found).toEqual({ ok: true, value: expect.objectContaining(l.expect) });
+    expect(found).toEqual({ ok: true, value: l.expect === null ? null : expect.objectContaining(l.expect) });
     const missing = await attempt(() => adapterFor(platform).lookup!(trackedJob(l.job())), l.notFound);
     if (l.notFoundAnswer === "unknown") expect(missing).toEqual({ ok: true, value: null });
     else expect(missing).toEqual({ ok: true, value: expect.objectContaining({ published: false }) });

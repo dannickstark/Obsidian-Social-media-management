@@ -17,6 +17,9 @@ import type { OsmmSettings } from "../settings/settings";
 import { VIEW_COMPOSER, VIEW_PREVIEW_GRID, type PlannerActions } from "../ui/actions";
 import { formatShortDate, formatTime } from "../ui/format";
 import { ContentLoader, type LoadedContent } from "./content";
+import { ImageGenerationService, type ImageGenerationSession } from "./imageGeneration";
+import { OpenAIImageClient } from "../images/openai";
+import { Secrets } from "../secrets/secrets";
 import { planComposerSchedule, reminderDefaults, scheduleNeeds, type ScheduleRequest } from "./schedule";
 import { composerSession, type ComposerSession } from "./session";
 
@@ -58,12 +61,23 @@ export interface QuickFix {
 export class ComposerActions {
   readonly media: MediaInspector;
   readonly content: ContentLoader;
+  readonly images: ImageGenerationService;
   /** Extra buttons on each preview-grid card. M4 adds "Trim with Claude" here; empty in M2. */
   readonly cardActions: CardAction[] = [];
 
   constructor(protected readonly deps: ComposerDeps) {
     this.media = new MediaInspector(deps.app);
     this.content = new ContentLoader(deps.app, this.media);
+    this.images = new ImageGenerationService({
+      app: deps.app, writer: deps.writer, client: new OpenAIImageClient({ secrets: new Secrets(deps.app) }),
+      rootFolder: () => deps.settings().rootFolder, now: deps.now,
+      defaultStaggerMinutes: () => deps.settings().defaultStaggerMinutes,
+    });
+  }
+
+  /** Opens a preview session. Nothing enters the vault until the user accepts it. */
+  generateImage(v: IndexedVariant): ImageGenerationSession {
+    return this.images.open(v.file);
   }
 
   channelsOf(v: Pick<Variant, "channels">): Channel[] {

@@ -10,7 +10,7 @@ export const def: PlatformDef = {
     nativeSchedule: false,
     threads: false,
     limits: { maxChars: 3000, counter: "graphemes", foldAt: 210, link: "optional" },
-    // approximate: image count and size
+    // Images upload one at a time and are combined with LinkedIn's organic MultiImage Posts API.
     media: { maxCount: 9, required: false, maxBytes: 8 * MB, video: false },
   },
   validate(input) {

@@ -6,10 +6,22 @@
   import ChannelForm from "./ChannelForm.svelte";
   import GroupForm from "./GroupForm.svelte";
   import { SvelteModal } from "../ui/dialogs";
+  import { credentialHealthState } from "./credentialHealth";
 
   const ctx = useOsmm();
-  const { app, settings, snapshot, channels, actions } = ctx;
+  const { app, settings, snapshot, channels, actions, device, credentialHealth, now } = ctx;
   const METHOD_LABEL: Record<string, string> = { api: "API · auto", native: "API · native schedule", assisted: "Assisted" };
+
+  function credentialSummary(channel: Channel): string {
+    if (!channel.secretId) return "no credential";
+    switch (channel.platform) {
+      case "facebook": return "user token · Page discovery";
+      case "instagram": return "credential set · public image host required";
+      case "linkedin": return "credential set · exact-token grants required";
+      case "x": return "credential set · identity only; write tier unverified";
+      default: return "credential set";
+    }
+  }
 
   const grouped = $derived(
     PLATFORMS.map((p) => ({ p, list: $settings.channels.filter((c) => c.platform === p) })).filter((g) => g.list.length),
@@ -24,7 +36,10 @@
   async function removeChannel(c: Channel): Promise<void> {
     const used = channels.usage(c.id, $snapshot.variants).length;
     const ok = await actions.confirm(`Remove ${c.name}? It is used by ${used} note${used === 1 ? "" : "s"}; those notes keep the id and will show a warning.`, "Remove");
-    if (ok) await channels.removeChannel(c.id);
+    if (ok) {
+      await channels.removeChannel(c.id);
+      credentialHealth.clear(c.id);
+    }
   }
   async function removeGroup(g: ChannelGroup): Promise<void> {
     if (await actions.confirm(`Remove the group ${g.name}? Channels are kept.`, "Remove")) await channels.removeGroup(g.id);
@@ -44,7 +59,8 @@
         <ChannelAvatar channel={c} />
         <span class="osmm-row-title">{c.name} <span class="osmm-progress">{c.id}</span></span>
         <span class="osmm-pill-status">{METHOD_LABEL[c.method]}</span>
-        <span class="osmm-progress">{c.secretId ? "credential set" : "no credential"}</span>
+        <span class="osmm-progress">{credentialSummary(c)}</span>
+        <span class="osmm-progress" aria-label={`Credential health for ${c.name}`}>{credentialHealthState($device.credentialHealth?.[c.id] ?? null, !!c.secretId && !!app.secretStorage.getSecret(c.secretId), $now).label}</span>
         <button type="button" onclick={() => editChannel(c)}>Edit</button>
         <button type="button" aria-label={`Remove ${c.name}`} onclick={() => void removeChannel(c)}>Remove</button>
       </div>

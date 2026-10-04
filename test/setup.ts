@@ -1,4 +1,5 @@
 import { beforeEach } from "vitest";
+import { DecompressionStream as NodeDecompressionStream, ReadableStream as NodeReadableStream } from "node:stream/web";
 import { installBrowserFakes, resetBrowserFakes } from "./fakes/browser";
 import { requestUrlMock, setPlatform } from "./fakes/obsidian";
 
@@ -6,6 +7,10 @@ import { requestUrlMock, setPlatform } from "./fakes/obsidian";
 // exercises real sockets and must not run under jsdom): there is no `window`/`HTMLElement` there,
 // so all of the DOM-only setup below is skipped for them.
 const isDom = typeof window !== "undefined";
+
+// jsdom does not supply the browser stream primitives used to validate PNG data.
+if (!globalThis.DecompressionStream) Object.assign(globalThis, { DecompressionStream: NodeDecompressionStream });
+if (!globalThis.ReadableStream) Object.assign(globalThis, { ReadableStream: NodeReadableStream });
 
 if (isDom) installBrowserFakes();
 beforeEach(() => {

@@ -4,7 +4,7 @@ import { Notice } from "../fakes/obsidian";
 import { formatDateTime } from "../../src/model/dates";
 import { TID_RE } from "../../src/platforms/bluesky/tid";
 import { AdapterRegistry } from "../../src/platforms/registry";
-import { TransientError } from "../../src/platforms/errors";
+import { InvalidContentError, TransientError, UnknownOutcomeError } from "../../src/platforms/errors";
 import type { DeliveryJob, PlatformAdapter, RemoteState } from "../../src/platforms/types";
 import { PublishOrchestrator, type FailureInfo } from "../../src/publish/orchestrator";
 import { Secrets } from "../../src/secrets/secrets";
@@ -483,6 +483,42 @@ describe("PublishOrchestrator", () => {
     await indexed(c.index, () => c.index.getVariant(P)?.status === "published");
     expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "published", error: note });
     expect(c.log.entries.at(-1)).toMatchObject({ result: "published", url: "https://t.me/eventx/42", error: note });
+  });
+
+  it("keeps a rejected later thread part visible instead of finalizing the delivery as published", async () => {
+    const message = "X: part 2 could not be posted; earlier parts are live and the thread is not marked published. Invalid Request";
+    const adapterState = JSON.stringify({ version: 1, accountId: "42", sendKey: "3mxdyj6ws22jm", fingerprint: "fingerprint", partIds: ["1999999999999999999"] });
+    const { c, orchestrator } = await setup(async () => { throw new InvalidContentError(message, adapterState); });
+    expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "failed", kind: "invalid_content", error: message });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "failed");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toMatchObject({ status: "failed", attempts: 1, error: message });
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).toHaveProperty("adapterState", adapterState);
+    expect((await fm(c)).deliveries).toMatchObject({ "tg/event-x": { adapter_state: adapterState } });
+  });
+
+  it("clears a persisted adapter checkpoint when a resumed delivery publishes", async () => {
+    const adapterState = JSON.stringify({ version: 1, accountId: "42", sendKey: "3mxdyj6ws22jm", fingerprint: "fingerprint", partIds: ["1999999999999999999"] });
+    const { c, orchestrator } = await setup(async (job) => {
+      expect(job.delivery.adapterState).toBe(adapterState);
+      return { remoteId: "42", url: "https://x.com/ada/status/42" };
+    }, { notes: [note(P, { status: "failed", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW), send_key: "3mxdyj6ws22jm", adapter_state: adapterState })] });
+    expect(await orchestrator.run(P, "tg/event-x")).toMatchObject({ status: "published" });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "published");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).not.toHaveProperty("adapterState");
+    expect((await fm(c)).deliveries).toMatchObject({ "tg/event-x": { status: "published" } });
+    expect((await fm(c)).deliveries).not.toMatchObject({ "tg/event-x": { adapter_state: expect.any(String) } });
+  });
+
+  it("clears an earlier checkpoint when a resumed part has an unknown outcome", async () => {
+    const adapterState = JSON.stringify({ version: 1, accountId: "42", sendKey: "3mxdyj6ws22jm", fingerprint: "fingerprint", partIds: ["1999999999999999999"], mediaKeys: [], nextPart: 1 });
+    const { c, orchestrator } = await setup(async () => { throw new UnknownOutcomeError("a confirmed part could not be checkpointed safely"); }, {
+      notes: [note(P, { status: "failed", at: formatDateTime(TEST_NOW), attempts: 1, send_at: formatDateTime(TEST_NOW), send_key: "3mxdyj6ws22jm", adapter_state: adapterState })],
+      lookup: async () => null,
+    });
+    expect(await orchestrator.run(P, "tg/event-x")).toEqual({ status: "check_needed" });
+    await indexed(c.index, () => c.index.getVariant(P)?.deliveries["tg/event-x"]?.status === "check_needed");
+    expect(c.index.getVariant(P)!.deliveries["tg/event-x"]).not.toHaveProperty("adapterState");
+    expect((await fm(c)).deliveries).not.toMatchObject({ "tg/event-x": { adapter_state: expect.any(String) } });
   });
 });
 

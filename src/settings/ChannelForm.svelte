@@ -5,12 +5,15 @@
   import type { Channel, Issue } from "../model/types";
   import { platformDef } from "../platforms/registry";
   import type { TelegramChat } from "../platforms/telegram/api";
+  import type { FacebookPageChoice } from "../platforms/facebook/api";
+  import type { LinkedInAccountChoice } from "../platforms/linkedin/accounts";
   import { useOsmm } from "../ui/context";
+  import { credentialHealthState } from "./credentialHealth";
   import { secretField } from "../ui/secretField";
   import { PLATFORM_COLORS } from "../ui/colors";
 
   let { channel, close }: { channel?: Channel; close: () => void } = $props();
-  const { app, channels, publish } = useOsmm();
+  const { app, channels, publish, device, credentialHealth, now } = useOsmm();
   /** Snapshot the prop once: this form only ever initializes from it, never reacts to later changes. */
   const initial = untrack(() => channel);
   const editing = !!initial;
@@ -35,6 +38,14 @@
   let testResult = $state("");
   let chats = $state<TelegramChat[]>([]);
   let chatNote = $state("");
+  let facebookPages = $state<FacebookPageChoice[]>([]);
+  let facebookNote = $state("");
+  let findingFacebookPages = $state(false);
+  let linkedInAccounts = $state<LinkedInAccountChoice[]>([]);
+  let linkedInNote = $state("");
+  let findingLinkedInAccounts = $state(false);
+  let selectedFacebookPageId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.handle ?? "" : "");
+  let selectedFacebookSecretId = $state(initial?.platform === "facebook" && initial.method !== "assisted" ? initial.secretId ?? "" : "");
 
   $effect(() => {
     if (!idTouched) id = name.trim() ? channels.suggestId(platform, name) : "";
@@ -46,6 +57,8 @@
     telegram: "Chat id (@name or -100…)",
     mastodon: "Handle (@you@your.instance)",
     bluesky: "Handle (you.bsky.social)",
+    x: "X username (without @)",
+    facebook: "Page id",
   };
   const SERVER_LABEL: Partial<Record<Platform, string>> = { mastodon: "Server (optional)", bluesky: "PDS (optional)", wordpress: "Site address (https://…)" };
   const CREDENTIAL_HINT: Partial<Record<Platform, string>> = {
@@ -53,11 +66,26 @@
     discord: "The channel's webhook URL (Server settings → Integrations → Webhooks → Copy Webhook URL).",
     mastodon: "An access token (Preferences → Development → New application, scopes read and write).",
     bluesky: "An app password (Settings → Privacy and security → App passwords), not your account password.",
+    x: "OAuth 2 user access token. This plugin can verify identity, but cannot verify tweet.write/media.write scopes or API tier yet.",
     wordpress: "An application password (Users → Profile → Application passwords).",
+    facebook: "A user access token with pages_show_list, pages_read_engagement and pages_manage_posts. Page access tokens stay in memory and are never saved to settings.",
   };
 
   const def = $derived(platformDef(platform));
-  const methods = $derived(PUBLISH_METHODS.filter((m) => m === "assisted" || (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule)));
+  const healthState = $derived(credentialHealthState(
+    secretId === initial?.secretId ? ($device.credentialHealth?.[editing ? initial!.id : id] ?? null) : null,
+    !!secretId && !!app.secretStorage.getSecret(secretId),
+    $now,
+  ));
+  const facebookReady = $derived(platform !== "facebook" || (!!secretId && !!app.secretStorage.getSecret(secretId) && kind === "page" && /^\d+$/.test(handle) && handle === selectedFacebookPageId && secretId === selectedFacebookSecretId));
+  const methods = $derived(PUBLISH_METHODS.filter((m) => {
+    if (m === "assisted") return true;
+    // No public media host is configured by the plugin yet; keep Instagram on the assisted path.
+    if (platform === "instagram" && m === "api") return false;
+    if (platform === "facebook" && !facebookReady) return false;
+    if (platform === "linkedin" && (kind !== "profile" && kind !== "page" || !publish.canPublishLinkedIn(kind === "page" ? "page" : "profile", secretId))) return false;
+    return (m === "api" && def.capabilities.api) || (m === "native" && def.capabilities.nativeSchedule);
+  }));
   $effect(() => {
     if (!methods.includes(method)) method = "assisted";
   });
@@ -84,12 +112,32 @@
 
   async function save(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    const parsed = zChannel.safeParse(input());
+    if (!parsed.success) {
+      issues = zodIssues(parsed.error);
+      return;
+    }
+    if (platform === "facebook" && method !== "assisted") {
+      const answer = await publish.verifyChannel(parsed.data);
+      if (!answer.ok) {
+        method = "assisted";
+        facebookNote = `${answer.error} Assisted publishing remains available.`;
+      }
+    }
+    if (platform === "linkedin" && method !== "assisted") {
+      const answer = await publish.verifyChannel(parsed.data);
+      if (!answer.ok) {
+        method = "assisted";
+        linkedInNote = `${answer.error} Assisted publishing remains available.`;
+      }
+    }
     // Editing never renames (that would orphan notes using the old id); adding never overwrites.
     const result = editing ? await channels.upsertChannel(input()) : await channels.createChannel(input());
     if (!result.ok) {
       issues = result.issues;
       return;
     }
+    if (editing && initial!.secretId !== secretId) credentialHealth.clear(initial!.id);
     close();
   }
 
@@ -104,6 +152,13 @@
     testing = true;
     const answer = await publish.verifyChannel(parsed.data);
     testing = false;
+    // Health belongs to the saved credential: a test of an unsaved channel or credential records nothing.
+    if (editing && secretId === initial!.secretId) {
+      if (secretId && app.secretStorage.getSecret(secretId)) {
+        if (answer.ok) credentialHealth.setVerified(parsed.data.id, answer.expiresAt);
+        else credentialHealth.setTestFailed(parsed.data.id);
+      } else credentialHealth.clear(parsed.data.id);
+    }
     testResult = answer.ok ? `Connected: ${answer.account}` : answer.error;
   }
 
@@ -119,6 +174,71 @@
   function useChat(c: TelegramChat): void {
     handle = c.username ? `@${c.username}` : c.id;
     chats = [];
+  }
+
+  function changeSecret(id: string): void {
+    if (platform === "facebook" && id !== secretId) {
+      facebookPages = [];
+      facebookNote = "";
+      selectedFacebookPageId = "";
+      selectedFacebookSecretId = "";
+      handle = "";
+      method = "assisted";
+    }
+    if (platform === "linkedin" && id !== secretId) {
+      linkedInAccounts = [];
+      linkedInNote = "";
+      handle = "";
+      method = "assisted";
+    }
+    secretId = id;
+  }
+
+  async function findFacebookPages(): Promise<void> {
+    facebookPages = [];
+    facebookNote = "";
+    findingFacebookPages = true;
+    const found = await publish.findFacebookPages(secretId);
+    findingFacebookPages = false;
+    if ("error" in found) {
+      facebookNote = found.error;
+      selectedFacebookPageId = "";
+      selectedFacebookSecretId = "";
+      method = "assisted";
+    }
+    else if (!found.length) facebookNote = "No Pages were found for this token. Check the token and Page access, or use assisted publishing.";
+    else facebookPages = found;
+  }
+
+  function useFacebookPage(page: FacebookPageChoice): void {
+    handle = page.id;
+    kind = "page";
+    selectedFacebookPageId = page.canPublish ? page.id : "";
+    selectedFacebookSecretId = page.canPublish ? secretId : "";
+    if (!page.canPublish) method = "assisted";
+    facebookNote = page.canPublish ? "Page access and publishing permissions verified." : "This Page is missing publishing permissions. Assisted publishing remains available.";
+    facebookPages = [];
+  }
+
+  async function findLinkedInAccounts(): Promise<void> {
+    linkedInAccounts = [];
+    linkedInNote = "";
+    findingLinkedInAccounts = true;
+    const found = await publish.findLinkedInAccounts(secretId);
+    findingLinkedInAccounts = false;
+    if ("error" in found) linkedInNote = found.error;
+    else if (!found.length) linkedInNote = "No LinkedIn accounts were found for this token. Use assisted publishing if access is unavailable.";
+    else linkedInAccounts = found;
+  }
+
+  function useLinkedInAccount(account: LinkedInAccountChoice): void {
+    handle = account.id;
+    kind = account.kind;
+    method = account.canPublish && publish.canPublishLinkedIn(account.kind, secretId) ? "api" : "assisted";
+    linkedInNote = account.permissionStatus === "granted" && method === "api"
+      ? "Account and required publishing access verified."
+      : `Identity found; ${account.requiredPermission} or LinkedIn app access is not verified. Assisted publishing remains available.`;
+    linkedInAccounts = [];
   }
 </script>
 
@@ -149,6 +269,40 @@
       </div>
     {/if}
   {/if}
+  {#if platform === "facebook"}
+    <p class="osmm-progress">OAuth app review is unverified. Add a user access token to discover Pages; profiles and groups use assisted publishing.</p>
+    <div class="osmm-row">
+      <button type="button" disabled={!secretId || findingFacebookPages} onclick={() => void findFacebookPages()}>Find Facebook Pages</button>
+      {#if facebookNote}<span class="osmm-progress" role="status">{facebookNote}</span>{/if}
+    </div>
+    {#if facebookPages.length}
+      <div class="osmm-chips" role="group" aria-label="Facebook Pages the token can see">
+        {#each facebookPages as page (page.id)}
+          <button type="button" onclick={() => useFacebookPage(page)}>Use {page.name}</button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+  {#if platform === "linkedin"}
+    <p class="osmm-progress" role="status">LinkedIn native PKCE and product access are unverified. Account discovery requires the separate Sign In with LinkedIn product plus openid/profile scopes; Share on LinkedIn requires w_member_social separately. Company-page publishing also requires Community Management access. Assisted publishing remains available.</p>
+    <div class="osmm-row">
+      <button type="button" disabled={!secretId || findingLinkedInAccounts} onclick={() => void findLinkedInAccounts()}>Find LinkedIn accounts</button>
+      {#if linkedInNote}<span class="osmm-progress" role="status">{linkedInNote}</span>{/if}
+    </div>
+    {#if linkedInAccounts.length}
+      <div class="osmm-chips" role="group" aria-label="LinkedIn accounts the token can see">
+        {#each linkedInAccounts as account (account.id)}
+          <button type="button" onclick={() => useLinkedInAccount(account)}>Use {account.name}{account.kind === "page" ? " (Company Page)" : " (Profile)"}</button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+  {#if platform === "instagram"}
+    <p class="osmm-progress" role="status">Instagram API publishing is unavailable until a secure public image host that Meta can fetch is configured. Use assisted publishing to add images in Instagram.</p>
+  {/if}
+  {#if platform === "x"}
+    <p class="osmm-progress" role="status">X connection testing verifies identity only. API auto-posting is unavailable until write/media permissions and API-tier access can be verified; use assisted publishing meanwhile.</p>
+  {/if}
   {#if SERVER_LABEL[platform]}
     <label>{SERVER_LABEL[platform]}<input type="url" placeholder="https://" bind:value={server} /></label>
   {/if}
@@ -171,7 +325,8 @@
   <div>
     <span>Credential (stored only on this device)</span>
     {#if CREDENTIAL_HINT[platform]}<p class="osmm-progress">{CREDENTIAL_HINT[platform]}</p>{/if}
-    <div use:secretField={{ app, value: secretId, onchange: (v) => (secretId = v) }}></div>
+    <div use:secretField={{ app, value: secretId, onchange: changeSecret }}></div>
+    {#if editing}<p class="osmm-progress" aria-label="Credential health">{healthState.label}</p>{/if}
   </div>
   {#if publish.canVerify(platform)}
     <div class="osmm-row">

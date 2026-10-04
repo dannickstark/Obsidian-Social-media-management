@@ -2,7 +2,7 @@ import { getFrontMatterInfo, Notice, parseYaml, type App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
 import { openMarkdownView } from "../composer/session";
-import type { LoadedContent } from "../composer/content";
+import { digestMedia, type LoadedContent } from "../composer/content";
 import { HELD_REFUSAL, heldForReview, LIVE_STATUSES } from "../index/queries";
 import type { IndexedVariant, SocialIndex } from "../index/socialIndex";
 import { bodyOf, excerpt } from "../model/body";
@@ -13,6 +13,9 @@ import type { SafeWriter } from "../model/writer";
 import type { AssistedTarget, ClipItem, MediaInfo, SyncChange, VerifyResult } from "../platforms/types";
 import { RemoteRemovedError, ReplacementUnknownError } from "../platforms/errors";
 import type { AdapterRegistry } from "../platforms/registry";
+import { FacebookAdapter, type FacebookPageChoice } from "../platforms/facebook/api";
+import { LinkedInAdapter } from "../platforms/linkedin/api";
+import type { LinkedInAccountChoice } from "../platforms/linkedin/accounts";
 import { TelegramAdapter, type TelegramChat } from "../platforms/telegram/api";
 import { autoPostLateMs, type OsmmSettings } from "../settings/settings";
 import { VIEW_SIDEBAR, type PlannerActions } from "../ui/actions";
@@ -75,10 +78,19 @@ export interface DeliveryNotifier {
  * unchanged (M2b P3 for approvals), and the approval question shows each of these fields.
  */
 export function sendDigest(v: Variant, content: LoadedContent): string {
-  const media = (m: MediaInfo | undefined) => (m ? [m.target, m.path ?? null, m.alt ?? null, m.focus ?? null] : null);
+  const media = (m: MediaInfo | undefined) => (m ? [
+    m.target, m.path ?? null, m.alt ?? null, m.focus ?? null,
+    v.mediaMeta?.[m.target]?.sourcePath ?? null, v.mediaMeta?.[m.target]?.cropPath ?? null,
+    v.mediaMeta?.[m.target]?.cropRatio ?? null, m.fingerprint ?? null, m.sourceFingerprint ?? null,
+  ] : null);
   // Media a platform never sends (maxCount 0) is neither shown nor part of the digest.
   const sent = platformDef(v.platform).capabilities.media.maxCount > 0 ? content.media : [];
-  const bodyImages = v.platform === "wordpress" ? imageEmbeds(content.body).map((target) => [target, v.mediaMeta?.[target]?.alt ?? null]) : [];
+  const bodyImages = v.platform === "wordpress" ? imageEmbeds(content.body).map((target) => {
+    const resolved = content.bodyMedia?.find((m) => m.target === target) ?? content.media.find((m) => m.target === target) ?? (content.featured?.target === target ? content.featured : undefined);
+    return [target, v.mediaMeta?.[target]?.alt ?? null, v.mediaMeta?.[target]?.sourcePath ?? null,
+      v.mediaMeta?.[target]?.cropPath ?? null, v.mediaMeta?.[target]?.cropRatio ?? null,
+      resolved?.fingerprint ?? null, resolved?.sourceFingerprint ?? null];
+  }) : [];
   return JSON.stringify([v.platform, v.title ?? "", v.url ?? "", content.body, bodyImages, sent.map(media), media(content.featured), v.wordpress ?? null]);
 }
 
@@ -168,6 +180,37 @@ export class PublishActions {
       const message = e instanceof Error ? e.message : String(e);
       return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
     }
+  }
+
+  /** Channel settings, Facebook "Find Pages": only Page names, ids and publish eligibility leave the adapter. */
+  async findFacebookPages(secretId: string): Promise<FacebookPageChoice[] | { error: string }> {
+    const facebook = this.deps.adapters.get("facebook");
+    if (!(facebook instanceof FacebookAdapter)) return { error: "Facebook Pages publishing isn't connected in this version." };
+    try {
+      return await facebook.findPages(secretId ? this.deps.secrets.get(secretId) : null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
+    }
+  }
+
+  /** Channel settings, LinkedIn account discovery: only account ids, names and verified permission states leave the adapter. */
+  async findLinkedInAccounts(secretId: string): Promise<LinkedInAccountChoice[] | { error: string }> {
+    const linkedin = this.deps.adapters.get("linkedin");
+    if (!(linkedin instanceof LinkedInAdapter)) return { error: "LinkedIn account discovery isn't connected in this version." };
+    try {
+      return await linkedin.findAccounts(secretId ? this.deps.secrets.get(secretId) : null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: secretId ? this.deps.secrets.redact(message, [secretId]) : message };
+    }
+  }
+
+  canPublishLinkedIn(kind: "profile" | "page", secretId?: string): boolean {
+    const linkedin = this.deps.adapters.get("linkedin");
+    if (!(linkedin instanceof LinkedInAdapter)) return false;
+    const token = secretId ? this.deps.secrets.get(secretId) : null;
+    return linkedin.canPublishToken(kind, token);
   }
 
   readonly orchestrator: PublishOrchestrator;
@@ -265,7 +308,7 @@ export class PublishActions {
       new Notice(`${name} is not waiting on ${PLATFORM_META[v.platform].label}'s schedule.`);
       return false;
     }
-    const result = await this.updateChannel(v, content, channelId, syncChange(v, content.body, d));
+    const result = await this.updateChannel(v, content, channelId, syncChange(v, content.body, d, digestMedia(content)));
     new Notice(result.ok ? `Updated on ${PLATFORM_META[v.platform].label} for ${name}.` : `${name}: ${result.error}`);
     return result.ok;
   }
@@ -666,7 +709,7 @@ export class PublishActions {
     if (heldForReview(parsed.value)) return { refuse: HELD };
     const body = bodyOf(raw);
     const v: IndexedVariant = { ...indexed, ...parsed.value, file: indexed.file, issues: parsed.issues, displayTitle: parsed.value.title ?? (excerpt(body) || indexed.file.basename) };
-    const content = { ...(await this.deps.composer.content.load(v)), body };
+    const content = await this.deps.composer.content.load(v, body);
     const errors = this.deps.composer.check(v, content).filter((i) => i.level === "error");
     if (errors.length) return { refuse: BLOCKING, issues: errors };
     return { v, content };
@@ -799,7 +842,7 @@ export class PublishActions {
     }
     const secretId = channel.secretId;
     const redact = (text: string) => (secretId ? this.deps.secrets.redact(text, [secretId]) : text);
-    const digest = contentDigest(v, content.body);
+    const digest = contentDigest(v, content.body, digestMedia(content));
     const pushedAt = d.at ?? d.remoteAt;
     try {
       const res = (await adapter.update(deliveryJob(v, channel, d, content, secretId ? this.deps.secrets.get(secretId) : null), change)) as { remoteId?: string } | undefined;
@@ -867,7 +910,7 @@ export class PublishActions {
         break;
       }
       const d = current.v.deliveries[id];
-      const result = await this.updateChannel(current.v, current.content, id, d?.status === "handed_over" ? syncChange(current.v, current.content.body, d) : undefined);
+      const result = await this.updateChannel(current.v, current.content, id, d?.status === "handed_over" ? syncChange(current.v, current.content.body, d, digestMedia(current.content)) : undefined);
       if (result.ok) updated.push(id);
       else failed.push({ id, error: result.error });
     }

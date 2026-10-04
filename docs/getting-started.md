@@ -22,7 +22,7 @@ Tip: for Mastodon, set the handle to `@you@your.instance` so the right server op
 
 1. Run **Open composer for this post**. The composer opens next to the note.
 2. The preview follows what you type. The **Checks** panel counts characters the way Bluesky does (300) and lists anything that would block the post.
-3. Drop an image on **Media** if you want one, and give it alt text.
+3. Drop an image on **Media** if you want one, and give it alt text. With an OpenAI API key (**Settings → Image generation**), **Generate image** makes one for you; pick the crop and focal point, then **Use image**.
 
 ## 4. Schedule it (1 minute)
 
@@ -85,16 +85,20 @@ On the publisher device, open **Settings → Social Planner → Channels**, edit
 - **Bluesky:** an app password and your handle.
 - **WordPress:** an HTTPS site address, your user name and an application password.
 
-Click **Test connection**. Scheduled posts on these channels now go out by themselves while the publisher device runs Obsidian.
+- **Facebook Pages:** a Meta user access token. Click **Find Facebook Pages** and **Use** the Page. See [the Facebook guide](setup/facebook.md).
 
-For Mastodon and WordPress, choose **API with native scheduling** instead: a scheduled post is handed over to the platform (at least 7 minutes ahead on Mastodon, 3 on WordPress) and goes out even when Obsidian is closed. If you edit or move it afterwards, it shows **Out of sync**: the platform keeps the old version until you click **Push update** in the composer or row menu. **Revert time** takes the platform's time back, and **Unschedule on …** takes it off the platform's schedule. A Mastodon thread is never handed over; it posts from Obsidian at its time.
+Click **Test connection**. Scheduled posts on channels with verified API access now go out by themselves while the publisher device runs Obsidian. The channel list shows each channel's credential health (for example **Verified · expiry unknown** or **Needs attention · connection test failed**); with desktop notifications on, you get one reminder when a channel needs attention.
+
+Instagram, X and LinkedIn stay on assisted publishing in this release; their guides explain why and what each needs: [Instagram](setup/instagram.md), [X](setup/x.md), [LinkedIn](setup/linkedin.md).
+
+For Facebook Pages, Mastodon and WordPress, choose **API with native scheduling** instead: a scheduled post is handed over to the platform (at least 12 minutes ahead on Facebook, 7 on Mastodon, 3 on WordPress) and goes out even when Obsidian is closed. If you edit or move it afterwards, it shows **Out of sync**: the platform keeps the old version until you click **Push update** in the composer or row menu. **Revert time** takes the platform's time back, and **Unschedule on …** takes it off the platform's schedule. A Mastodon thread is never handed over; it posts from Obsidian at its time.
 
 ## When something goes wrong
 
 - **The post's time passed while Obsidian was closed.** It is not posted late behind your back: it waits in the **Overdue** tray with **Post now**, **Reschedule** and **Skip**. (Settings → Publishing → **Post late items automatically** lets short delays go out anyway; it is off by default.)
 - **A link is refused.** The link must be the post's page on that platform, starting with `https://`.
 - **Needs attention.** Failed deliveries and ones that need a check are listed in the queue sidebar with the next step to take.
-- **Check needed after a dropped connection.** The post may or may not have gone out, so it is not sent again automatically. Where the platform can tell (Mastodon, Bluesky, WordPress), the plugin asks it and settles the post; otherwise look on the platform and mark it as published or not.
+- **Check needed after a dropped connection.** The post may or may not have gone out, so it is not sent again automatically. Where a platform can bind the result safely (Mastodon, Bluesky, or WordPress), the plugin asks it and settles the post; otherwise look on the platform and mark it as published or not. X can continue a known partial thread only when it has saved and revalidated the exact IDs of earlier confirmed parts; an ambiguous create outcome still needs manual reconciliation.
 - **Not handed over.** The platform refused the hand-over (a wrong token or a time too close). The post stays scheduled and goes out from Obsidian at its time, as long as the publisher device is on.
 - **Out of sync.** You changed a post after it was handed over. Nothing is sent until you click **Push update**.
 - **Wrong day?** Drag the post in the planner, or right click it (long press on a phone) and pick **Reschedule…**. Every move can be undone from the notice.

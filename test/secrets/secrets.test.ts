@@ -14,7 +14,10 @@ describe("secret ids", () => {
 
   it("lists every secret id the plugin may hold, for redaction", () => {
     const channel = { id: "tg/event-x", platform: "telegram", name: "Event X", kind: "server_channel", avatarColor: "#000", method: "api", secretId: "osmm-channel-tg-event-x" } as never;
-    expect(allSecretIds([channel])).toEqual(["osmm-channel-tg-event-x", "osmm-ntfy-topic", "osmm-ntfy-token", "osmm-openai-key", "osmm-mcp-bearer"]);
+    expect(allSecretIds([channel])).toEqual([
+      "osmm-channel-tg-event-x", "osmm-oauth-access-tg-event-x", "osmm-oauth-refresh-tg-event-x",
+      "osmm-ntfy-topic", "osmm-ntfy-token", "osmm-openai-key", "osmm-mcp-bearer",
+    ]);
   });
 });
 

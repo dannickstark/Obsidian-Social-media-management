@@ -1,6 +1,7 @@
 import { Notice, Platform, Plugin } from "obsidian";
 import { writable, type Writable } from "svelte/store";
 import "./styles/index.css";
+import { OAuthFlow } from "./auth/oauth";
 import { ChannelRegistry } from "./channels/registry";
 import { createVoiceProfile } from "./claude/voice";
 import { registerCommands } from "./commands";
@@ -40,7 +41,8 @@ import { Notifier } from "./reminders/notifier";
 import { ReminderService } from "./reminders/service";
 import { Scheduler } from "./scheduler/scheduler";
 import { allSecretIds, Secrets } from "./secrets/secrets";
-import { loadDeviceSettings, saveDeviceSettings, type DeviceSettings } from "./settings/device";
+import { CredentialHealthStore, loadDeviceSettings, saveDeviceSettings, type DeviceSettings } from "./settings/device";
+import { CredentialHealthReminders } from "./settings/credentialHealth";
 import { PublisherService } from "./settings/publisher";
 import { autoPostLateMs, migrateSettings, type OsmmSettings } from "./settings/settings";
 import { OsmmSettingTab } from "./settings/tab";
@@ -65,8 +67,11 @@ export default class OsmmPlugin extends Plugin {
   override settings!: OsmmSettings;
   settingsStore!: Writable<OsmmSettings>;
   device!: DeviceSettings;
+  deviceStore!: Writable<DeviceSettings>;
   publisher!: PublisherService;
   secrets!: Secrets;
+  oauth!: OAuthFlow;
+  credentialHealth!: CredentialHealthStore;
   writer!: SafeWriter;
   factory!: NoteFactory;
   channels!: ChannelRegistry;
@@ -116,6 +121,7 @@ export default class OsmmPlugin extends Plugin {
     }
     this.settingsStore = writable(this.settings);
     this.device = loadDeviceSettings(this.app);
+    this.deviceStore = writable(this.device);
     this.publisher = new PublisherService({
       device: () => this.device,
       settings: () => this.settings,
@@ -127,6 +133,20 @@ export default class OsmmPlugin extends Plugin {
       },
     });
     this.secrets = new Secrets(this.app);
+    this.oauth = new OAuthFlow();
+    this.register(() => this.oauth.cancel());
+    this.credentialHealth = new CredentialHealthStore(() => this.device, (next) => this.setDevice({ credentialHealth: next.credentialHealth }));
+    const healthReminders = new CredentialHealthReminders(this.credentialHealth, (message) => new Notice(message));
+    const scanCredentialHealth = () => {
+      if (!this.device.notifications) return;
+      healthReminders.scan(this.channels.list().map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        connected: !!channel.secretId && !!this.secrets.get(channel.secretId),
+      })), Date.now());
+    };
+    const healthTimer = window.setInterval(scanCredentialHealth, 60 * 60_000);
+    this.register(() => window.clearInterval(healthTimer));
     this.linkCards = new LinkCardFetcher({ http: obsidianHttp, now: () => Date.now() });
     // M5: the API adapters (spec §4.2). Registered on every device; only the publisher dispatches through them.
     for (const adapter of createAdapters(this.adapterDeps())) this.adapters.register(adapter);
@@ -270,6 +290,7 @@ export default class OsmmPlugin extends Plugin {
       writer: this.writer,
       planner: ui.actions,
       composer: ui.composer,
+      images: ui.composer.images,
       publish: ui.publish,
       secrets: this.secrets,
       settings: () => this.settings,
@@ -334,6 +355,7 @@ export default class OsmmPlugin extends Plugin {
         this.started = true;
       }
       if (this.unloaded) return;
+      scanCredentialHealth();
       ui.publish.overdueBanner(overdueRows(ui.actions.rows(), Date.now()).length);
       const held = this.index.variants().filter((v) => heldForReview(v)).length;
       if (held) {
@@ -391,6 +413,7 @@ export default class OsmmPlugin extends Plugin {
 
   setDevice(patch: Partial<Omit<DeviceSettings, "deviceId">>): void {
     this.device = { ...this.device, ...patch };
+    this.deviceStore.set(this.device);
     saveDeviceSettings(this.app, this.device);
   }
 
@@ -410,6 +433,13 @@ export default class OsmmPlugin extends Plugin {
         return file && mime ? { path: file.path, name: file.name, mime } : null;
       },
       linkCard: (url) => this.linkCards.get(url),
+      // API consent is provider-specific and remains fail-closed until a verified setup exists.
+      xApiAccessVerified: false,
+      linkedInMemberAccessVerified: false,
+      linkedInCommunityManagementAccessVerified: false,
+      // Grant metadata is bound to one exact token; no production verifier is configured yet.
+      linkedInTokenAccess: () => null,
+      linkedInTokenForChannel: (channel) => channel.secretId ? this.secrets.get(channel.secretId) : null,
     };
   }
 
@@ -533,6 +563,8 @@ export default class OsmmPlugin extends Plugin {
         composer,
         publish,
         publisher: this.publisher,
+        device: this.deviceStore,
+        credentialHealth: this.credentialHealth,
         linkCards: this.linkCards,
       };
       actions.context = this.ui;

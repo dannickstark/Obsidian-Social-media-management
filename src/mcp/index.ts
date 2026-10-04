@@ -4,6 +4,7 @@ import { registerReadTools } from "./tools/read";
 import { registerScheduleTools } from "./tools/schedule";
 import { registerSlotTools } from "./tools/slots";
 import { registerVoiceTools } from "./tools/voice";
+import { registerImageTools } from "./tools/images";
 import { registerWriteTools } from "./tools/write";
 import type { ToolRegistry } from "./tools";
 
@@ -15,4 +16,5 @@ export function registerAllTools(registry: ToolRegistry, deps: McpToolDeps): voi
   registerSlotTools(registry, deps);
   registerPublishTools(registry, deps);
   registerVoiceTools(registry, deps);
+  registerImageTools(registry, deps);
 }

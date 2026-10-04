@@ -23,7 +23,7 @@ type Size = { width: number; height: number } | null;
 
 /** Resolves `media:` links and reads what checks and previews need. Image sizes are cached per path and mtime. */
 export class MediaInspector {
-  private readonly sizes = new Map<string, { mtime: number; size: Size }>();
+  private readonly sizes = new Map<string, { mtime: number; size: Size; fingerprint: string }>();
 
   constructor(private readonly app: App) {}
 
@@ -51,16 +51,24 @@ export class MediaInspector {
     const info: MediaInfo = { ...base, path: file.path, kind, bytes: file.stat.size };
     if (kind !== "image") return info;
     info.mime = IMAGE_MIME[file.extension.toLowerCase()];
-    const size = await this.size(file);
-    return size ? { ...info, width: size.width, height: size.height } : info;
+    const detail = await this.detail(file, !!meta?.sourcePath);
+    if (meta?.sourcePath) {
+      info.fingerprint = detail.fingerprint;
+      const source = this.app.vault.getFileByPath(meta.sourcePath);
+      info.sourceFingerprint = source ? (await this.detail(source, true)).fingerprint : "missing";
+    }
+    return detail.size ? { ...info, width: detail.size.width, height: detail.size.height } : info;
   }
 
-  private async size(file: TFile): Promise<Size> {
+  private async detail(file: TFile, live = false): Promise<{ size: Size; fingerprint: string }> {
     const cached = this.sizes.get(file.path);
-    if (cached && cached.mtime === file.stat.mtime) return cached.size;
-    const found = imageSize(new Uint8Array(await this.app.vault.readBinary(file)));
+    if (!live && cached && cached.mtime === file.stat.mtime) return cached;
+    const bytes = await this.app.vault.readBinary(file);
+    const found = imageSize(new Uint8Array(bytes));
     const size = found ? { width: found.width, height: found.height } : null;
-    this.sizes.set(file.path, { mtime: file.stat.mtime, size });
-    return size;
+    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const fingerprint = [...hash].map((b) => b.toString(16).padStart(2, "0")).join("");
+    this.sizes.set(file.path, { mtime: file.stat.mtime, size, fingerprint });
+    return { size, fingerprint };
   }
 }

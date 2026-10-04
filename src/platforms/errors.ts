@@ -12,6 +12,7 @@ export class PublishError extends Error {
     readonly kind: ErrorKind,
     message: string,
     readonly retryAfterMs?: number,
+    readonly adapterState?: string,
   ) {
     super(message);
     this.name = "PublishError";
@@ -19,22 +20,22 @@ export class PublishError extends Error {
 }
 
 export class TransientError extends PublishError {
-  constructor(message: string, retryAfterMs?: number) {
-    super("transient", message, retryAfterMs);
+  constructor(message: string, retryAfterMs?: number, adapterState?: string) {
+    super("transient", message, retryAfterMs, adapterState);
     this.name = "TransientError";
   }
 }
 
 export class NeedsUserError extends PublishError {
-  constructor(message: string) {
-    super("needs_user", message);
+  constructor(message: string, adapterState?: string) {
+    super("needs_user", message, undefined, adapterState);
     this.name = "NeedsUserError";
   }
 }
 
 export class InvalidContentError extends PublishError {
-  constructor(message: string) {
-    super("invalid_content", message);
+  constructor(message: string, adapterState?: string) {
+    super("invalid_content", message, undefined, adapterState);
     this.name = "InvalidContentError";
   }
 }

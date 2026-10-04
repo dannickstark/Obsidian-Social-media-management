@@ -1,0 +1,104 @@
+import type { App, TFile } from "obsidian";
+import { pngStructure } from "./png";
+import type { SafeWriter } from "../model/writer";
+import { cropFromFocus, type CropRenderer } from "./crops";
+import type { FocalPoint, GeneratedMediaProvenance } from "./types";
+import { randomString } from "../model/ids";
+import { GOES_OUT_SOON, goesOutSoon } from "../planner/leadTime";
+
+// Reserve candidates across in-flight saves. Obsidian's availability lookup only
+// sees files that have already been written, not writes awaiting completion.
+const reservedPaths = new Set<string>();
+
+async function reserveGeneratedPath(app: App, notePath: string, kind: "original" | "crop"): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const path = await app.fileManager.getAvailablePathForAttachment(`generated-${randomString(16)}-${kind}.png`, notePath);
+    if (reservedPaths.has(path) || app.vault.getFileByPath(path)) continue;
+    reservedPaths.add(path);
+    return path;
+  }
+  throw new Error("Could not reserve a distinct generated image path.");
+}
+
+export interface SavedGeneratedImage extends GeneratedMediaProvenance {
+  /** A link target that resolves from the note, suitable for `media:`. */
+  target: string;
+}
+
+export interface SaveGeneratedOptions {
+  ratio?: number;
+  focus?: FocalPoint;
+  render?: CropRenderer;
+}
+
+/** Saves vault-local original and optional crop. The caller may preview bytes before calling this. */
+export async function saveGeneratedImage(app: App, notePath: string, source: ArrayBuffer, options: SaveGeneratedOptions = {}): Promise<SavedGeneratedImage> {
+  if (source.byteLength > 20 * 1024 * 1024) throw new Error("Generated image must be a PNG under 20 MB and 40 megapixels.");
+  const size = await pngStructure(new Uint8Array(source));
+  if (!size) {
+    throw new Error("Generated image must be a PNG under 20 MB and 40 megapixels.");
+  }
+  const focus = (options.focus ?? [0.5, 0.5]).map((n) => Math.round((Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5) * 100) / 100) as FocalPoint;
+  // Render before writing either file so a failed crop leaves no orphaned original.
+  const cropped = options.ratio === undefined ? undefined : await cropFromFocus(source, options.ratio, focus, options.render);
+  if (cropped && (cropped.byteLength > 20 * 1024 * 1024 || !await pngStructure(new Uint8Array(cropped)))) throw new Error("Generated crop must be a complete PNG under 20 MB.");
+  const plannedPaths: string[] = [];
+  let original: TFile | undefined;
+  let crop: TFile | undefined;
+  try {
+    const sourcePath = await reserveGeneratedPath(app, notePath, "original");
+    plannedPaths.push(sourcePath);
+    original = await app.vault.createBinary(sourcePath, source);
+    if (cropped === undefined) return { sourcePath: original.path, focus, target: app.metadataCache.fileToLinktext(original, notePath, true) };
+    const cropPath = await reserveGeneratedPath(app, notePath, "crop");
+    plannedPaths.push(cropPath);
+    crop = await app.vault.createBinary(cropPath, cropped);
+    return { sourcePath: original.path, cropPath: crop.path, cropRatio: options.ratio!, focus, target: app.metadataCache.fileToLinktext(crop, notePath, true) };
+  } catch (error) {
+    // A vault write can create a file and still reject before returning its TFile.
+    // These exact paths were verified absent and recorded before each attempted write.
+    const cleanup = await Promise.allSettled(plannedPaths.reverse().map(async (path) => {
+      const file = app.vault.getFileByPath(path);
+      if (file && (!original || path !== original.path || file === original) && (!crop || path !== crop.path || file === crop)) await app.vault.delete(file);
+    }));
+    const failed = cleanup.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) throw new AggregateError([error, ...failed.map((result) => result.reason)], "Generated image save failed and cleanup was incomplete.");
+    throw error;
+  } finally {
+    for (const path of plannedPaths) reservedPaths.delete(path);
+  }
+}
+
+/** One fresh note write. It never schedules or publishes a delivery. */
+export async function attachGeneratedImage(
+  app: App, writer: SafeWriter, note: TFile, image: SavedGeneratedImage,
+  timing: { now(): number; defaultStaggerMinutes(): number },
+): Promise<void> {
+  try {
+    const result = await writer.updateVariant(note, (fresh) => {
+      // The request and crop can take minutes. Check the current schedule inside the note's write queue.
+      if (goesOutSoon(fresh, timing.now(), timing.defaultStaggerMinutes())) return { refuse: GOES_OUT_SOON };
+      return { fields: {
+        media: fresh.media.includes(image.target) ? fresh.media : [...fresh.media, image.target],
+        mediaMeta: { ...fresh.mediaMeta, [image.target]: {
+          ...fresh.mediaMeta?.[image.target], sourcePath: image.sourcePath,
+          ...(image.cropPath ? { cropPath: image.cropPath } : {}),
+          ...(image.cropRatio !== undefined ? { cropRatio: image.cropRatio } : {}), focus: image.focus,
+        } },
+      } };
+    });
+    if ("refuse" in result) throw new Error(result.refuse);
+  } catch (error) {
+    // These paths were returned by saveGeneratedImage for this note. Never delete a path that no longer resolves.
+    const files: TFile[] = [];
+    for (const path of [image.cropPath, image.sourcePath]) {
+      if (!path) continue;
+      const file = app.vault.getFileByPath(path);
+      if (file) files.push(file);
+    }
+    const cleanup = await Promise.allSettled(files.map((file) => app.vault.delete(file)));
+    const failed = cleanup.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) throw new AggregateError([error, ...failed.map((result) => result.reason)], "Generated image attach failed and cleanup was incomplete.");
+    throw error;
+  }
+}

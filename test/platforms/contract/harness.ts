@@ -41,7 +41,7 @@ export interface ContractCase {
    * "not_found" for an exact lookup, which answers `{ published: false }`; "unknown" for a heuristic one, which
    * answers null (can't tell).
    */
-  lookup?: { job(): DeliveryJob; found: Fixture[]; expect: RemoteState; notFound: Fixture[]; notFoundAnswer: "not_found" | "unknown" };
+  lookup?: { job(): DeliveryJob; found: Fixture[]; expect: RemoteState | null; notFound: Fixture[]; notFoundAnswer: "not_found" | "unknown" };
 }
 
 export function contractDeps(): AdapterDeps {
@@ -52,6 +52,15 @@ export function contractDeps(): AdapterDeps {
     sleep: async () => undefined,
     timeoutMs: CONTRACT_TIMEOUT_MS,
     resolveEmbed: () => null,
+    instagramMediaHost: {
+      create: async (file) => ({ url: `https://cdn.example.net/${encodeURIComponent(file.name)}` }),
+    },
+    // Contract fixtures stand in for externally verified X OAuth scopes and API-tier access.
+    xApiAccessVerified: true,
+    // Contract fixtures stand in for separately verified LinkedIn member and Community Management access.
+    linkedInMemberAccessVerified: true,
+    linkedInCommunityManagementAccessVerified: true,
+    linkedInTokenAccess: () => ({ grantedScopes: ["openid", "profile", "w_member_social"], signInWithLinkedInProductVerified: true }),
   };
 }
 

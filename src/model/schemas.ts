@@ -45,6 +45,7 @@ export const zTimeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:
 export const zUrl = z.url();
 export const zHexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #6ea3e6");
 export const zSecretId = z.string().regex(SLUG_RE, "Use lowercase letters, digits and dashes");
+export const zCropRatio = z.number().finite().positive().max(10);
 /**
  * An https address without a trailing slash: a Mastodon instance, a Bluesky PDS, a WordPress site (M5).
  * No userinfo (`@` in the authority): neither a credential in the address nor a host that only looks like the real one.

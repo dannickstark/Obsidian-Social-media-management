@@ -7,6 +7,7 @@ import { channel, img, input, messages } from "./fixtures";
 const X = platformDef("x");
 const BS = platformDef("bluesky");
 const MA = platformDef("mastodon");
+const IG = platformDef("instagram");
 
 describe("X (280 weighted, URL = 23, media ≤ 4)", () => {
   it.each([
@@ -32,6 +33,18 @@ describe("X (280 weighted, URL = 23, media ≤ 4)", () => {
     expect(validateFor(input("mastodon", `Hi\n---\n${"a".repeat(500)}`, { url }), MA)).toEqual([]);
   });
 
+  it.each([
+    ["period after URL", "https://example.com.", 24],
+    ["comma after URL", "https://example.com,", 24],
+    ["exclamation after URL", "https://example.com!", 24],
+    ["period after bare-domain path", "example.com/path.", 24],
+    ["comma after bare-domain path", "example.com/path,", 24],
+    ["exclamation after bare-domain path", "example.com/path!", 24],
+    ["balanced closing parenthesis", "(https://example.com/a_(b)).", 26],
+  ])("keeps punctuation outside the shortened URL (%s)", (_name, text, expected) => {
+    expect(countChars(text, "x-weighted")).toBe(expected);
+  });
+
   it("allows at most four images", () => {
     const media = ["1.png", "2.png", "3.png", "4.png", "5.png"].map((t) => img(t));
     expect(messages(validateFor(input("x", "Hi", {}, media), X))).toEqual(["error:media:X allows at most 4 images; this post has 5."]);
@@ -52,6 +65,21 @@ describe("Bluesky (300 graphemes, images ≤ 4, link card)", () => {
     expect(messages(validateFor(input("bluesky", "Hi", { url: "https://example.com" }, [img()]), BS))).toEqual([warning]);
     expect(messages(validateFor(input("bluesky", "See https://example.com", {}, [img()]), BS))).toEqual([warning]);
     expect(validateFor(input("bluesky", "See https://example.com"), BS)).toEqual([]);
+  });
+});
+
+describe("Instagram Business images", () => {
+  it("requires images, preserves the ten-image carousel limit, and enforces its aspect ratio", () => {
+    expect(messages(validateFor(input("instagram", "Caption"), IG))).toContain(
+      "error:media:Instagram needs an image.",
+    );
+    expect(validateFor(input("instagram", "Caption", {}, [img("portrait.png", 1080, 1350)]), IG)).toEqual([]);
+    expect(messages(validateFor(input("instagram", "Caption", {}, [img("too-tall.png", 1080, 1920)]), IG))).toContain(
+      "error:media.too-tall.png:too-tall.png is 0.56:1; Instagram accepts 0.80:1 to 1.91:1.",
+    );
+    expect(messages(validateFor(input("instagram", "Caption", {}, Array.from({ length: 11 }, (_, i) => img(`${i}.png`))), IG))).toContain(
+      "error:media:Instagram allows at most 10 images; this post has 11.",
+    );
   });
 });
 

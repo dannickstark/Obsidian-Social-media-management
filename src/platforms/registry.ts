@@ -47,6 +47,11 @@ export class AdapterRegistry {
   get(platform: Platform): PlatformAdapter | undefined {
     return this.adapters.get(platform);
   }
+
+  /** A provider may report expiry through verify or a future refresh implementation. */
+  canRefresh(platform: Platform): boolean {
+    return !!this.adapters.get(platform)?.refreshCredential;
+  }
 }
 
 export type EffectiveMethod = "api" | "native" | "assisted";
@@ -55,9 +60,24 @@ export type EffectiveMethod = "api" | "native" | "assisted";
  * How a delivery will actually run. The channel's configured method is a wish; without an adapter
  * that can do it, every channel falls back to the assisted flow (spec §10: assisted fallback everywhere).
  */
-export function effectiveMethod(mode: PostMode, channel: Channel | undefined, adapter: PlatformAdapter | undefined): EffectiveMethod {
+export function effectiveMethod(
+  mode: PostMode,
+  channel: Channel | undefined,
+  adapter: PlatformAdapter | undefined,
+): EffectiveMethod {
   if (mode === "assisted" || !channel || channel.method === "assisted") return "assisted";
-  if (channel.method === "native" && adapter?.schedule) return "native";
+  if (!PLATFORM_DEFS[channel.platform].capabilities.api) return "assisted";
+  if (
+    channel.platform === "facebook" &&
+    (!channel.secretId || channel.kind !== "page" || !/^\d+$/.test(channel.handle ?? ""))
+  )
+    return "assisted";
+  if (adapter?.apiAvailable && !adapter.apiAvailable(channel)) return "assisted";
+  if (
+    channel.method === "native" &&
+    PLATFORM_DEFS[channel.platform].capabilities.nativeSchedule &&
+    adapter?.schedule
+  ) return "native";
   if (adapter?.publish) return "api";
   return "assisted";
 }

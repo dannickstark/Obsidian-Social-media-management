@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { requestUrlMock, SecretComponent } from "../fakes/obsidian";
 import ChannelForm from "../../src/settings/ChannelForm.svelte";
 import ChannelsSection from "../../src/settings/ChannelsSection.svelte";
@@ -9,6 +9,9 @@ import { TelegramAdapter } from "../../src/platforms/telegram/api";
 import { contractDeps } from "../platforms/contract/harness";
 import { json, queue } from "../platforms/http";
 import { TG, TG_TOKEN } from "../platforms/telegram/fixtures";
+import { createAdapters } from "../../src/platforms/adapters";
+import { before as facebookBefore, PAGE_TOKEN, USER_TOKEN, PAGE } from "../platforms/facebook/contract";
+import { TEST_NOW } from "../ui/ctx";
 
 describe("ChannelForm", () => {
   const pick = (value: string) => fireEvent.change(screen.getByLabelText("Platform"), { target: { value } });
@@ -76,6 +79,63 @@ describe("ChannelForm", () => {
     expect(methods()).toEqual(["api", "native", "assisted"]);
   });
 
+  it("keeps Instagram assisted while no public image host is configured", async () => {
+    const { ctx } = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
+    await pick("instagram");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/public image host.*Meta can fetch/i)).toBeTruthy();
+  });
+
+  it("keeps X assisted until write scopes and API-tier access are verified", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("x");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/cannot verify tweet\.write\/media\.write scopes or API tier yet/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeTruthy();
+  });
+
+  it("shows account discovery only for providers with token-based discovery", async () => {
+    const c = await makeCtx();
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    expect(screen.getByRole("button", { name: "Find Facebook Pages" })).toBeTruthy();
+    await pick("linkedin");
+    expect(screen.getByRole("button", { name: "Find LinkedIn accounts" })).toBeTruthy();
+    await pick("x");
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+    await pick("instagram");
+    expect(screen.queryByRole("button", { name: /find .*accounts/i })).toBeNull();
+  });
+
+  it("discovers a LinkedIn profile but keeps it assisted when that exact token lacks the publishing scope", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters({
+      ...contractDeps(),
+      linkedInMemberAccessVerified: true,
+      linkedInCommunityManagementAccessVerified: true,
+      linkedInTokenForChannel: () => "LINKEDIN-TOKEN",
+      linkedInTokenAccess: () => ({ grantedScopes: ["openid", "profile"], signInWithLinkedInProductVerified: true }),
+    })) c.adapters.register(a);
+    c.app.secretStorage.setSecret("li-token", "LINKEDIN-TOKEN");
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/Sign In with LinkedIn product plus openid\/profile scopes/i)).toBeTruthy();
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Ada" } });
+    await SecretComponent.last!.change("li-token");
+    expect(requestUrlMock.calls).toHaveLength(0);
+    queue(json(200, { sub: "abc123", name: "Ada Lovelace" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Find LinkedIn accounts" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Ada Lovelace (Profile)" }));
+    expect((screen.getByLabelText("Handle / URL") as HTMLInputElement).value).toBe("urn:li:person:abc123");
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("profile");
+    expect(methods()).toEqual(["assisted"]);
+    expect(await screen.findByText(/Identity found; w_member_social.*not verified/i)).toBeTruthy();
+  });
+
   it("saves a WordPress site address and user name, and refuses a site without https", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
@@ -130,6 +190,48 @@ describe("ChannelForm", () => {
     expect((await screen.findByRole("status")).textContent).toBe("Connected: Event X, posting as @osmm_bot");
   });
 
+  it("records a provider-reported expiry after a connection test and shows an expiring badge", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: true, account: "Event X", expiresAt: TEST_NOW + 86_400_000 }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Connected: Event X");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "verified", expiresAt: TEST_NOW + 86_400_000 });
+    expect(await screen.findByText("Expires soon")).toBeTruthy();
+    expect(JSON.stringify(c.app.loadLocalStorage("osmm-device"))).not.toContain("PRIVATE-TOKEN");
+  });
+
+  it("marks a failed connection test as needing attention without claiming expiry", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: false, error: "Permission denied" }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Permission denied");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "test-failed" });
+    expect(await screen.findByText("Needs attention · connection test failed")).toBeTruthy();
+  });
+
+  it("does not record health for a credential that is not saved yet (whole-branch review)", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("tg/event-x")!;
+    c.app.secretStorage.setSecret("tg-credential", "PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("tg-other", "OTHER-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "tg-credential" });
+    c.ctx.credentialHealth.setTestFailed(channel.id);
+    c.adapters.register({ platform: "telegram", verify: async () => ({ ok: true, account: "Event X" }) });
+    render(ChannelForm, { props: { channel: c.ctx.channels.get("tg/event-x")!, close: () => {} }, context: osmmContext(c.ctx) });
+    await SecretComponent.last!.change("tg-other");
+    await fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Connected: Event X");
+    expect(c.ctx.credentialHealth.get(channel.id)).toEqual({ status: "test-failed" });
+  });
+
   it("has no Test connection where the plugin has no API adapter", async () => {
     const { ctx } = await makeCtx();
     render(ChannelForm, { props: { close: () => {} }, context: osmmContext(ctx) });
@@ -149,9 +251,70 @@ describe("ChannelForm", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Use Event X (@eventx)" }));
     expect((screen.getByLabelText("Chat id (@name or -100…)") as HTMLInputElement).value).toBe("@eventx");
   });
-});
 
+  it("discovers Facebook Pages with a supplied token, verifies permissions, and saves only the Page id and credential reference", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    c.app.secretStorage.setSecret("fb-token", USER_TOKEN);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    expect(methods()).toEqual(["assisted"]);
+    expect(screen.getByText(/OAuth.*unverified/)).toBeTruthy();
+    await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "My Page" } });
+    await SecretComponent.last!.change("fb-token");
+    expect(requestUrlMock.calls).toHaveLength(0);
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Event X" }));
+    expect((screen.getByLabelText("Page id") as HTMLInputElement).value).toBe("11");
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("page");
+    expect(methods()).toEqual(["api", "native", "assisted"]);
+    expect(screen.queryByText(/^Connected:/)).toBeNull();
+    await fireEvent.change(screen.getByLabelText("Publishing"), { target: { value: "native" } });
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Save channel" }));
+    await waitFor(() =>
+      expect(c.ctx.channels.get("fb/my-page")).toMatchObject({
+        handle: "11",
+        kind: "page",
+        method: "native",
+        secretId: "fb-token",
+      }),
+    );
+    expect(JSON.stringify(c.ctx.channels.get("fb/my-page"))).not.toContain(USER_TOKEN);
+    expect(document.body.textContent).not.toContain(PAGE_TOKEN);
+  });
+
+  it("keeps Facebook assisted when permissions are missing and invalidates selection on credential changes", async () => {
+    const c = await makeCtx();
+    for (const a of createAdapters(contractDeps())) c.adapters.register(a);
+    c.app.secretStorage.setSecret("fb-token", USER_TOKEN);
+    render(ChannelForm, { props: { close: () => {} }, context: osmmContext(c.ctx) });
+    await pick("facebook");
+    await SecretComponent.last!.change("fb-token");
+    queue(json(200, { data: [PAGE] }), json(200, { data: [] }));
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: /Use Event X/ }));
+    expect(methods()).toEqual(["assisted"]);
+    queue(...facebookBefore());
+    await fireEvent.click(screen.getByRole("button", { name: "Find Facebook Pages" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Use Event X" }));
+    expect(methods()).toEqual(["api", "native", "assisted"]);
+    await SecretComponent.last!.change("other-token");
+    expect(methods()).toEqual(["assisted"]);
+  });
+});
 describe("ChannelsSection", () => {
+  it("shows local credential health without exposing token values", async () => {
+    const c = await makeCtx({ seed: true });
+    const channel = c.ctx.channels.get("li/acme-studio")!;
+    c.app.secretStorage.setSecret("li-credential", "PRIVATE-TOKEN");
+    await c.ctx.channels.upsertChannel({ ...channel, secretId: "li-credential" });
+    c.ctx.credentialHealth.setVerified(channel.id);
+    render(ChannelsSection, { context: osmmContext(c.ctx) });
+    expect(screen.getByText("Verified · expiry unknown")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("PRIVATE-TOKEN");
+  });
   it("lists channels grouped by platform and removes after confirmation, warning about usage", async () => {
     const { ctx } = await makeCtx({ seed: true });
     let asked = "";
@@ -164,5 +327,20 @@ describe("ChannelsSection", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Remove Acme Studio" }));
     expect(asked).toMatch(/used by 1 note/);
     expect(ctx.channels.get("li/acme-studio")).toBeUndefined();
+  });
+
+  it("shows provider-specific credential limits without exposing token values", async () => {
+    const c = await makeCtx({ seed: true });
+    await c.ctx.channels.upsertChannel({ ...c.ctx.channels.get("li/acme-studio")!, secretId: "li-token" });
+    await c.ctx.channels.upsertChannel({ id: "x/you", platform: "x", name: "X", kind: "profile", avatarColor: "#c9c3b8", method: "assisted", secretId: "x-token" });
+    await c.ctx.channels.upsertChannel({ id: "ig/you", platform: "instagram", name: "Instagram", kind: "profile", avatarColor: "#c9c3b8", method: "assisted", secretId: "ig-token" });
+    c.app.secretStorage.setSecret("li-token", "LI-PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("x-token", "X-PRIVATE-TOKEN");
+    c.app.secretStorage.setSecret("ig-token", "IG-PRIVATE-TOKEN");
+    render(ChannelsSection, { context: osmmContext(c.ctx) });
+    expect(screen.getByText("credential set · exact-token grants required")).toBeTruthy();
+    expect(screen.getByText("credential set · identity only; write tier unverified")).toBeTruthy();
+    expect(screen.getByText("credential set · public image host required")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("PRIVATE-TOKEN");
   });
 });

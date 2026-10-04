@@ -31,6 +31,9 @@ describe("contentDigest (#66)", () => {
     ["mediaMeta (image alt)", { mediaMeta: { ...base.mediaMeta, "a.png": { alt: "Another" } } }],
     ["mediaMeta (image focus)", { mediaMeta: { ...base.mediaMeta, "a.png": { alt: "A", focus: [0.1, 0.9] } } }],
     ["mediaMeta (featured alt)", { mediaMeta: { ...base.mediaMeta, "cover.png": { alt: "New cover" } } }],
+    ["mediaMeta (generated source)", { mediaMeta: { ...base.mediaMeta, "a.png": { ...base.mediaMeta!["a.png"], sourcePath: "Attachments/original.png" } } }],
+    ["mediaMeta (generated crop path)", { mediaMeta: { ...base.mediaMeta, "a.png": { ...base.mediaMeta!["a.png"], cropPath: "Attachments/crop.png" } } }],
+    ["mediaMeta (generated crop ratio)", { mediaMeta: { ...base.mediaMeta, "a.png": { ...base.mediaMeta!["a.png"], cropRatio: 1 } } }],
     ["wordpress", { wordpress: { ...base.wordpress!, slug: "hello-2" } }],
   ])("changes when %s changes", (_field, patch) => {
     expect(contentDigest({ ...base, ...patch }, "Body")).not.toBe(contentDigest(base, "Body"));
@@ -57,6 +60,21 @@ describe("contentDigest (#66)", () => {
     const after = { ...before, mediaMeta: { "inside.png": { alt: "After" } } };
     expect(contentDigest(after, body)).toBe(contentDigest(before, body));
     expect(sendDigest(after, { body, media: [] })).toBe(sendDigest(before, { body, media: [] }));
+  });
+
+  it("changes for live generated crop and original fingerprints, including a featured image", () => {
+    const generated = { ...base, mediaMeta: {
+      ...base.mediaMeta,
+      "a.png": { sourcePath: "Attachments/original.png", cropPath: "Attachments/a.png", cropRatio: 1, focus: [0.5, 0.5] as [number, number] },
+      "cover.png": { sourcePath: "Attachments/hero-original.png", focus: [0.5, 0.5] as [number, number] },
+    } };
+    const images = [
+      { ...img("a.png"), fingerprint: "crop-1", sourceFingerprint: "original-1" },
+      { ...img("cover.png"), fingerprint: "hero-1", sourceFingerprint: "hero-original-1" },
+    ];
+    const before = contentDigest(generated, "Body", images);
+    expect(contentDigest(generated, "Body", [{ ...images[0]!, sourceFingerprint: "original-2" }, images[1]!])).not.toBe(before);
+    expect(contentDigest(generated, "Body", [images[0]!, { ...images[1]!, fingerprint: "hero-2" }])).not.toBe(before);
   });
 });
 

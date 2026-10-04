@@ -59,6 +59,9 @@ export interface MediaInfo {
   alt?: string;
   /** Focal point, 0..1 from the left and from the top. */
   focus?: [number, number];
+  /** Live content hashes of generated assets, so a binary edit invalidates approval. */
+  fingerprint?: string;
+  sourceFingerprint?: string;
 }
 
 /** What validators and previews look at: the note's fields, its Markdown body and its resolved media. */
@@ -135,7 +138,7 @@ export interface SyncChange {
   time: boolean;
 }
 
-export type VerifyResult = { ok: true; account: string } | { ok: false; error: string };
+export type VerifyResult = { ok: true; account: string; /** Only when the provider reports a precise timestamp. */ expiresAt?: number } | { ok: false; error: string };
 
 /**
  * Network operations of one platform (spec §4.1). Every request goes through `ApiClient` (src/platforms/http.ts),
@@ -144,6 +147,8 @@ export type VerifyResult = { ok: true; account: string } | { ok: false; error: s
  */
 export interface PlatformAdapter {
   readonly platform: Platform;
+  /** Runtime product or permission gate; false routes automatic publishing to the assisted flow. */
+  apiAvailable?(channel: Channel): boolean;
   /** How far ahead a native hand-over must be (Mastodon: 5 minutes). */
   readonly minLeadMs?: number;
   publish?(job: DeliveryJob): Promise<PublishResult>;
@@ -158,6 +163,8 @@ export interface PlatformAdapter {
   lookup?(job: DeliveryJob): Promise<RemoteState | null>;
   /** Channel settings "Test connection". Never throws. */
   verify?(channel: Channel, secret: string | null): Promise<VerifyResult>;
+  /** Optional provider-owned token renewal. No adapter enables this until a tested, device-local rotation flow exists. */
+  refreshCredential?(channel: Channel, secret: string | null): Promise<VerifyResult>;
 }
 
 /** One thing for the user to paste: text, or an image file from the vault. */

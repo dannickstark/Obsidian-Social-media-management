@@ -42,6 +42,7 @@ export async function mcpCtx(opts: Parameters<typeof makeCtx>[0] & { approvals?:
     writer: c.writer,
     planner: c.ctx.actions,
     composer: c.ctx.composer,
+    images: c.ctx.composer.images,
     publish: c.ctx.publish,
     secrets: new Secrets(c.app as never),
     settings: () => get(c.settings),

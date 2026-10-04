@@ -1,6 +1,7 @@
 import type { App } from "obsidian";
 import type { ChannelRegistry } from "../channels/registry";
 import type { ComposerActions } from "../composer/actions";
+import type { ImageGenerationService } from "../composer/imageGeneration";
 import type { SocialIndex } from "../index/socialIndex";
 import type { NoteFactory } from "../model/factory";
 import type { SafeWriter } from "../model/writer";
@@ -18,6 +19,7 @@ export interface McpToolDeps {
   writer: SafeWriter;
   planner: PlannerActions;
   composer: ComposerActions;
+  images: ImageGenerationService;
   publish: PublishActions;
   /** Only whether a credential exists; tools never read secret values. */
   secrets: { has(id: string): boolean };

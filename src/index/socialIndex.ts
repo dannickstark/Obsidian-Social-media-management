@@ -1,6 +1,8 @@
 import { TFile, type App, type EventRef, type TAbstractFile } from "obsidian";
 import { bodyOf, excerpt } from "../model/body";
 import { isRecord, parseCampaign, parseVariant, socialKind, type SocialKind } from "../model/frontmatter";
+import { MediaInspector } from "../media/mediaInfo";
+import { imageEmbeds } from "../platforms/wordpress/markdown";
 import type { Campaign, Issue, Variant } from "../model/types";
 import { platformDef } from "../platforms/registry";
 import { countFor, postText } from "../platforms/text";
@@ -43,6 +45,7 @@ type Entry =
   | null;
 
 export class SocialIndex {
+  private readonly mediaInspector: MediaInspector;
   private readonly campaignMap = new Map<string, IndexedCampaign>();
   private readonly variantMap = new Map<string, IndexedVariant>();
   private readonly invalidMap = new Map<string, InvalidNote>();
@@ -58,7 +61,7 @@ export class SocialIndex {
   constructor(
     private readonly app: App,
     private readonly debounceMs = 50,
-  ) {}
+  ) { this.mediaInspector = new MediaInspector(app); }
 
   get revision(): number {
     return this.version;
@@ -92,6 +95,8 @@ export class SocialIndex {
     this.refs.push({ source: metadataCache, ref: metadataCache.on("changed", (file: TFile) => void this.onChanged(file)) });
     this.refs.push({ source: vault, ref: vault.on("rename", (file: TAbstractFile, oldPath: string) => void this.onRename(file, oldPath)) });
     this.refs.push({ source: vault, ref: vault.on("delete", (file: TAbstractFile) => this.onDelete(file)) });
+    this.refs.push({ source: vault, ref: vault.on("modify", (file: TAbstractFile) => { if (file instanceof TFile) this.assetChanged(file.path); }) });
+    this.refs.push({ source: vault, ref: vault.on("create", (file: TAbstractFile) => { if (file instanceof TFile) this.assetChanged(file.path); }) });
   }
 
   stop(): void {
@@ -177,6 +182,12 @@ export class SocialIndex {
     const r = parseVariant(fm, file.path);
     if (!r.value) return { kind: "invalid", value: { file, kind, issues: r.issues } };
     const body = bodyOf(await this.app.vault.cachedRead(file));
+    const targets = [...new Set([
+      ...r.value.media,
+      ...(r.value.wordpress?.featuredImage ? [r.value.wordpress.featuredImage] : []),
+      ...(r.value.platform === "wordpress" ? imageEmbeds(body) : []),
+    ])].filter((target) => r.value!.mediaMeta?.[target]?.sourcePath);
+    const media = targets.length ? await this.mediaInspector.inspect({ path: r.value.path, media: targets, mediaMeta: r.value.mediaMeta }) : [];
     const text = excerpt(body);
     return {
       kind: "post",
@@ -188,7 +199,7 @@ export class SocialIndex {
         displayTitle: r.value.title ?? (text || file.basename),
         campaignPath: this.resolveCampaign(r.value),
         bodyChars: countFor(postText(body, platformDef(r.value.platform)), platformDef(r.value.platform)),
-        digest: contentDigest(r.value, body),
+        digest: contentDigest(r.value, body, media),
       },
     };
   }
@@ -253,6 +264,11 @@ export class SocialIndex {
 
   private async onRename(file: TAbstractFile, oldPath: string): Promise<void> {
     if (!(file instanceof TFile)) return;
+    if (file.extension !== "md") {
+      this.assetChanged(oldPath);
+      this.assetChanged(file.path);
+      return;
+    }
     // The vault moves the metadata cache to the new path right after firing this event, but
     // synchronously within the same call stack; yield one microtask so that has happened
     // before we read the cache at the new path below.
@@ -273,11 +289,24 @@ export class SocialIndex {
 
   private onDelete(file: TAbstractFile): void {
     if (!(file instanceof TFile)) return;
+    if (file.extension !== "md") {
+      this.assetChanged(file.path);
+      return;
+    }
     const before = this.kindAt(file.path);
     if (!before) return;
     this.drop(file.path);
     this.pendingRemoved.add(file.path);
     if (before === "campaign") this.relinkCampaigns();
     this.schedule();
+  }
+
+  private assetChanged(path: string): void {
+    if (path.endsWith(".md")) return;
+    for (const v of this.variantMap.values()) {
+      if (Object.values(v.mediaMeta ?? {}).some((meta) => meta.sourcePath === path || meta.cropPath === path)) {
+        void this.onChanged(v.file);
+      }
+    }
   }
 }
